@@ -8,10 +8,7 @@ const adminController = {
   async login(req, res, next) {
     try {
       const { username, password } = req.body;
-      
-      // Prüfen der Zugangsdaten gegen die .env Variablen
       if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
-        // Token erstellen, der 24 Stunden gültig ist
         const token = jwt.sign(
           { role: 'admin' }, 
           process.env.JWT_SECRET || 'super_secret_fallback_key', 
@@ -19,7 +16,6 @@ const adminController = {
         );
         return res.json({ success: true, token });
       }
-      
       res.status(401).json({ error: 'Falsche Zugangsdaten' });
     } catch (error) {
       next(error);
@@ -50,6 +46,19 @@ const adminController = {
       const { data, error } = await supabase.from('chats').select('*').order('updated_at', { ascending: false });
       if (error) throw error;
       res.json(data);
+    } catch (error) { next(error); }
+  },
+
+  async getChatMessages(req, res, next) {
+    try {
+      const { chatId } = req.params;
+      const { data: chat } = await supabase.from('chats').select('is_manual_mode').eq('id', chatId).single();
+      const { data: messages, error } = await supabase.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending: true });
+      if (error) throw error;
+      res.json({
+        is_manual: chat ? chat.is_manual_mode : false,
+        messages: messages || []
+      });
     } catch (error) { next(error); }
   },
 
@@ -137,6 +146,15 @@ const adminController = {
       const { error } = await supabase.from('admin_subscriptions').upsert([{ subscription_data: subscription }], { onConflict: 'subscription_data' });
       if (error) throw error;
       res.json({ success: true });
+    } catch (error) { next(error); }
+  },
+
+  async discoverLinks(req, res, next) {
+    try {
+      const { url } = req.body;
+      if (!url) return res.status(400).json({ error: 'URL fehlt' });
+      const links = await scraperService.discoverLinks(url);
+      res.json({ links });
     } catch (error) { next(error); }
   },
 
