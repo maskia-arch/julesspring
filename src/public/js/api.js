@@ -14,7 +14,6 @@ const api = {
         const response = await fetch(`${API_BASE}${endpoint}`, options);
         
         if (response.status === 401) {
-            // FIX: Nicht auf login.html leiten, sondern Overlay anzeigen
             localStorage.removeItem('admin_token');
             const overlay = document.getElementById('login-overlay');
             const app = document.getElementById('admin-app');
@@ -72,6 +71,10 @@ const api = {
 
     async syncSellauth() {
         return this.request('/sync-sellauth', 'POST');
+    },
+
+    async discoverLinks(url) {
+        return this.request('/knowledge/discover', 'POST', { url });
     },
 
     async startScraping(urls) {
