@@ -194,6 +194,7 @@ async function loadSettings() {
         document.getElementById('system-prompt').value = settings.system_prompt || '';
         document.getElementById('negative-prompt').value = settings.negative_prompt || '';
         document.getElementById('manual-msg-template').value = settings.manual_msg_template || '';
+        document.getElementById('sellauth-api-key').value = settings.sellauth_api_key || '';
     } catch (err) {
         console.error('Settings Load Error');
     }
@@ -203,13 +204,37 @@ async function saveSettings() {
     const settings = {
         system_prompt: document.getElementById('system-prompt').value,
         negative_prompt: document.getElementById('negative-prompt').value,
-        manual_msg_template: document.getElementById('manual-msg-template').value
+        manual_msg_template: document.getElementById('manual-msg-template').value,
+        sellauth_api_key: document.getElementById('sellauth-api-key').value
     };
     try {
         await api.saveSettings(settings);
         alert('Einstellungen gespeichert!');
     } catch (err) {
         alert('Fehler beim Speichern der Einstellungen');
+    }
+}
+
+async function saveManualKnowledge() {
+    const title = document.getElementById('manual-kb-title').value;
+    const content = document.getElementById('manual-kb-content').value;
+    const btn = document.getElementById('save-manual-kb');
+
+    if (!content) return alert("Bitte Inhalt eingeben!");
+
+    try {
+        btn.disabled = true;
+        btn.innerText = "Speichert...";
+        await api.addManualKnowledge(title, content);
+        alert("Wissen erfolgreich hinzugefügt!");
+        document.getElementById('manual-kb-title').value = '';
+        document.getElementById('manual-kb-content').value = '';
+        updateStats();
+    } catch (e) {
+        alert("Fehler: " + e.message);
+    } finally {
+        btn.disabled = false;
+        btn.innerText = "Wissen speichern";
     }
 }
 
@@ -223,7 +248,7 @@ async function syncSellauth() {
         alert('Sellauth-Produkte erfolgreich importiert!');
         updateStats();
     } catch (err) {
-        alert('Fehler bei Sellauth-Synchronisierung');
+        alert('Fehler: ' + err.message);
     } finally {
         btn.disabled = false;
         btn.textContent = originalText;

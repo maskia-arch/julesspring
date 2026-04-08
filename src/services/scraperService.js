@@ -5,35 +5,36 @@ const textSplitter = require('../utils/textSplitter');
 const scraperService = {
   async discoverLinks(baseUrl) {
     try {
-      const response = await axios.get(baseUrl, {
+      const targetUrl = baseUrl.startsWith('http') ? baseUrl : `https://${baseUrl}`;
+      const response = await axios.get(targetUrl, {
         timeout: 10000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (AI Business Bot)' }
+        headers: { 
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
+        }
       });
+      
       const $ = cheerio.load(response.data);
       const links = new Set();
-      const baseHostname = new URL(baseUrl).hostname;
+      const urlObj = new URL(targetUrl);
 
       $('a').each((_, el) => {
         let href = $(el).attr('href');
-        if (!href) return;
+        if (!href || href.startsWith('#') || href.startsWith('javascript:')) return;
 
         try {
-          const resolvedUrl = new URL(href, baseUrl);
-          // Nur Links von der gleichen Domain aufnehmen
-          if (resolvedUrl.hostname === baseHostname) {
-            // Clean URL (Anker entfernen)
+          const resolvedUrl = new URL(href, targetUrl);
+          if (resolvedUrl.hostname === urlObj.hostname) {
             resolvedUrl.hash = '';
             links.add(resolvedUrl.href);
           }
-        } catch (e) {
-          // Ungültige URL ignorieren
-        }
+        } catch (e) {}
       });
 
-      return Array.from(links).slice(0, 25);
+      return Array.from(links).slice(0, 30);
     } catch (error) {
-      console.error(`Link discovery failed for ${baseUrl}:`, error.message);
-      throw new Error(`Konnte keine Links auf ${baseUrl} finden.`);
+      console.error(`Link Discovery Error für ${baseUrl}:`, error.message);
+      throw new Error(`Seite nicht erreichbar: ${error.message}`);
     }
   },
 
@@ -41,7 +42,9 @@ const scraperService = {
     try {
       const response = await axios.get(url, {
         timeout: 15000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (AI Business Bot)' }
+        headers: { 
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
       });
 
       const $ = cheerio.load(response.data);

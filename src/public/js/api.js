@@ -24,7 +24,7 @@ const api = {
         
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.message || 'API Fehler');
+            throw new Error(error.error || error.message || 'API Fehler');
         }
         return response.json();
     },
@@ -79,5 +79,9 @@ const api = {
 
     async startScraping(urls) {
         return this.request('/scrape', 'POST', { urls });
+    },
+
+    async addManualKnowledge(title, content) {
+        return this.request('/knowledge/manual', 'POST', { title, content });
     }
 };

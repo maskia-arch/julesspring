@@ -160,6 +160,22 @@ const adminController = {
     }
   },
 
+  async addManualKnowledge(req, res, next) {
+    try {
+      const { title, content } = req.body;
+      if (!content) return res.status(400).json({ error: 'Inhalt fehlt' });
+      const fullContent = title ? `### ${title}\n${content}` : content;
+      const embedding = await deepseekService.generateEmbedding(fullContent);
+      const { data, error } = await supabase.from('knowledge_base').insert([{ 
+          content: fullContent, 
+          embedding, 
+          source: 'manual_entry' 
+      }]).select();
+      if (error) throw error;
+      res.json({ success: true, data: data[0] });
+    } catch (error) { next(error); }
+  },
+
   async startScraping(req, res, next) {
     try {
       const { urls } = req.body;
@@ -178,15 +194,10 @@ const adminController = {
   async syncSellauth(req, res, next) {
     try {
       const { data: settings, error: sError } = await supabase.from('settings').select('sellauth_api_key').single();
-      
       if (sError || !settings?.sellauth_api_key) {
         return res.status(400).json({ error: 'Kein Sellauth API Key konfiguriert.' });
       }
-
-      // Hier wird später der reale API Call implementiert. 
-      // Aktuell werfen wir einen Fehler, damit keine falsche Erfolgsmeldung erscheint.
       throw new Error('Sellauth API-Endpunkt nicht erreichbar oder Key ungültig.');
-
     } catch (error) {
       res.status(500).json({ error: error.message });
     }

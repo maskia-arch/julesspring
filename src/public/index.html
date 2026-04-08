@@ -27,9 +27,41 @@
         
         .admin-section { display: none; }
         .nav-links button.active { background: #007bff !important; }
+        
+        /* Mobile Nav Fix */
+        .nav-links {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            padding: 10px;
+            width: 100%;
+        }
+        .nav-links button {
+            padding: 10px 5px;
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
         .link-selection-area { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0; max-height: 300px; overflow-y: auto; border: 1px solid #ddd; }
         .link-item { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid #eee; }
         .link-item label { font-size: 0.9rem; color: #333; cursor: pointer; }
+        
+        .manual-kb-area {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+            border: 1px solid #444;
+        }
+        .manual-kb-area input, .manual-kb-area textarea {
+            width: 100%;
+            margin-bottom: 10px;
+            background: #333;
+            border: 1px solid #444;
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+        }
     </style>
 </head>
 <body>
@@ -46,7 +78,7 @@
 
     <div id="admin-app">
         <nav class="navbar">
-            <div class="logo">DeepSeek eSIM Admin <span id="version-tag"></span></div>
+            <div class="logo">DeepSeek Admin <span id="version-tag"></span></div>
             <div class="nav-links">
                 <button onclick="showSection('chats')" id="nav-chats">Chats</button>
                 <button onclick="showSection('learning')" id="nav-learning">Learning <span id="learning-badge" class="badge">0</span></button>
@@ -89,7 +121,6 @@
 
             <section id="learning-section" class="admin-section">
                 <h2>🧠 Learning Center</h2>
-                <p>Hier fragt dich die KI um Rat, wenn sie bei eSIM-Anfragen unsicher ist.</p>
                 <div id="learning-list" class="card-list">
                     <p class="placeholder">Keine offenen Fragen vorhanden.</p>
                 </div>
@@ -103,7 +134,15 @@
                 </div>
                 <div id="link-list"></div>
                 <button id="start-scrape" style="display:none; margin-top: 15px;">Ausgewählte Seiten scrapen</button>
-                <hr>
+                
+                <div class="manual-kb-area">
+                    <h3>✍️ Manueller Wissenseintrag</h3>
+                    <input type="text" id="manual-kb-title" placeholder="Titel (z.B. Support Zeiten)">
+                    <textarea id="manual-kb-content" rows="4" placeholder="Hier das Wissen eintragen..."></textarea>
+                    <button id="save-manual-kb" onclick="saveManualKnowledge()" style="background: #28a745; width: 100%;">Wissen speichern</button>
+                </div>
+
+                <hr style="margin: 25px 0; border-color: #444;">
                 <h3>Direkter Wissensimport</h3>
                 <button id="sync-sellauth" class="btn-secondary">Sellauth Produkte synchronisieren</button>
             </section>
@@ -111,23 +150,17 @@
             <section id="security-section" class="admin-section">
                 <h2>🛡 Sicherheit & Blacklist</h2>
                 <div class="form-group">
-                    <label>Nutzer bannen (Telegram ID, IP oder Fingerprint)</label>
+                    <label>Nutzer bannen</label>
                     <div class="input-group">
-                        <input type="text" id="ban-identifier" placeholder="ID oder IP eingeben...">
-                        <input type="text" id="ban-reason" placeholder="Grund (optional)">
+                        <input type="text" id="ban-identifier" placeholder="ID oder IP...">
+                        <input type="text" id="ban-reason" placeholder="Grund">
                         <button id="btn-ban" class="btn-danger">Bannen</button>
                     </div>
                 </div>
-                <h3>Gesperrte Identifikatoren</h3>
                 <div id="blacklist-table-container">
                     <table id="blacklist-table">
                         <thead>
-                            <tr>
-                                <th>Identifikator</th>
-                                <th>Grund</th>
-                                <th>Datum</th>
-                                <th>Aktion</th>
-                            </tr>
+                            <tr><th>Identifikator</th><th>Grund</th><th>Aktion</th></tr>
                         </thead>
                         <tbody id="blacklist-body"></tbody>
                     </table>
@@ -137,15 +170,19 @@
             <section id="settings-section" class="admin-section">
                 <h2>System-Einstellungen</h2>
                 <div class="form-group">
-                    <label>System Prompt (KI Persönlichkeit & eSIM Expertise)</label>
-                    <textarea id="system-prompt" rows="6" placeholder="Du bist ein eSIM Experte..."></textarea>
+                    <label>🔑 Sellauth API Key</label>
+                    <input type="password" id="sellauth-api-key" placeholder="sa_...">
                 </div>
                 <div class="form-group">
-                    <label>🚫 Negativ-Prompts (Was die KI niemals tun darf)</label>
-                    <textarea id="negative-prompt" rows="4" placeholder="Nenne niemals Konkurrenzpreise, gib keine Rabatte ohne Rücksprache..."></textarea>
+                    <label>System Prompt</label>
+                    <textarea id="system-prompt" rows="6"></textarea>
                 </div>
                 <div class="form-group">
-                    <label>Übergabe-Nachricht (Bei manuellem Modus)</label>
+                    <label>🚫 Negativ-Prompts</label>
+                    <textarea id="negative-prompt" rows="4"></textarea>
+                </div>
+                <div class="form-group">
+                    <label>Übergabe-Nachricht</label>
                     <input type="text" id="manual-msg-template">
                 </div>
                 <button id="save-settings">Einstellungen speichern</button>
@@ -167,11 +204,7 @@
             const activeBtn = document.getElementById('nav-' + id);
             if (activeBtn) activeBtn.classList.add('active');
             
-            if (id === 'chats') {
-                document.getElementById('stats-bar').style.display = 'grid';
-            } else {
-                document.getElementById('stats-bar').style.display = 'none';
-            }
+            document.getElementById('stats-bar').style.display = (id === 'chats') ? 'grid' : 'none';
         }
 
         async function handleLogin() {
@@ -185,9 +218,7 @@
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ username: user, password: pass })
                 });
-
                 const data = await response.json();
-
                 if (response.ok && data.token) {
                     localStorage.setItem('admin_token', data.token);
                     document.getElementById('login-overlay').style.display = 'none';
@@ -196,10 +227,10 @@
                     showSection('chats');
                 } else {
                     err.style.display = 'block';
-                    err.innerText = data.message || "Falsche Zugangsdaten";
+                    err.innerText = data.error || "Zugriff verweigert";
                 }
             } catch (e) {
-                err.innerText = "Server-Verbindung fehlgeschlagen";
+                err.innerText = "Verbindung fehlgeschlagen";
                 err.style.display = 'block';
             }
         }
