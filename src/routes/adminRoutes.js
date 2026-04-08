@@ -5,12 +5,30 @@ const auth = require('../middleware/auth');
 
 router.use(auth);
 
+// Stats & Settings
 router.get('/stats', adminController.getStats);
-router.get('/chats', adminController.getChats);
-router.patch('/chats/:chatId/status', adminController.updateChatStatus);
 router.get('/settings', adminController.getSettings);
 router.post('/settings', adminController.updateSettings);
 
+// Chats
+router.get('/chats', adminController.getChats);
+router.patch('/chats/:chatId/status', adminController.updateChatStatus);
 router.post('/manual-message', adminController.sendManualMessage);
+
+// Learning Queue
+router.get('/learning', adminController.getLearningQueue);
+router.post('/learning/resolve', adminController.resolveLearning);
+
+// Scraping & Knowledge
+router.post('/scrape', adminController.startScraping);
+router.post('/sync-sellauth', adminController.syncSellauth);
+
+// Security / Blacklist
+router.get('/blacklist', adminController.getBlacklist);
+router.post('/blacklist', adminController.banUser);
+router.delete('/blacklist/:id', adminController.removeBan);
+
+// Push Notifications
+router.post('/push-subscription', adminController.savePushSubscription);
 
 module.exports = router;
