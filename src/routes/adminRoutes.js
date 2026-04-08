@@ -4,37 +4,39 @@ const adminController = require('../controllers/adminController');
 const auth = require('../middleware/auth');
 
 // --- ÖFFENTLICHE ROUTEN ---
-// Diese Route muss VOR router.use(auth) stehen, damit man sich einloggen kann!
+// Diese Route muss vor der auth-Middleware stehen
 router.post('/login', adminController.login);
 
 // --- GESCHÜTZTE ROUTEN ---
-// Ab hier benötigen alle folgenden Routen ein gültiges JWT-Token
+// Alle folgenden Routen prüfen das JWT-Token in der auth-Middleware
 router.use(auth);
 
-// Stats & Settings
+// Dashboard Statistiken & System-Einstellungen
 router.get('/stats', adminController.getStats);
 router.get('/settings', adminController.getSettings);
 router.post('/settings', adminController.updateSettings);
 
-// Chats
+// Chat-Management
 router.get('/chats', adminController.getChats);
 router.patch('/chats/:chatId/status', adminController.updateChatStatus);
 router.post('/manual-message', adminController.sendManualMessage);
+router.get('/chats/:chatId/messages', adminController.getChatMessages);
 
-// Learning Queue
+// Learning Center (KI-Wissenslücken)
 router.get('/learning', adminController.getLearningQueue);
 router.post('/learning/resolve', adminController.resolveLearning);
 
-// Scraping & Knowledge
+// Wissensdatenbank & Scraping
+router.post('/knowledge/discover', adminController.discoverLinks);
 router.post('/scrape', adminController.startScraping);
 router.post('/sync-sellauth', adminController.syncSellauth);
 
-// Security / Blacklist
+// Sicherheit & Blacklist
 router.get('/blacklist', adminController.getBlacklist);
 router.post('/blacklist', adminController.banUser);
 router.delete('/blacklist/:id', adminController.removeBan);
 
-// Push Notifications
+// Push-Benachrichtigungen
 router.post('/push-subscription', adminController.savePushSubscription);
 
 module.exports = router;

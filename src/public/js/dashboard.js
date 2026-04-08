@@ -1,5 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
-    initDashboard();
+    if (localStorage.getItem('admin_token')) {
+        initDashboard();
+    }
     
     document.getElementById('save-settings')?.addEventListener('click', saveSettings);
     document.getElementById('btn-ban')?.addEventListener('click', handleBan);
@@ -228,6 +230,43 @@ async function syncSellauth() {
     }
 }
 
+async function discoverLinks() {
+    const urlInput = document.getElementById('scrape-url');
+    const url = urlInput.value;
+    if (!url) return alert('Bitte eine Basis-URL eingeben');
+
+    const btn = document.getElementById('url-discover');
+    btn.textContent = 'Suche Links...';
+    btn.disabled = true;
+
+    try {
+        const data = await api.discoverLinks(url);
+        const linkList = document.getElementById('link-list');
+        
+        if (data.links && data.links.length > 0) {
+            linkList.innerHTML = `
+                <div class="link-selection-area">
+                    <h4>Gefundene Unterseiten:</h4>
+                    ${data.links.map(link => `
+                        <div class="link-item">
+                            <input type="checkbox" name="scrape-links" value="${link}" checked>
+                            <label>${link}</label>
+                        </div>
+                    `).join('')}
+                </div>
+            `;
+            document.getElementById('start-scrape').style.display = 'block';
+        } else {
+            linkList.innerHTML = '<p>Keine weiteren Links gefunden.</p>';
+        }
+    } catch (err) {
+        alert('Fehler: ' + err.message);
+    } finally {
+        btn.textContent = 'Links finden';
+        btn.disabled = false;
+    }
+}
+
 async function quickBan(chatId) {
     if(confirm(`Möchtest du den Nutzer von Chat ${chatId} wirklich bannen?`)) {
         await api.banUser(chatId, 'Direktbann über Dashboard');
@@ -236,16 +275,16 @@ async function quickBan(chatId) {
 }
 
 async function startScraping() {
-    const urlInput = document.getElementById('scrape-url').value;
-    if (!urlInput) return alert('Bitte eine URL eingeben');
+    const selectedLinks = Array.from(document.querySelectorAll('input[name="scrape-links"]:checked')).map(el => el.value);
+    if (selectedLinks.length === 0) return alert('Bitte mindestens einen Link auswählen');
 
     const btn = document.getElementById('start-scrape');
     btn.textContent = 'Scrape läuft...';
     btn.disabled = true;
 
     try {
-        await api.startScraping([urlInput]);
-        alert('Webseite wurde erfolgreich gescannt und in die Wissensdatenbank aufgenommen!');
+        await api.startScraping(selectedLinks);
+        alert('Webseiten erfolgreich gescannt!');
         updateStats();
     } catch (err) {
         alert('Fehler beim Scraping: ' + err.message);

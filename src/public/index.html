@@ -6,7 +6,6 @@
     <title>DeepSeek eSIM Admin Dashboard</title>
     <link rel="stylesheet" href="css/style.css">
     <style>
-        /* Sofort-Schutz: Versteckt alles bis der Login bestätigt ist */
         #admin-app { display: none; }
         #login-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -25,6 +24,12 @@
             color: white; border-radius: 6px; cursor: pointer; font-weight: bold;
         }
         .error-msg { color: #ff6b6b; font-size: 0.9rem; margin-top: 10px; display: none; }
+        
+        .admin-section { display: none; }
+        .nav-links button.active { background: #007bff !important; }
+        .link-selection-area { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0; max-height: 300px; overflow-y: auto; border: 1px solid #ddd; }
+        .link-item { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid #eee; }
+        .link-item label { font-size: 0.9rem; color: #333; cursor: pointer; }
     </style>
 </head>
 <body>
@@ -82,7 +87,7 @@
                 </div>
             </section>
 
-            <section id="learning-section" class="admin-section" style="display:none;">
+            <section id="learning-section" class="admin-section">
                 <h2>🧠 Learning Center</h2>
                 <p>Hier fragt dich die KI um Rat, wenn sie bei eSIM-Anfragen unsicher ist.</p>
                 <div id="learning-list" class="card-list">
@@ -90,20 +95,20 @@
                 </div>
             </section>
 
-            <section id="knowledge-section" class="admin-section" style="display:none;">
+            <section id="knowledge-section" class="admin-section">
                 <h2>Wissensdatenbank verwalten</h2>
                 <div class="input-group">
                     <input type="text" id="scrape-url" placeholder="https://esim-shop.com/faq">
                     <button id="url-discover">Links finden</button>
                 </div>
-                <div id="link-list" class="link-selection"></div>
-                <button id="start-scrape" style="display:none;">Ausgewählte Seiten scrapen</button>
+                <div id="link-list"></div>
+                <button id="start-scrape" style="display:none; margin-top: 15px;">Ausgewählte Seiten scrapen</button>
                 <hr>
                 <h3>Direkter Wissensimport</h3>
                 <button id="sync-sellauth" class="btn-secondary">Sellauth Produkte synchronisieren</button>
             </section>
 
-            <section id="security-section" class="admin-section" style="display:none;">
+            <section id="security-section" class="admin-section">
                 <h2>🛡 Sicherheit & Blacklist</h2>
                 <div class="form-group">
                     <label>Nutzer bannen (Telegram ID, IP oder Fingerprint)</label>
@@ -129,7 +134,7 @@
                 </div>
             </section>
 
-            <section id="settings-section" class="admin-section" style="display:none;">
+            <section id="settings-section" class="admin-section">
                 <h2>System-Einstellungen</h2>
                 <div class="form-group">
                     <label>System Prompt (KI Persönlichkeit & eSIM Expertise)</label>
@@ -151,24 +156,24 @@
     <script src="js/api.js"></script>
     <script src="js/dashboard.js"></script>
     <script>
-        // Navigation Logik
         function showSection(id) {
             document.querySelectorAll('.admin-section').forEach(s => s.style.display = 'none');
             const section = document.getElementById(id + '-section');
             if (section) {
-                if (id === 'chats') {
-                    section.style.display = 'flex';
-                } else {
-                    section.style.display = 'block';
-                }
+                section.style.display = (id === 'chats') ? 'flex' : 'block';
             }
             
             document.querySelectorAll('.nav-links button').forEach(btn => btn.classList.remove('active'));
             const activeBtn = document.getElementById('nav-' + id);
             if (activeBtn) activeBtn.classList.add('active');
+            
+            if (id === 'chats') {
+                document.getElementById('stats-bar').style.display = 'grid';
+            } else {
+                document.getElementById('stats-bar').style.display = 'none';
+            }
         }
 
-        // Login Logik
         async function handleLogin() {
             const user = document.getElementById('username').value;
             const pass = document.getElementById('password').value;
@@ -187,9 +192,8 @@
                     localStorage.setItem('admin_token', data.token);
                     document.getElementById('login-overlay').style.display = 'none';
                     document.getElementById('admin-app').style.display = 'block';
-                    
                     if (typeof initDashboard === 'function') initDashboard();
-                    showSection('chats'); // Direkt die Chats anzeigen
+                    showSection('chats');
                 } else {
                     err.style.display = 'block';
                     err.innerText = data.message || "Falsche Zugangsdaten";
@@ -205,11 +209,10 @@
             window.location.reload();
         }
 
-        // Check beim Laden der Seite (Auto-Login)
         if (localStorage.getItem('admin_token')) {
             document.getElementById('login-overlay').style.display = 'none';
             document.getElementById('admin-app').style.display = 'block';
-            showSection('chats'); // Wichtig: Damit es nicht weiß bleibt!
+            showSection('chats');
         }
     </script>
 </body>
