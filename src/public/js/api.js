@@ -12,10 +12,17 @@ const api = {
         if (body) options.body = JSON.stringify(body);
 
         const response = await fetch(`${API_BASE}${endpoint}`, options);
+        
         if (response.status === 401) {
-            window.location.href = '/login.html';
+            // FIX: Nicht auf login.html leiten, sondern Overlay anzeigen
+            localStorage.removeItem('admin_token');
+            const overlay = document.getElementById('login-overlay');
+            const app = document.getElementById('admin-app');
+            if (overlay) overlay.style.display = 'flex';
+            if (app) app.style.display = 'none';
             return;
         }
+        
         if (!response.ok) {
             const error = await response.json();
             throw new Error(error.message || 'API Fehler');
@@ -32,7 +39,7 @@ const api = {
     },
 
     async updateChatStatus(chatId, isManual) {
-        return this.request(`/chats/${chatId}/status`, 'POST', { is_manual_mode: isManual });
+        return this.request(`/chats/${chatId}/status`, 'PATCH', { is_manual_mode: isManual });
     },
 
     async getSettings() {
@@ -44,7 +51,7 @@ const api = {
     },
 
     async getLearningQueue() {
-        return this.request('/learning/queue');
+        return this.request('/learning');
     },
 
     async resolveLearning(questionId, adminAnswer) {
@@ -52,30 +59,22 @@ const api = {
     },
 
     async banUser(identifier, reason) {
-        return this.request('/security/ban', 'POST', { identifier, reason });
+        return this.request('/blacklist', 'POST', { identifier, reason });
     },
 
     async getBlacklist() {
-        return this.request('/security/blacklist');
+        return this.request('/blacklist');
     },
 
     async removeBan(id) {
-        return this.request(`/security/ban/${id}`, 'DELETE');
-    },
-
-    async saveSubscription(subscription) {
-        return this.request('/push/subscribe', 'POST', { subscription });
+        return this.request(`/blacklist/${id}`, 'DELETE');
     },
 
     async syncSellauth() {
-        return this.request('/integrations/sellauth/sync', 'POST');
-    },
-
-    async discoverLinks(url) {
-        return this.request('/knowledge/discover', 'POST', { url });
+        return this.request('/sync-sellauth', 'POST');
     },
 
     async startScraping(urls) {
-        return this.request('/knowledge/scrape', 'POST', { urls });
+        return this.request('/scrape', 'POST', { urls });
     }
 };
