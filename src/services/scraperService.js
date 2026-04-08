@@ -3,6 +3,40 @@ const cheerio = require('cheerio');
 const textSplitter = require('../utils/textSplitter');
 
 const scraperService = {
+  async discoverLinks(baseUrl) {
+    try {
+      const response = await axios.get(baseUrl, {
+        timeout: 10000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (AI Business Bot)' }
+      });
+      const $ = cheerio.load(response.data);
+      const links = new Set();
+      const baseHostname = new URL(baseUrl).hostname;
+
+      $('a').each((_, el) => {
+        let href = $(el).attr('href');
+        if (!href) return;
+
+        try {
+          const resolvedUrl = new URL(href, baseUrl);
+          // Nur Links von der gleichen Domain aufnehmen
+          if (resolvedUrl.hostname === baseHostname) {
+            // Clean URL (Anker entfernen)
+            resolvedUrl.hash = '';
+            links.add(resolvedUrl.href);
+          }
+        } catch (e) {
+          // Ungültige URL ignorieren
+        }
+      });
+
+      return Array.from(links).slice(0, 25);
+    } catch (error) {
+      console.error(`Link discovery failed for ${baseUrl}:`, error.message);
+      throw new Error(`Konnte keine Links auf ${baseUrl} finden.`);
+    }
+  },
+
   async scrapeUrl(url) {
     try {
       const response = await axios.get(url, {
@@ -11,24 +45,16 @@ const scraperService = {
       });
 
       const $ = cheerio.load(response.data);
-
-      // Entferne störende Elemente, die kein Wissen enthalten
       $('script, style, nav, footer, header, noscript, iframe').remove();
 
-      // Extrahiere Text aus dem Body oder spezifischen Content-Areas
       const title = $('title').text().trim();
-      const content = $('body').text()
+      const content = $('main, article, .content, body').text()
         .replace(/\s+/g, ' ')
         .trim();
 
-      // Den Text in handliche Stücke (Chunks) unterteilen
       const chunks = textSplitter.split(content, 1000);
 
-      return {
-        url,
-        title,
-        chunks
-      };
+      return { url, title, chunks };
     } catch (error) {
       console.error(`Scraping failed for ${url}:`, error.message);
       throw new Error(`Konnte Inhalt von ${url} nicht lesen.`);

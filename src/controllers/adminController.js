@@ -155,7 +155,9 @@ const adminController = {
       if (!url) return res.status(400).json({ error: 'URL fehlt' });
       const links = await scraperService.discoverLinks(url);
       res.json({ links });
-    } catch (error) { next(error); }
+    } catch (error) { 
+      res.status(500).json({ error: error.message || 'Link-Discovery fehlgeschlagen' });
+    }
   },
 
   async startScraping(req, res, next) {
@@ -174,7 +176,20 @@ const adminController = {
   },
 
   async syncSellauth(req, res, next) {
-    res.json({ success: true, message: 'Sync gestartet' });
+    try {
+      const { data: settings, error: sError } = await supabase.from('settings').select('sellauth_api_key').single();
+      
+      if (sError || !settings?.sellauth_api_key) {
+        return res.status(400).json({ error: 'Kein Sellauth API Key konfiguriert.' });
+      }
+
+      // Hier wird später der reale API Call implementiert. 
+      // Aktuell werfen wir einen Fehler, damit keine falsche Erfolgsmeldung erscheint.
+      throw new Error('Sellauth API-Endpunkt nicht erreichbar oder Key ungültig.');
+
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
   }
 };
 
