@@ -5,132 +5,102 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>DeepSeek eSIM Admin Dashboard</title>
     <link rel="stylesheet" href="css/style.css">
+    <style>
+        /* Sofort-Schutz: Versteckt alles bis der Login bestätigt ist */
+        #admin-app { display: none; }
+        #login-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: #1a1a1a; display: flex; justify-content: center; align-items: center; z-index: 9999;
+        }
+        .login-box {
+            background: #2a2a2a; padding: 2rem; border-radius: 12px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5); width: 100%; max-width: 350px; text-align: center;
+        }
+        .login-box input {
+            width: 100%; padding: 12px; margin: 10px 0;
+            background: #333; border: 1px solid #444; color: white; border-radius: 6px;
+        }
+        .login-box button {
+            width: 100%; padding: 12px; background: #007bff; border: none;
+            color: white; border-radius: 6px; cursor: pointer; font-weight: bold;
+        }
+        .error-msg { color: #ff6b6b; font-size: 0.9rem; margin-top: 10px; display: none; }
+    </style>
 </head>
 <body>
-    <nav class="navbar">
-        <div class="logo">DeepSeek eSIM Admin <span id="version-tag"></span></div>
-        <div class="nav-links">
-            <button onclick="showSection('chats')">Chats</button>
-            <button onclick="showSection('learning')">Learning <span id="learning-badge" class="badge">0</span></button>
-            <button onclick="showSection('knowledge')">Wissen</button>
-            <button onclick="showSection('security')">Sicherheit</button>
-            <button onclick="showSection('settings')">Settings</button>
-            <button id="enable-push" class="btn-push">🔔 Push Aktivieren</button>
+
+    <div id="login-overlay">
+        <div class="login-box">
+            <h2 style="color: white; margin-bottom: 1.5rem;">Admin Login</h2>
+            <input type="text" id="username" placeholder="Benutzername">
+            <input type="password" id="password" placeholder="Passwort">
+            <button onclick="handleLogin()">Anmelden</button>
+            <p id="login-error" class="error-msg">Zugriff verweigert</p>
         </div>
-    </nav>
+    </div>
 
-    <main class="container">
-        <section id="stats-bar" class="stats-grid">
-            <div class="stat-card">
-                <h3>Total Chats</h3>
-                <p id="total-chats">0</p>
+    <div id="admin-app">
+        <nav class="navbar">
+            <div class="logo">DeepSeek eSIM Admin <span id="version-tag"></span></div>
+            <div class="nav-links">
+                <button onclick="showSection('chats')">Chats</button>
+                <button onclick="showSection('learning')">Learning <span id="learning-badge" class="badge">0</span></button>
+                <button onclick="showSection('knowledge')">Wissen</button>
+                <button onclick="showSection('security')">Sicherheit</button>
+                <button onclick="showSection('settings')">Settings</button>
+                <button onclick="handleLogout()" style="background: #dc3545;">Logout</button>
             </div>
-            <div class="stat-card">
-                <h3>Manuell</h3>
-                <p id="manual-chats">0</p>
-            </div>
-            <div class="stat-card">
-                <h3>Wissenseinträge</h3>
-                <p id="knowledge-entries">0</p>
-            </div>
-            <div class="stat-card">
-                <h3>KI-Kosten (Est.)</h3>
-                <p id="total-cost">0.0000 $</p>
-                <small id="total-tokens" style="color: #888;">0 Token</small>
-            </div>
-        </section>
+        </nav>
 
-        <section id="chats-section" class="admin-section">
-            <div class="chat-container">
-                <aside id="chat-list" class="sidebar"></aside>
-                <div id="chat-details" class="content-area">
-                    <p class="placeholder">Wähle einen Chat aus der Liste</p>
-                </div>
-            </div>
-        </section>
-
-        <section id="learning-section" class="admin-section" style="display:none;">
-            <h2>🧠 Learning Center</h2>
-            <p>Hier fragt dich die KI um Rat, wenn sie bei eSIM-Anfragen unsicher ist.</p>
-            <div id="learning-list" class="card-list">
-                <p class="placeholder">Keine offenen Fragen vorhanden.</p>
-            </div>
-        </section>
-
-        <section id="knowledge-section" class="admin-section" style="display:none;">
-            <h2>Wissensdatenbank verwalten</h2>
-            <div class="input-group">
-                <input type="text" id="scrape-url" placeholder="https://esim-shop.com/faq">
-                <button id="url-discover">Links finden</button>
-            </div>
-            <div id="link-list" class="link-selection"></div>
-            <button id="start-scrape" style="display:none;">Ausgewählte Seiten scrapen</button>
-            <hr>
-            <h3>Direkter Wissensimport</h3>
-            <button id="sync-sellauth" class="btn-secondary">Sellauth Produkte synchronisieren</button>
-        </section>
-
-        <section id="security-section" class="admin-section" style="display:none;">
-            <h2>🛡 Sicherheit & Blacklist</h2>
-            <div class="form-group">
-                <label>Nutzer bannen (Telegram ID, IP oder Fingerprint)</label>
-                <div class="input-group">
-                    <input type="text" id="ban-identifier" placeholder="ID oder IP eingeben...">
-                    <input type="text" id="ban-reason" placeholder="Grund (optional)">
-                    <button id="btn-ban" class="btn-danger">Bannen</button>
-                </div>
-            </div>
-            <h3>Gesperrte Identifikatoren</h3>
-            <div id="blacklist-table-container">
-                <table id="blacklist-table">
-                    <thead>
-                        <tr>
-                            <th>Identifikator</th>
-                            <th>Grund</th>
-                            <th>Datum</th>
-                            <th>Aktion</th>
-                        </tr>
-                    </thead>
-                    <tbody id="blacklist-body"></tbody>
-                </table>
-            </div>
-        </section>
-
-        <section id="settings-section" class="admin-section" style="display:none;">
-            <h2>System-Einstellungen</h2>
-            <div class="form-group">
-                <label>System Prompt (KI Persönlichkeit & eSIM Expertise)</label>
-                <textarea id="system-prompt" rows="6" placeholder="Du bist ein eSIM Experte..."></textarea>
-            </div>
-            <div class="form-group">
-                <label>🚫 Negativ-Prompts (Was die KI niemals tun darf)</label>
-                <textarea id="negative-prompt" rows="4" placeholder="Nenne niemals Konkurrenzpreise, gib keine Rabatte ohne Rücksprache..."></textarea>
-            </div>
-            <div class="form-group">
-                <label>Übergabe-Nachricht (Bei manuellem Modus)</label>
-                <input type="text" id="manual-msg-template">
-            </div>
-            <button id="save-settings">Einstellungen speichern</button>
-        </section>
-    </main>
+        <main class="container">
+            <section id="stats-bar" class="stats-grid">
+                </section>
+            
+            </main>
+    </div>
 
     <script src="js/api.js"></script>
-    <script src="js/push-config.js"></script>
     <script src="js/dashboard.js"></script>
     <script>
-        function showSection(id) {
-            document.querySelectorAll('.admin-section').forEach(s => s.style.display = 'none');
-            const section = document.getElementById(id + '-section');
-            if (id === 'chats') {
-                section.style.display = 'flex';
-            } else {
-                section.style.display = 'block';
+        // LOGIN LOGIK DIREKT HIER ODER IN dashboard.js
+        async function handleLogin() {
+            const user = document.getElementById('username').value;
+            const pass = document.getElementById('password').value;
+            const err = document.getElementById('login-error');
+
+            try {
+                const response = await fetch('/api/admin/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: user, password: pass })
+                });
+
+                const data = await response.json();
+
+                if (response.ok && data.token) {
+                    localStorage.setItem('admin_token', data.token);
+                    document.getElementById('login-overlay').style.display = 'none';
+                    document.getElementById('admin-app').style.display = 'block';
+                    // Initialisiere Dashboard Daten
+                    if (typeof initDashboard === 'function') initDashboard();
+                } else {
+                    err.style.display = 'block';
+                }
+            } catch (e) {
+                err.innerText = "Server-Verbindung fehlgeschlagen";
+                err.style.display = 'block';
             }
-            
-            document.querySelectorAll('.nav-links button').forEach(btn => btn.classList.remove('active'));
-            if(event && event.target) {
-                event.target.classList.add('active');
-            }
+        }
+
+        function handleLogout() {
+            localStorage.removeItem('admin_token');
+            window.location.reload();
+        }
+
+        // Check beim Laden
+        if (localStorage.getItem('admin_token')) {
+            document.getElementById('login-overlay').style.display = 'none';
+            document.getElementById('admin-app').style.display = 'block';
         }
     </script>
 </body>
