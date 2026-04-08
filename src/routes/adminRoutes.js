@@ -3,6 +3,12 @@ const router = express.Router();
 const adminController = require('../controllers/adminController');
 const auth = require('../middleware/auth');
 
+// --- ÖFFENTLICHE ROUTEN ---
+// Diese Route muss VOR router.use(auth) stehen, damit man sich einloggen kann!
+router.post('/login', adminController.login);
+
+// --- GESCHÜTZTE ROUTEN ---
+// Ab hier benötigen alle folgenden Routen ein gültiges JWT-Token
 router.use(auth);
 
 // Stats & Settings

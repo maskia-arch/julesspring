@@ -2,8 +2,30 @@ const supabase = require('../config/supabase');
 const deepseekService = require('../services/deepseekService');
 const scraperService = require('../services/scraperService');
 const { getVersion } = require('../utils/versionLoader');
+const jwt = require('jsonwebtoken');
 
 const adminController = {
+  async login(req, res, next) {
+    try {
+      const { username, password } = req.body;
+      
+      // Prüfen der Zugangsdaten gegen die .env Variablen
+      if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
+        // Token erstellen, der 24 Stunden gültig ist
+        const token = jwt.sign(
+          { role: 'admin' }, 
+          process.env.JWT_SECRET || 'super_secret_fallback_key', 
+          { expiresIn: '24h' }
+        );
+        return res.json({ success: true, token });
+      }
+      
+      res.status(401).json({ error: 'Falsche Zugangsdaten' });
+    } catch (error) {
+      next(error);
+    }
+  },
+
   async getStats(req, res, next) {
     try {
       const { count: totalChats } = await supabase.from('chats').select('*', { count: 'exact', head: true });
@@ -44,7 +66,6 @@ const adminController = {
   async sendManualMessage(req, res, next) {
     try {
       const { chatId, content } = req.body;
-      // Hinweis: Hier müsste später noch der Telegram-Bot-Call rein
       const { data, error } = await supabase.from('messages').insert([{ chat_id: chatId, role: 'assistant', content, is_manual: true }]);
       if (error) throw error;
       res.json({ success: true });
@@ -135,7 +156,6 @@ const adminController = {
   },
 
   async syncSellauth(req, res, next) {
-    // Platzhalter für deine spätere Sellauth-Logik
     res.json({ success: true, message: 'Sync gestartet' });
   }
 };
