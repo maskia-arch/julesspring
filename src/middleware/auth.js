@@ -1,22 +1,26 @@
-const { admin } = require('../config/env');
+const jwt = require('jsonwebtoken');
 
 const auth = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
-  if (!authHeader) {
-    res.setHeader('WWW-Authenticate', 'Basic realm="Admin Dashboard"');
-    return res.status(401).send('Authentication required');
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Kein Token vorhanden' 
+    });
   }
 
-  const auth = Buffer.from(authHeader.split(' ')[1], 'base64').toString().split(':');
-  const user = auth[0];
-  const pass = auth[1];
+  const token = authHeader.split(' ')[1];
 
-  if (user === admin.username && pass === admin.password) {
-    return next();
-  } else {
-    res.setHeader('WWW-Authenticate', 'Basic realm="Admin Dashboard"');
-    return res.status(401).send('Invalid credentials');
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret');
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ 
+      success: false, 
+      message: 'Ungültiges Token' 
+    });
   }
 };
 
