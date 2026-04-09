@@ -4,96 +4,121 @@ const { deepseek, openai } = require('../config/env');
 const logger = require('../utils/logger');
 
 const deepseekService = {
-  async generateEmbedding(text) {
-    try {
-      const response = await axios.post('https://api.openai.com/v1/embeddings', {
-        model: 'text-embedding-3-small',
-        input: text
-      }, {
-        headers: { 'Authorization': `Bearer ${openai.apiKey}` }
-      });
-      return response.data.data[0].embedding;
-    } catch (error) {
-      logger.error('Embedding Error:', error.message);
-      throw error;
-    }
-  },
 
-  async getChatResponse(chatId, userMessage, context = []) {
+  // Haupt-Funktion: wird vom chatController aufgerufen
+  async generateResponse(userMessage, history = [], contextDocs = [], chatId = null) {
     try {
       const { data: settings } = await supabase
         .from('settings')
         .select('system_prompt, negative_prompt')
         .single();
 
-      const { data: history } = await supabase
-        .from('messages')
-        .select('role, content')
-        .eq('chat_id', chatId)
-        .order('created_at', { ascending: true })
-        .limit(10);
+      const contextText = contextDocs && contextDocs.length > 0
+        ? contextDocs.map(c => c.content).join('\n---\n')
+        : 'Kein spezifischer Kontext verfügbar.';
 
-      const contextText = context.map(c => c.content).join('\n---\n');
-      
-      const fullSystemPrompt = `${settings.system_prompt}
-      
-      KONTEXT AUS WISSENSDATENBANK:
-      ${contextText}
-      
-      WICHTIGE REGELN (NEGATIV-PROMPTS):
-      ${settings.negative_prompt}
-      
-      ZUSATZ-INSTRUKTION: 
-      Falls du eine technische Frage zu Geräte-Kompatibilität (z.B. Nothing Phone, iPhone) nicht im Kontext findest, nutze dein internes Wissen, aber weise den Nutzer an, in den Geräteeinstellungen nach "eSIM hinzufügen" zu suchen. 
-      Falls du die Antwort absolut nicht weißt, antworte mit: "[UNKLAR] Entschuldigung, das muss ich intern klären."`;
+      const negativePrompt = settings?.negative_prompt
+        ? `\n\nWICHTIGE REGELN (unbedingt beachten):\n${settings.negative_prompt}`
+        : '';
+
+      const systemContent = `${settings?.system_prompt || 'Du bist ein hilfreicher Assistent.'}
+
+KONTEXT AUS WISSENSDATENBANK:
+${contextText}
+${negativePrompt}
+
+ANWEISUNG: Falls du eine Frage anhand des Kontexts nicht beantworten kannst, antworte mit dem Präfix "[UNKLAR]" gefolgt von einer höflichen Erklärung.`;
 
       const messages = [
-        { role: 'system', content: fullSystemPrompt },
-        ...history,
+        { role: 'system', content: systemContent },
+        ...(history || []),
         { role: 'user', content: userMessage }
       ];
 
-      const response = await axios.post('https://api.deepseek.com/v1/chat/completions', {
-        model: 'deepseek-chat',
-        messages: messages,
-        temperature: 0.5
-      }, {
-        headers: { 'Authorization': `Bearer ${deepseek.apiKey}` }
-      });
+      const response = await axios.post(
+        `${deepseek.baseUrl}/v1/chat/completions`,
+        {
+          model: 'deepseek-chat',
+          messages,
+          temperature: 0.5,
+          max_tokens: 1024
+        },
+        {
+          headers: {
+            'Authorization': `Bearer ${deepseek.apiKey}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 30000
+        }
+      );
 
-      const aiContent = response.data.choices[0].message.content;
+      const choice = response.data.choices[0].message.content;
+      const usage = response.data.usage || {};
 
-      if (aiContent.includes('[UNKLAR]')) {
+      // Wissenslücke erkannt → in Learning Queue eintragen
+      if (choice.includes('[UNKLAR]') && chatId) {
         await supabase.from('learning_queue').insert([{
           original_chat_id: chatId,
           unanswered_question: userMessage,
           status: 'pending'
         }]);
-        
-        return "Ich bin mir bei dieser spezifischen Frage zu unseren eSIM-Tarifen unsicher. Ich habe soeben einen Experten informiert, der sich hier im Chat bei dir melden wird.";
+
+        return {
+          text: 'Ich bin mir bei dieser Frage leider nicht sicher genug. Ein Mitarbeiter wurde benachrichtigt und wird sich so schnell wie möglich melden. 🙏',
+          promptTokens: usage.prompt_tokens || 0,
+          completionTokens: usage.completion_tokens || 0
+        };
       }
 
-      return aiContent;
+      return {
+        text: choice,
+        promptTokens: usage.prompt_tokens || 0,
+        completionTokens: usage.completion_tokens || 0
+      };
     } catch (error) {
-      logger.error('DeepSeek API Error:', error.message);
-      throw error;
+      logger.error('DeepSeek generateResponse Error:', error.message);
+      throw new Error('KI-Antwort konnte nicht generiert werden.');
     }
   },
 
+  // Embedding für Vektorsuche (OpenAI text-embedding-3-small)
+  async generateEmbedding(text) {
+    try {
+      const response = await axios.post(
+        'https://api.openai.com/v1/embeddings',
+        {
+          model: 'text-embedding-3-small',
+          input: text.replace(/\n/g, ' ').substring(0, 8000)
+        },
+        {
+          headers: { 'Authorization': `Bearer ${openai.apiKey}` },
+          timeout: 15000
+        }
+      );
+      return response.data.data[0].embedding;
+    } catch (error) {
+      logger.error('Embedding Error:', error.message);
+      throw new Error('Embedding-Generierung fehlgeschlagen.');
+    }
+  },
+
+  // Learning Queue: Admin-Antwort → Wissensdatenbank
   async processLearningResponse(adminAnswer, questionId) {
     try {
-      const { data: question } = await supabase
+      const { data: question, error } = await supabase
         .from('learning_queue')
         .select('*')
         .eq('id', questionId)
         .single();
 
-      const combinedContent = `Frage: ${question.unanswered_question} \nAntwort: ${adminAnswer}`;
+      if (error || !question) throw new Error('Frage nicht gefunden');
+
+      const combinedContent = `Frage: ${question.unanswered_question}\nAntwort: ${adminAnswer}`;
       const embedding = await this.generateEmbedding(combinedContent);
 
       await supabase.from('knowledge_base').insert([{
         content: combinedContent,
-        embedding: embedding,
+        embedding,
         source: 'learning_chat'
       }]);
 

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DeepSeek eSIM Admin Dashboard</title>
+    <title>AI Assistant Admin</title>
     <link rel="stylesheet" href="css/style.css">
     <style>
         #admin-app { display: none; }
@@ -16,61 +16,86 @@
             box-shadow: 0 10px 25px rgba(0,0,0,0.5); width: 100%; max-width: 350px; text-align: center;
         }
         .login-box input {
-            width: 100%; padding: 12px; margin: 10px 0;
-            background: #333; border: 1px solid #444; color: white; border-radius: 6px;
+            width: 100%; padding: 12px; margin: 8px 0;
+            background: #333; border: 1px solid #444; color: white; border-radius: 6px; box-sizing: border-box;
         }
         .login-box button {
             width: 100%; padding: 12px; background: #007bff; border: none;
-            color: white; border-radius: 6px; cursor: pointer; font-weight: bold;
+            color: white; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 8px;
         }
         .error-msg { color: #ff6b6b; font-size: 0.9rem; margin-top: 10px; display: none; }
         
         .admin-section { display: none; }
         .nav-links button.active { background: #007bff !important; }
         
-        /* Mobile Nav Fix */
+        /* Mobile Nav */
         .nav-links {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
-            gap: 8px;
-            padding: 10px;
+            gap: 6px;
+            padding: 8px;
             width: 100%;
         }
-        .nav-links button {
-            padding: 10px 5px;
-            font-size: 12px;
-            white-space: nowrap;
-        }
+        .nav-links button { padding: 8px 4px; font-size: 11px; white-space: nowrap; }
 
-        .link-selection-area { background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 15px 0; max-height: 300px; overflow-y: auto; border: 1px solid #ddd; }
-        .link-item { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid #eee; }
-        .link-item label { font-size: 0.9rem; color: #333; cursor: pointer; }
-        
-        .manual-kb-area {
-            background: #2a2a2a;
-            padding: 20px;
-            border-radius: 8px;
-            margin-top: 20px;
+        /* Link Discovery */
+        .link-selection-area {
+            background: #2a2a2a; padding: 15px; border-radius: 8px;
+            margin: 15px 0; max-height: 280px; overflow-y: auto;
             border: 1px solid #444;
+        }
+        .link-item { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid #333; }
+        .link-item label { font-size: 0.85rem; color: #ccc; cursor: pointer; word-break: break-all; }
+        
+        /* Manueller Wissenseintrag */
+        .manual-kb-area {
+            background: #2a2a2a; padding: 20px; border-radius: 8px;
+            margin-top: 20px; border: 1px solid #444;
         }
         .manual-kb-area input, .manual-kb-area textarea {
-            width: 100%;
-            margin-bottom: 10px;
-            background: #333;
-            border: 1px solid #444;
-            color: white;
-            padding: 10px;
-            border-radius: 4px;
+            width: 100%; margin-bottom: 10px;
+            background: #333; border: 1px solid #444;
+            color: white; padding: 10px; border-radius: 4px; box-sizing: border-box;
         }
+
+        /* Settings Formular */
+        .settings-form .form-group { margin-bottom: 1.5rem; }
+        .settings-form label {
+            display: block; margin-bottom: 6px;
+            font-weight: 600; font-size: 0.9rem; color: #ccc;
+        }
+        .settings-form textarea, .settings-form input[type="text"], .settings-form input[type="password"] {
+            width: 100%; background: #2a2a2a; border: 1px solid #444;
+            color: white; padding: 10px; border-radius: 6px; box-sizing: border-box;
+        }
+        .settings-form .hint {
+            font-size: 0.78rem; color: #888; margin-top: 4px;
+        }
+        #save-settings {
+            background: #007bff; width: 100%; padding: 14px;
+            font-size: 1rem; font-weight: bold; border-radius: 8px;
+        }
+
+        /* Chat */
+        .manual-active { border-left: 3px solid #ef4444; }
+        .chat-status { font-size: 0.75rem; font-weight: 600; }
+        .badge { background: #ef4444; color: white; font-size: 0.7rem; padding: 2px 6px; border-radius: 10px; margin-left: 4px; }
+        
+        #stats-bar { display: none; }
+        
+        /* Blacklist Tabelle */
+        #blacklist-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
+        #blacklist-table th, #blacklist-table td { padding: 8px 12px; border-bottom: 1px solid #333; text-align: left; font-size: 0.9rem; }
+        #blacklist-table th { background: #2a2a2a; color: #aaa; }
     </style>
 </head>
 <body>
 
     <div id="login-overlay">
         <div class="login-box">
-            <h2 style="color: white; margin-bottom: 1.5rem;">Admin Login</h2>
-            <input type="text" id="username" placeholder="Benutzername">
-            <input type="password" id="password" placeholder="Passwort">
+            <h2 style="color: white; margin-bottom: 1.5rem;">🤖 Admin Login</h2>
+            <input type="text" id="username" placeholder="Benutzername" onkeydown="if(event.key==='Enter')handleLogin()">
+            <input type="password" id="password" placeholder="Passwort" onkeydown="if(event.key==='Enter')handleLogin()">
             <button onclick="handleLogin()">Anmelden</button>
             <p id="login-error" class="error-msg">Zugriff verweigert</p>
         </div>
@@ -78,115 +103,142 @@
 
     <div id="admin-app">
         <nav class="navbar">
-            <div class="logo">DeepSeek Admin <span id="version-tag"></span></div>
+            <div class="logo">AI Assistant Admin <span id="version-tag" style="font-size:0.75rem;opacity:0.6;"></span></div>
             <div class="nav-links">
-                <button onclick="showSection('chats')" id="nav-chats">Chats</button>
-                <button onclick="showSection('learning')" id="nav-learning">Learning <span id="learning-badge" class="badge">0</span></button>
-                <button onclick="showSection('knowledge')" id="nav-knowledge">Wissen</button>
-                <button onclick="showSection('security')" id="nav-security">Sicherheit</button>
-                <button onclick="showSection('settings')" id="nav-settings">Settings</button>
-                <button onclick="handleLogout()" style="background: #dc3545; color: white;">Logout</button>
+                <button onclick="showSection('chats')" id="nav-chats">💬 Chats</button>
+                <button onclick="showSection('learning')" id="nav-learning">🧠 Lernen <span id="learning-badge" class="badge" style="display:none;">0</span></button>
+                <button onclick="showSection('knowledge')" id="nav-knowledge">📚 Wissen</button>
+                <button onclick="showSection('security')" id="nav-security">🛡 Sicherheit</button>
+                <button onclick="showSection('settings')" id="nav-settings">⚙️ Settings</button>
+                <button onclick="handleLogout()" style="background:#dc3545;color:white;">Logout</button>
             </div>
         </nav>
 
         <main class="container">
+
+            <!-- Stats Bar (immer sichtbar) -->
             <section id="stats-bar" class="stats-grid">
                 <div class="stat-card">
                     <h3>Total Chats</h3>
-                    <p id="total-chats">0</p>
+                    <p id="total-chats">–</p>
                 </div>
                 <div class="stat-card">
                     <h3>Manuell</h3>
-                    <p id="manual-chats">0</p>
+                    <p id="manual-chats">–</p>
                 </div>
                 <div class="stat-card">
                     <h3>Wissenseinträge</h3>
-                    <p id="knowledge-entries">0</p>
+                    <p id="knowledge-entries">–</p>
                 </div>
                 <div class="stat-card">
-                    <h3>KI-Kosten (Est.)</h3>
-                    <p id="total-cost">0.0000 $</p>
-                    <small id="total-tokens" style="color: #888;">0 Token</small>
+                    <h3>KI-Kosten (ca.)</h3>
+                    <p id="total-cost">–</p>
+                    <small id="total-tokens" style="color:#888;">–</small>
                 </div>
             </section>
 
+            <!-- CHATS -->
             <section id="chats-section" class="admin-section">
                 <div class="chat-container">
                     <aside id="chat-list" class="sidebar"></aside>
                     <div id="chat-details" class="content-area">
-                        <p class="placeholder">Wähle einen Chat aus der Liste</p>
+                        <p style="padding:2rem;color:#888;">← Wähle einen Chat aus der Liste</p>
                     </div>
                 </div>
             </section>
 
-            <section id="learning-section" class="admin-section">
+            <!-- LEARNING -->
+            <section id="learning-section" class="admin-section" style="padding:1rem;">
                 <h2>🧠 Learning Center</h2>
-                <div id="learning-list" class="card-list">
-                    <p class="placeholder">Keine offenen Fragen vorhanden.</p>
+                <p style="color:#888;font-size:0.9rem;">Fragen die die KI nicht beantworten konnte. Deine Antworten werden direkt in die Wissensdatenbank gespeichert.</p>
+                <div id="learning-list">
+                    <p style="color:#888;">Keine offenen Fragen.</p>
                 </div>
             </section>
 
-            <section id="knowledge-section" class="admin-section">
-                <h2>Wissensdatenbank verwalten</h2>
-                <div class="input-group">
-                    <input type="text" id="scrape-url" placeholder="https://esim-shop.com/faq">
+            <!-- WISSEN -->
+            <section id="knowledge-section" class="admin-section" style="padding:1rem;">
+                <h2>📚 Wissensdatenbank</h2>
+
+                <h3>🌐 Website scrapen</h3>
+                <div class="input-group" style="display:flex;gap:8px;margin-bottom:8px;">
+                    <input type="text" id="scrape-url" placeholder="https://deine-website.de" style="flex:1;background:#2a2a2a;border:1px solid #444;color:white;padding:10px;border-radius:6px;">
                     <button id="url-discover">Links finden</button>
                 </div>
+                <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">⚠️ Hinweis: Seiten mit Cloudflare-Schutz benötigen ggf. mehrere Versuche oder manuellen Import.</p>
                 <div id="link-list"></div>
-                <button id="start-scrape" style="display:none; margin-top: 15px;">Ausgewählte Seiten scrapen</button>
-                
+                <button id="start-scrape" style="display:none;margin-top:12px;background:#28a745;width:100%;">Ausgewählte Seiten scrapen</button>
+
+                <!-- Manueller Eintrag -->
                 <div class="manual-kb-area">
                     <h3>✍️ Manueller Wissenseintrag</h3>
-                    <input type="text" id="manual-kb-title" placeholder="Titel (z.B. Support Zeiten)">
-                    <textarea id="manual-kb-content" rows="4" placeholder="Hier das Wissen eintragen..."></textarea>
-                    <button id="save-manual-kb" onclick="saveManualKnowledge()" style="background: #28a745; width: 100%;">Wissen speichern</button>
+                    <input type="text" id="manual-kb-title" placeholder="Titel (z.B. Öffnungszeiten, Preise)">
+                    <textarea id="manual-kb-content" rows="5" placeholder="Hier das Wissen eingeben — z.B. Produktbeschreibungen, FAQs, Support-Infos..."></textarea>
+                    <button id="save-manual-kb" style="background:#28a745;width:100%;">💾 Wissen speichern</button>
                 </div>
 
-                <hr style="margin: 25px 0; border-color: #444;">
-                <h3>Direkter Wissensimport</h3>
+                <hr style="margin:25px 0;border-color:#444;">
+                <h3>🔗 Integrationen</h3>
                 <button id="sync-sellauth" class="btn-secondary">Sellauth Produkte synchronisieren</button>
             </section>
 
-            <section id="security-section" class="admin-section">
+            <!-- SICHERHEIT -->
+            <section id="security-section" class="admin-section" style="padding:1rem;">
                 <h2>🛡 Sicherheit & Blacklist</h2>
-                <div class="form-group">
-                    <label>Nutzer bannen</label>
-                    <div class="input-group">
-                        <input type="text" id="ban-identifier" placeholder="ID oder IP...">
-                        <input type="text" id="ban-reason" placeholder="Grund">
-                        <button id="btn-ban" class="btn-danger">Bannen</button>
+                <div style="margin-bottom:1.5rem;">
+                    <label style="display:block;margin-bottom:6px;font-weight:600;">Nutzer bannen</label>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <input type="text" id="ban-identifier" placeholder="Telegram-ID, IP..." style="flex:1;background:#2a2a2a;border:1px solid #444;color:white;padding:10px;border-radius:6px;">
+                        <input type="text" id="ban-reason" placeholder="Grund (optional)" style="flex:1;background:#2a2a2a;border:1px solid #444;color:white;padding:10px;border-radius:6px;">
+                        <button id="btn-ban" style="background:#dc3545;">Bannen</button>
                     </div>
                 </div>
-                <div id="blacklist-table-container">
-                    <table id="blacklist-table">
-                        <thead>
-                            <tr><th>Identifikator</th><th>Grund</th><th>Aktion</th></tr>
-                        </thead>
-                        <tbody id="blacklist-body"></tbody>
-                    </table>
+                <table id="blacklist-table">
+                    <thead>
+                        <tr><th>Identifikator</th><th>Grund</th><th>Datum</th><th>Aktion</th></tr>
+                    </thead>
+                    <tbody id="blacklist-body"></tbody>
+                </table>
+            </section>
+
+            <!-- SETTINGS -->
+            <section id="settings-section" class="admin-section" style="padding:1rem;">
+                <h2>⚙️ System-Einstellungen</h2>
+                <div class="settings-form">
+
+                    <div class="form-group">
+                        <label>👋 Telegram Begrüßungsnachricht (/start)</label>
+                        <textarea id="welcome-message" rows="3" placeholder="Diese Nachricht wird gesendet wenn ein Nutzer /start tippt..."></textarea>
+                        <p class="hint">Wird bei jedem /start Befehl an den Nutzer gesendet. Unterstützt Markdown.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>🤖 System Prompt (KI-Persönlichkeit)</label>
+                        <textarea id="system-prompt" rows="8" placeholder="Du bist ein hilfreicher Assistent für..."></textarea>
+                        <p class="hint">Definiert das Verhalten und die Rolle der KI. Sei präzise und spezifisch.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>🚫 Negativ-Prompts (Verbotene Themen)</label>
+                        <textarea id="negative-prompt" rows="4" placeholder="Antworte nie auf Fragen zu Wettbewerbern. Gib keine Preisgarantien..."></textarea>
+                        <p class="hint">Was die KI NICHT tun soll. Wird automatisch als Regel hinzugefügt.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>🔄 Übergabe-Nachricht (bei manuellem Modus)</label>
+                        <input type="text" id="manual-msg-template" placeholder="Ein Mitarbeiter übernimmt gleich das Gespräch...">
+                        <p class="hint">Wird gesendet wenn du einen Chat auf manuell umschaltest.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>🔑 Sellauth API Key</label>
+                        <input type="password" id="sellauth-api-key" placeholder="sa_...">
+                    </div>
+
+                    <button id="save-settings">💾 Alle Einstellungen speichern</button>
                 </div>
             </section>
 
-            <section id="settings-section" class="admin-section">
-                <h2>System-Einstellungen</h2>
-                <div class="form-group">
-                    <label>🔑 Sellauth API Key</label>
-                    <input type="password" id="sellauth-api-key" placeholder="sa_...">
-                </div>
-                <div class="form-group">
-                    <label>System Prompt</label>
-                    <textarea id="system-prompt" rows="6"></textarea>
-                </div>
-                <div class="form-group">
-                    <label>🚫 Negativ-Prompts</label>
-                    <textarea id="negative-prompt" rows="4"></textarea>
-                </div>
-                <div class="form-group">
-                    <label>Übergabe-Nachricht</label>
-                    <input type="text" id="manual-msg-template">
-                </div>
-                <button id="save-settings">Einstellungen speichern</button>
-            </section>
         </main>
     </div>
 
@@ -199,18 +251,19 @@
             if (section) {
                 section.style.display = (id === 'chats') ? 'flex' : 'block';
             }
-            
             document.querySelectorAll('.nav-links button').forEach(btn => btn.classList.remove('active'));
             const activeBtn = document.getElementById('nav-' + id);
             if (activeBtn) activeBtn.classList.add('active');
-            
-            document.getElementById('stats-bar').style.display = (id === 'chats') ? 'grid' : 'none';
+
+            // Stats immer sichtbar
+            document.getElementById('stats-bar').style.display = 'grid';
         }
 
         async function handleLogin() {
             const user = document.getElementById('username').value;
             const pass = document.getElementById('password').value;
             const err = document.getElementById('login-error');
+            err.style.display = 'none';
 
             try {
                 const response = await fetch('/api/admin/login', {
@@ -227,10 +280,10 @@
                     showSection('chats');
                 } else {
                     err.style.display = 'block';
-                    err.innerText = data.error || "Zugriff verweigert";
+                    err.innerText = data.error || 'Zugriff verweigert';
                 }
             } catch (e) {
-                err.innerText = "Verbindung fehlgeschlagen";
+                err.innerText = 'Verbindung fehlgeschlagen';
                 err.style.display = 'block';
             }
         }
@@ -240,6 +293,7 @@
             window.location.reload();
         }
 
+        // Auto-Login wenn Token vorhanden
         if (localStorage.getItem('admin_token')) {
             document.getElementById('login-overlay').style.display = 'none';
             document.getElementById('admin-app').style.display = 'block';

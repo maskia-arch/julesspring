@@ -12,43 +12,104 @@ const widgetRoutes = require('./routes/widgetRoutes');
 const app = express();
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// FIX: Da die server.js in /src liegt, zeigt __dirname auf /src. 
-// 'public' zeigt also direkt auf /src/public.
+// Statische Dateien (src/public)
 app.use(express.static(path.join(__dirname, 'public')));
 
+// API Routen
 app.use('/api/admin', adminRoutes);
 app.use('/api/webhooks', webhookRoutes);
 app.use('/api/widget', widgetRoutes);
 
-// FIX: Auch hier den Pfad zu index.html anpassen
+// Admin Dashboard
 app.get('/admin', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
-
-// Catch-all für das Dashboard (falls du darin navigierst)
 app.get('/admin/*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
+// Health-Check (für Render.com keepAlive)
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date() });
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+// Root → Admin
+app.get('/', (req, res) => {
+  res.redirect('/admin');
+});
+
+// Fehlerbehandlung
 app.use(errorHandler);
 
-app.listen(port, () => {
+// Server starten
+const server = app.listen(port, () => {
   logger.info(`Server läuft auf Port ${port}`);
-  logger.info(`Admin-Dashboard unter /admin erreichbar`);
+  logger.info(`Admin-Dashboard: http://localhost:${port}/admin`);
+  startKeepAlive();
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+// ─── KeepAlive für Render.com Free Tier ──────────────────────────────────────
+// Verhindert dass der Container einschläft und Webhooks verpassen werden
+function startKeepAlive() {
+  const APP_URL = process.env.APP_URL; // z.B. https://dein-bot.onrender.com
+  if (!APP_URL) {
+    logger.info('KeepAlive deaktiviert (APP_URL nicht gesetzt)');
+    return;
+  }
+
+  // Erste Ping nach 30 Sekunden, dann alle 14 Minuten
+  setTimeout(() => {
+    pingHealth(APP_URL);
+    setInterval(() => pingHealth(APP_URL), 14 * 60 * 1000);
+  }, 30000);
+
+  logger.info(`KeepAlive aktiv → ${APP_URL}/health alle 14 Minuten`);
+}
+
+async function pingHealth(appUrl) {
+  try {
+    const http = require('http');
+    const https = require('https');
+    const url = new URL(`${appUrl}/health`);
+    const client = url.protocol === 'https:' ? https : http;
+    
+    const req = client.get(url.href, { timeout: 8000 }, (res) => {
+      logger.info(`KeepAlive ping → ${res.statusCode}`);
+    });
+    req.on('error', (e) => logger.warn(`KeepAlive ping fehlgeschlagen: ${e.message}`));
+    req.end();
+  } catch (e) {
+    logger.warn(`KeepAlive Error: ${e.message}`);
+  }
+}
+
+// ─── Graceful Shutdown ────────────────────────────────────────────────────────
+let isShuttingDown = false;
+
+function gracefulShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  logger.info(`${signal} empfangen – fahre Server herunter...`);
+  server.close(() => {
+    logger.info('Server beendet.');
+    process.exit(0);
+  });
+  setTimeout(() => process.exit(1), 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+process.on('unhandledRejection', (reason) => {
+  logger.error('Unhandled Rejection:', reason);
 });
 
 process.on('uncaughtException', (error) => {
   logger.error('Uncaught Exception:', error);
-  process.exit(1);
+  gracefulShutdown('uncaughtException');
 });
+
+module.exports = app;
