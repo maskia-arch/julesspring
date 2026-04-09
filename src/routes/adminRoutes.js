@@ -1,41 +1,62 @@
 const express = require('express');
-const router = express.Router();
-const adminController = require('../controllers/adminController');
-const auth = require('../middleware/auth');
+const router  = express.Router();
+const ctrl    = require('../controllers/adminController');
+const auth    = require('../middleware/auth');
 
-// ─── ÖFFENTLICHE ROUTEN ───────────────────────────────────────────────────
-router.post('/login', adminController.login);
+// ─── ÖFFENTLICH ──────────────────────────────────────────────────────────────
+router.post('/login', ctrl.login);
 
-// ─── GESCHÜTZTE ROUTEN (JWT erforderlich) ────────────────────────────────
+// ─── GESCHÜTZT (JWT) ─────────────────────────────────────────────────────────
 router.use(auth);
 
-// Dashboard & System
-router.get('/stats', adminController.getStats);
-router.get('/settings', adminController.getSettings);
-router.post('/settings', adminController.updateSettings);
+// Stats & Settings
+router.get('/stats',          ctrl.getStats);
+router.get('/settings',       ctrl.getSettings);
+router.post('/settings',      ctrl.updateSettings);
 
 // Chat-Management
-router.get('/chats', adminController.getChats);
-router.get('/chats/:chatId/messages', adminController.getChatMessages);
-router.patch('/chats/:chatId/status', adminController.updateChatStatus);
-router.post('/manual-message', adminController.sendManualMessage);
+router.get('/chats',                    ctrl.getChats);
+router.get('/chats/:chatId/messages',   ctrl.getChatMessages);
+router.patch('/chats/:chatId/status',   ctrl.updateChatStatus);
+router.post('/manual-message',          ctrl.sendManualMessage);
 
 // Learning Center
-router.get('/learning', adminController.getLearningQueue);
-router.post('/learning/resolve', adminController.resolveLearning);
+router.get('/learning',          ctrl.getLearningQueue);
+router.post('/learning/resolve', ctrl.resolveLearning);
 
-// Wissensdatenbank
-router.post('/knowledge/manual', adminController.addManualKnowledge);   // BUGFIX: war fehlend
-router.post('/knowledge/discover', adminController.discoverLinks);
-router.post('/scrape', adminController.startScraping);
-router.post('/sync-sellauth', adminController.syncSellauth);
+// ─── Wissensdatenbank ────────────────────────────────────────────────────────
+// Kategorien
+router.get('/knowledge/categories',       ctrl.getKnowledgeCategories);
+router.post('/knowledge/categories',      ctrl.createKnowledgeCategory);
+router.delete('/knowledge/categories/:id',ctrl.deleteKnowledgeCategory);
 
-// Sicherheit & Blacklist
-router.get('/blacklist', adminController.getBlacklist);
-router.post('/blacklist', adminController.banUser);
-router.delete('/blacklist/:id', adminController.removeBan);
+// Einträge
+router.get('/knowledge/entries',     ctrl.getKnowledgeEntries);
+router.delete('/knowledge/entries/:id', ctrl.deleteKnowledgeEntry);
 
-// Push-Benachrichtigungen
-router.post('/push-subscription', adminController.savePushSubscription);
+// Manuell + Scraper
+router.post('/knowledge/manual',    ctrl.addManualKnowledge);
+router.post('/knowledge/discover',  ctrl.discoverLinks);
+router.post('/scrape',              ctrl.startScraping);
+
+// ─── Sellauth Integration ────────────────────────────────────────────────────
+router.post('/sellauth/test',     ctrl.testSellauthConnection);
+router.post('/sellauth/sync',     ctrl.syncSellauth);
+router.get('/sellauth/preview',   ctrl.previewSellauthProducts);
+
+// Legacy-Route (Kompatibilität)
+router.post('/sync-sellauth',     ctrl.syncSellauth);
+
+// ─── Telegram Setup ──────────────────────────────────────────────────────────
+router.post('/telegram/webhook',  ctrl.setupWebhook);
+router.get('/telegram/webhook',   ctrl.getWebhookInfo);
+
+// ─── Sicherheit & Blacklist ──────────────────────────────────────────────────
+router.get('/blacklist',       ctrl.getBlacklist);
+router.post('/blacklist',      ctrl.banUser);
+router.delete('/blacklist/:id',ctrl.removeBan);
+
+// Push
+router.post('/push-subscription', ctrl.savePushSubscription);
 
 module.exports = router;

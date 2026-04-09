@@ -6,299 +6,425 @@
     <title>AI Assistant Admin</title>
     <link rel="stylesheet" href="css/style.css">
     <style>
+        /* Login */
         #admin-app { display: none; }
-        #login-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: #1a1a1a; display: flex; justify-content: center; align-items: center; z-index: 9999;
-        }
-        .login-box {
-            background: #2a2a2a; padding: 2rem; border-radius: 12px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.5); width: 100%; max-width: 350px; text-align: center;
-        }
-        .login-box input {
-            width: 100%; padding: 12px; margin: 8px 0;
-            background: #333; border: 1px solid #444; color: white; border-radius: 6px; box-sizing: border-box;
-        }
-        .login-box button {
-            width: 100%; padding: 12px; background: #007bff; border: none;
-            color: white; border-radius: 6px; cursor: pointer; font-weight: bold; margin-top: 8px;
-        }
-        .error-msg { color: #ff6b6b; font-size: 0.9rem; margin-top: 10px; display: none; }
-        
-        .admin-section { display: none; }
-        .nav-links button.active { background: #007bff !important; }
-        
-        /* Mobile Nav */
-        .nav-links {
-            display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 6px;
-            padding: 8px;
-            width: 100%;
-        }
-        .nav-links button { padding: 8px 4px; font-size: 11px; white-space: nowrap; }
+        #login-overlay { position:fixed;top:0;left:0;width:100%;height:100%;background:#0f0f0f;display:flex;justify-content:center;align-items:center;z-index:9999; }
+        .login-box { background:#1e1e1e;padding:2.5rem;border-radius:14px;box-shadow:0 20px 50px rgba(0,0,0,0.6);width:100%;max-width:360px;text-align:center; }
+        .login-box h2 { color:#fff;margin:0 0 1.5rem;font-size:1.4rem; }
+        .login-box input { width:100%;padding:12px;margin:6px 0;background:#2a2a2a;border:1px solid #444;color:#fff;border-radius:8px;box-sizing:border-box;font-size:0.95rem; }
+        .login-box button { width:100%;padding:12px;background:#2563eb;border:none;color:#fff;border-radius:8px;cursor:pointer;font-weight:700;margin-top:10px;font-size:1rem; }
+        .error-msg { color:#ff6b6b;font-size:0.875rem;margin-top:10px;display:none; }
 
-        /* Link Discovery */
-        .link-selection-area {
-            background: #2a2a2a; padding: 15px; border-radius: 8px;
-            margin: 15px 0; max-height: 280px; overflow-y: auto;
-            border: 1px solid #444;
-        }
-        .link-item { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-bottom: 1px solid #333; }
-        .link-item label { font-size: 0.85rem; color: #ccc; cursor: pointer; word-break: break-all; }
-        
-        /* Manueller Wissenseintrag */
-        .manual-kb-area {
-            background: #2a2a2a; padding: 20px; border-radius: 8px;
-            margin-top: 20px; border: 1px solid #444;
-        }
-        .manual-kb-area input, .manual-kb-area textarea {
-            width: 100%; margin-bottom: 10px;
-            background: #333; border: 1px solid #444;
-            color: white; padding: 10px; border-radius: 4px; box-sizing: border-box;
-        }
-
-        /* Settings Formular */
-        .settings-form .form-group { margin-bottom: 1.5rem; }
-        .settings-form label {
-            display: block; margin-bottom: 6px;
-            font-weight: 600; font-size: 0.9rem; color: #ccc;
-        }
-        .settings-form textarea, .settings-form input[type="text"], .settings-form input[type="password"] {
-            width: 100%; background: #2a2a2a; border: 1px solid #444;
-            color: white; padding: 10px; border-radius: 6px; box-sizing: border-box;
-        }
-        .settings-form .hint {
-            font-size: 0.78rem; color: #888; margin-top: 4px;
-        }
-        #save-settings {
-            background: #007bff; width: 100%; padding: 14px;
-            font-size: 1rem; font-weight: bold; border-radius: 8px;
-        }
+        /* Layout */
+        .admin-section { display:none; }
+        .nav-links button.active { background:#2563eb !important;border-color:#2563eb !important; }
 
         /* Chat */
-        .manual-active { border-left: 3px solid #ef4444; }
-        .chat-status { font-size: 0.75rem; font-weight: 600; }
-        .badge { background: #ef4444; color: white; font-size: 0.7rem; padding: 2px 6px; border-radius: 10px; margin-left: 4px; }
-        
-        #stats-bar { display: none; }
-        
-        /* Blacklist Tabelle */
-        #blacklist-table { width: 100%; border-collapse: collapse; margin-top: 1rem; }
-        #blacklist-table th, #blacklist-table td { padding: 8px 12px; border-bottom: 1px solid #333; text-align: left; font-size: 0.9rem; }
-        #blacklist-table th { background: #2a2a2a; color: #aaa; }
+        .chat-container { display:flex;height:calc(100vh - 130px);overflow:hidden; }
+        .sidebar { width:260px;min-width:260px;background:#1a1a1a;border-right:1px solid #333;overflow-y:auto; }
+        .content-area { flex:1;display:flex;flex-direction:column;overflow:hidden; }
+        .chat-item { padding:10px 14px;border-bottom:1px solid #2a2a2a;cursor:pointer;display:flex;align-items:center;gap:8px;transition:background 0.15s; }
+        .chat-item:hover { background:#252525; }
+        .chat-item.manual-active { border-left:3px solid #ef4444; }
+        .message-history { flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:8px; }
+        .msg-bubble { max-width:75%;padding:8px 12px;border-radius:12px;font-size:0.875rem;line-height:1.5; }
+        .msg-user .msg-bubble { background:#2a2a3e;align-self:flex-start; }
+        .msg-assistant .msg-bubble { background:#1a3a2a;align-self:flex-end; }
+        .msg-row { display:flex; }
+        .msg-row.user { justify-content:flex-start; }
+        .msg-row.assistant { justify-content:flex-end; }
+
+        /* Knowledge */
+        .kb-layout { display:grid;grid-template-columns:220px 1fr;gap:16px;height:100%; }
+        .kb-categories { background:#1a1a1a;border-radius:10px;padding:12px;border:1px solid #333; }
+        .kb-cat-item { display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:7px;cursor:pointer;font-size:0.875rem;margin-bottom:4px;transition:background 0.15s; }
+        .kb-cat-item:hover { background:#252525; }
+        .kb-cat-item.active { background:#1e3a5f;border:1px solid #2563eb; }
+        .kb-cat-dot { width:10px;height:10px;border-radius:50%;flex-shrink:0; }
+        .kb-entries { overflow-y:auto; }
+        .kb-entry-card { background:#1e1e1e;border:1px solid #333;border-radius:8px;padding:12px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:flex-start;gap:10px; }
+        .kb-entry-meta { font-size:0.75rem;color:#666;margin-top:4px; }
+        .kb-entry-preview { font-size:0.85rem;color:#aaa;margin-top:6px;line-height:1.4; }
+
+        /* Sellauth */
+        .sa-product-card { background:#1a1a2e;border:1px solid #2d2d4e;border-radius:8px;padding:12px;margin-bottom:8px; }
+        .sa-product-name { font-weight:700;color:#e2e8f0; }
+        .sa-variant { background:#0f0f1a;border-radius:6px;padding:6px 10px;margin-top:6px;font-size:0.82rem;display:flex;justify-content:space-between; }
+        .sa-link { color:#4a9eff;font-size:0.8rem;word-break:break-all; }
+        .sa-badge { font-size:0.7rem;padding:2px 7px;border-radius:10px;font-weight:700; }
+        .sa-badge.single { background:#1e3a2a;color:#4ade80; }
+        .sa-badge.variant { background:#1e1e3a;color:#818cf8; }
+
+        /* Form */
+        .form-section { background:#1a1a1a;border:1px solid #333;border-radius:10px;padding:16px;margin-bottom:16px; }
+        .form-section h3 { margin:0 0 12px;font-size:0.95rem;color:#e2e8f0; }
+        .form-row { display:flex;gap:8px;align-items:flex-end; }
+        .form-row .form-group { flex:1;margin:0; }
+        .hint { font-size:0.75rem;color:#666;margin-top:4px; }
+        .badge-pill { display:inline-flex;align-items:center;gap:5px;padding:3px 9px;border-radius:20px;font-size:0.75rem;font-weight:600; }
+
+        /* Tabs */
+        .tab-bar { display:flex;gap:4px;margin-bottom:12px;border-bottom:1px solid #333;padding-bottom:8px; }
+        .tab-btn { background:none;border:none;color:#888;padding:6px 14px;cursor:pointer;font-size:0.875rem;border-radius:6px; }
+        .tab-btn.active { background:#1e3a5f;color:#4a9eff;border:1px solid #2563eb; }
+        .tab-pane { display:none; }
+        .tab-pane.active { display:block; }
+
+        .status-dot { width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:5px; }
+        .dot-green { background:#22c55e; }
+        .dot-red { background:#ef4444; }
+        .dot-yellow { background:#f59e0b; }
     </style>
 </head>
 <body>
 
-    <div id="login-overlay">
-        <div class="login-box">
-            <h2 style="color: white; margin-bottom: 1.5rem;">🤖 Admin Login</h2>
-            <input type="text" id="username" placeholder="Benutzername" onkeydown="if(event.key==='Enter')handleLogin()">
-            <input type="password" id="password" placeholder="Passwort" onkeydown="if(event.key==='Enter')handleLogin()">
-            <button onclick="handleLogin()">Anmelden</button>
-            <p id="login-error" class="error-msg">Zugriff verweigert</p>
-        </div>
+<!-- LOGIN -->
+<div id="login-overlay">
+    <div class="login-box">
+        <h2>🤖 Admin Login</h2>
+        <input type="text" id="username" placeholder="Benutzername" onkeydown="if(event.key==='Enter')handleLogin()">
+        <input type="password" id="password" placeholder="Passwort" onkeydown="if(event.key==='Enter')handleLogin()">
+        <button onclick="handleLogin()">Anmelden</button>
+        <p id="login-error" class="error-msg">Zugriff verweigert</p>
     </div>
+</div>
 
-    <div id="admin-app">
-        <nav class="navbar">
-            <div class="logo">AI Assistant Admin <span id="version-tag" style="font-size:0.75rem;opacity:0.6;"></span></div>
-            <div class="nav-links">
-                <button onclick="showSection('chats')" id="nav-chats">💬 Chats</button>
-                <button onclick="showSection('learning')" id="nav-learning">🧠 Lernen <span id="learning-badge" class="badge" style="display:none;">0</span></button>
-                <button onclick="showSection('knowledge')" id="nav-knowledge">📚 Wissen</button>
-                <button onclick="showSection('security')" id="nav-security">🛡 Sicherheit</button>
-                <button onclick="showSection('settings')" id="nav-settings">⚙️ Settings</button>
-                <button onclick="handleLogout()" style="background:#dc3545;color:white;">Logout</button>
+<!-- DASHBOARD -->
+<div id="admin-app">
+    <nav class="navbar">
+        <div class="logo">AI Assistant <span id="version-tag" style="font-size:0.7rem;opacity:0.5;"></span></div>
+        <div class="nav-links">
+            <button onclick="showSection('chats')"    id="nav-chats">💬 Chats</button>
+            <button onclick="showSection('learning')" id="nav-learning">🧠 Lernen <span id="learning-badge" class="badge" style="display:none;">0</span></button>
+            <button onclick="showSection('knowledge')" id="nav-knowledge">📚 Wissen</button>
+            <button onclick="showSection('sellauth')" id="nav-sellauth">🛒 Sellauth</button>
+            <button onclick="showSection('security')" id="nav-security">🛡 Sicherheit</button>
+            <button onclick="showSection('settings')" id="nav-settings">⚙️ Settings</button>
+            <button onclick="handleLogout()" style="background:#dc3545;">Logout</button>
+        </div>
+    </nav>
+
+    <!-- Stats Bar -->
+    <section id="stats-bar" class="stats-grid">
+        <div class="stat-card"><h3>Total Chats</h3><p id="total-chats">–</p></div>
+        <div class="stat-card"><h3>Manuell</h3><p id="manual-chats">–</p></div>
+        <div class="stat-card"><h3>Wissenseinträge</h3><p id="knowledge-entries">–</p></div>
+        <div class="stat-card"><h3>KI-Kosten</h3><p id="total-cost">–</p><small id="total-tokens" style="color:#666;"></small></div>
+    </section>
+
+    <main class="container" style="padding:12px;">
+
+        <!-- ── CHATS ── -->
+        <section id="chats-section" class="admin-section">
+            <div class="chat-container">
+                <aside id="chat-list" class="sidebar"><p style="padding:1rem;color:#666;font-size:0.875rem;">Lade Chats…</p></aside>
+                <div id="chat-details" class="content-area" style="background:#161616;justify-content:center;align-items:center;">
+                    <p style="color:#444;">← Chat auswählen</p>
+                </div>
             </div>
-        </nav>
+        </section>
 
-        <main class="container">
+        <!-- ── LEARNING ── -->
+        <section id="learning-section" class="admin-section">
+            <h2 style="margin-top:0;">🧠 Learning Center</h2>
+            <p style="color:#666;font-size:0.875rem;margin-bottom:16px;">Fragen die die KI nicht beantworten konnte. Deine Antworten fließen direkt in die Wissensdatenbank.</p>
+            <div id="learning-list"></div>
+        </section>
 
-            <!-- Stats Bar (immer sichtbar) -->
-            <section id="stats-bar" class="stats-grid">
-                <div class="stat-card">
-                    <h3>Total Chats</h3>
-                    <p id="total-chats">–</p>
-                </div>
-                <div class="stat-card">
-                    <h3>Manuell</h3>
-                    <p id="manual-chats">–</p>
-                </div>
-                <div class="stat-card">
-                    <h3>Wissenseinträge</h3>
-                    <p id="knowledge-entries">–</p>
-                </div>
-                <div class="stat-card">
-                    <h3>KI-Kosten (ca.)</h3>
-                    <p id="total-cost">–</p>
-                    <small id="total-tokens" style="color:#888;">–</small>
-                </div>
-            </section>
+        <!-- ── WISSEN ── -->
+        <section id="knowledge-section" class="admin-section">
+            <!-- Tab-Bar -->
+            <div class="tab-bar">
+                <button class="tab-btn active" onclick="showKbTab('browse')">📋 Einträge</button>
+                <button class="tab-btn" onclick="showKbTab('manual')">✍️ Manuell</button>
+                <button class="tab-btn" onclick="showKbTab('scraper')">🌐 Web-Scraper</button>
+            </div>
 
-            <!-- CHATS -->
-            <section id="chats-section" class="admin-section">
-                <div class="chat-container">
-                    <aside id="chat-list" class="sidebar"></aside>
-                    <div id="chat-details" class="content-area">
-                        <p style="padding:2rem;color:#888;">← Wähle einen Chat aus der Liste</p>
+            <!-- Tab: Einträge -->
+            <div id="kb-tab-browse" class="tab-pane active">
+                <div class="kb-layout">
+                    <!-- Kategorien Sidebar -->
+                    <div class="kb-categories">
+                        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                            <span style="font-size:0.8rem;font-weight:700;color:#888;text-transform:uppercase;letter-spacing:0.05em;">Kategorien</span>
+                            <button onclick="showAddCategory()" style="background:none;border:1px solid #444;color:#aaa;padding:2px 8px;font-size:0.75rem;border-radius:5px;">+ Neu</button>
+                        </div>
+                        <div id="kb-cat-list">
+                            <div class="kb-cat-item active" onclick="filterKbByCategory(null)" id="kb-cat-all">
+                                <span>📌</span> <span>Alle</span> <span id="kb-total-count" style="margin-left:auto;color:#666;font-size:0.75rem;"></span>
+                            </div>
+                        </div>
+                        <div id="add-cat-form" style="display:none;margin-top:10px;">
+                            <input type="text" id="new-cat-name" placeholder="Kategorie-Name" style="width:100%;margin-bottom:6px;font-size:0.85rem;">
+                            <div style="display:flex;gap:5px;">
+                                <input type="color" id="new-cat-color" value="#4a9eff" style="width:40px;padding:2px;background:#2a2a2a;border:1px solid #444;border-radius:4px;">
+                                <input type="text" id="new-cat-icon" placeholder="Emoji" style="width:60px;font-size:0.85rem;">
+                                <button onclick="addCategory()" style="flex:1;font-size:0.8rem;padding:5px;">Anlegen</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Eintrags-Liste -->
+                    <div class="kb-entries" id="kb-entries-list">
+                        <p style="color:#666;font-size:0.875rem;">Lädt…</p>
                     </div>
                 </div>
-            </section>
+            </div>
 
-            <!-- LEARNING -->
-            <section id="learning-section" class="admin-section" style="padding:1rem;">
-                <h2>🧠 Learning Center</h2>
-                <p style="color:#888;font-size:0.9rem;">Fragen die die KI nicht beantworten konnte. Deine Antworten werden direkt in die Wissensdatenbank gespeichert.</p>
-                <div id="learning-list">
-                    <p style="color:#888;">Keine offenen Fragen.</p>
-                </div>
-            </section>
-
-            <!-- WISSEN -->
-            <section id="knowledge-section" class="admin-section" style="padding:1rem;">
-                <h2>📚 Wissensdatenbank</h2>
-
-                <h3>🌐 Website scrapen</h3>
-                <div class="input-group" style="display:flex;gap:8px;margin-bottom:8px;">
-                    <input type="text" id="scrape-url" placeholder="https://deine-website.de" style="flex:1;background:#2a2a2a;border:1px solid #444;color:white;padding:10px;border-radius:6px;">
-                    <button id="url-discover">Links finden</button>
-                </div>
-                <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">⚠️ Hinweis: Seiten mit Cloudflare-Schutz benötigen ggf. mehrere Versuche oder manuellen Import.</p>
-                <div id="link-list"></div>
-                <button id="start-scrape" style="display:none;margin-top:12px;background:#28a745;width:100%;">Ausgewählte Seiten scrapen</button>
-
-                <!-- Manueller Eintrag -->
-                <div class="manual-kb-area">
+            <!-- Tab: Manuell -->
+            <div id="kb-tab-manual" class="tab-pane">
+                <div class="form-section">
                     <h3>✍️ Manueller Wissenseintrag</h3>
-                    <input type="text" id="manual-kb-title" placeholder="Titel (z.B. Öffnungszeiten, Preise)">
-                    <textarea id="manual-kb-content" rows="5" placeholder="Hier das Wissen eingeben — z.B. Produktbeschreibungen, FAQs, Support-Infos..."></textarea>
-                    <button id="save-manual-kb" style="background:#28a745;width:100%;">💾 Wissen speichern</button>
+                    <div class="form-group">
+                        <label>Kategorie</label>
+                        <select id="manual-cat-id" style="width:100%;background:#252525;border:1px solid #444;color:#e2e8f0;padding:10px;border-radius:6px;"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Titel <span style="color:#666;font-weight:normal;">(optional)</span></label>
+                        <input type="text" id="manual-kb-title" placeholder="z.B. Versandzeiten, Rückgaberecht">
+                    </div>
+                    <div class="form-group">
+                        <label>Wissen / Inhalt</label>
+                        <textarea id="manual-kb-content" rows="8" placeholder="Füge hier Produktinfos, FAQs, Support-Infos, Preise oder sonstige Informationen für den KI-Assistenten ein..."></textarea>
+                        <p class="hint">Je präziser der Inhalt, desto besser kann die KI darauf antworten.</p>
+                    </div>
+                    <button id="save-manual-kb" onclick="saveManualKnowledge()" style="background:#28a745;width:100%;padding:12px;font-size:1rem;">💾 Wissen speichern & KI trainieren</button>
                 </div>
+            </div>
 
-                <hr style="margin:25px 0;border-color:#444;">
-                <h3>🔗 Integrationen</h3>
-                <button id="sync-sellauth" class="btn-secondary">Sellauth Produkte synchronisieren</button>
-            </section>
-
-            <!-- SICHERHEIT -->
-            <section id="security-section" class="admin-section" style="padding:1rem;">
-                <h2>🛡 Sicherheit & Blacklist</h2>
-                <div style="margin-bottom:1.5rem;">
-                    <label style="display:block;margin-bottom:6px;font-weight:600;">Nutzer bannen</label>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <input type="text" id="ban-identifier" placeholder="Telegram-ID, IP..." style="flex:1;background:#2a2a2a;border:1px solid #444;color:white;padding:10px;border-radius:6px;">
-                        <input type="text" id="ban-reason" placeholder="Grund (optional)" style="flex:1;background:#2a2a2a;border:1px solid #444;color:white;padding:10px;border-radius:6px;">
-                        <button id="btn-ban" style="background:#dc3545;">Bannen</button>
+            <!-- Tab: Scraper -->
+            <div id="kb-tab-scraper" class="tab-pane">
+                <div class="form-section">
+                    <h3>🌐 Website automatisch scannen</h3>
+                    <p style="color:#888;font-size:0.85rem;margin-bottom:12px;">Scanne deine Website und importiere alle Inhalte automatisch in die Wissensdatenbank.</p>
+                    <div class="form-group">
+                        <label>Kategorie für gescannte Inhalte</label>
+                        <select id="scrape-cat-id" style="width:100%;background:#252525;border:1px solid #444;color:#e2e8f0;padding:10px;border-radius:6px;"></select>
                     </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Basis-URL</label>
+                            <input type="text" id="scrape-url" placeholder="https://deine-website.de">
+                        </div>
+                        <button id="url-discover" onclick="discoverLinks()" style="align-self:flex-end;white-space:nowrap;">🔍 Links finden</button>
+                    </div>
+                    <p class="hint">⚠️ Cloudflare-geschützte Seiten (wie ValueShop25.com) können durch Retries erreicht werden. Bei anhaltenden Fehlern: Inhalte manuell einfügen.</p>
+                    <div id="link-list" style="margin-top:10px;"></div>
+                    <button id="start-scrape" style="display:none;margin-top:12px;background:#28a745;width:100%;padding:12px;">▶ Ausgewählte Seiten scrapen</button>
                 </div>
-                <table id="blacklist-table">
-                    <thead>
-                        <tr><th>Identifikator</th><th>Grund</th><th>Datum</th><th>Aktion</th></tr>
-                    </thead>
-                    <tbody id="blacklist-body"></tbody>
-                </table>
-            </section>
+            </div>
+        </section>
 
-            <!-- SETTINGS -->
-            <section id="settings-section" class="admin-section" style="padding:1rem;">
-                <h2>⚙️ System-Einstellungen</h2>
-                <div class="settings-form">
+        <!-- ── SELLAUTH ── -->
+        <section id="sellauth-section" class="admin-section">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;">
+                <h2 style="margin:0;">🛒 Sellauth Integration</h2>
+                <span id="sa-status-badge" style="font-size:0.8rem;color:#666;">Nicht konfiguriert</span>
+            </div>
 
+            <!-- Verbindungsstatus -->
+            <div class="form-section" id="sa-connection-info" style="display:none;">
+                <div style="display:flex;align-items:center;gap:8px;">
+                    <span class="status-dot dot-green"></span>
+                    <strong id="sa-shop-name"></strong>
+                    <span style="color:#666;font-size:0.85rem;">(Verbunden)</span>
+                </div>
+            </div>
+
+            <!-- Konfiguration (Hinweis auf Settings) -->
+            <div class="form-section">
+                <h3>⚙️ Konfiguration</h3>
+                <p style="color:#888;font-size:0.875rem;">API Key, Shop ID und Shop URL müssen in den <button onclick="showSection('settings')" style="background:none;border:none;color:#4a9eff;cursor:pointer;padding:0;font-size:inherit;">Einstellungen</button> hinterlegt sein.</p>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;">
+                    <button onclick="testSellauth()" style="background:#4a5568;">🔌 Verbindung testen</button>
+                    <button onclick="loadSellauthPreview()" style="background:#1e3a5f;">👁 Produkte vorschau</button>
+                    <button onclick="syncSellauth()" id="btn-sync-sellauth" style="background:#28a745;">🔄 Jetzt synchronisieren</button>
+                </div>
+                <p class="hint" style="margin-top:8px;">Beim Sync werden alle Produkte inkl. Varianten und direkten Kauflinks in die Wissensdatenbank importiert.</p>
+            </div>
+
+            <!-- Produkt-Vorschau -->
+            <div id="sa-preview" style="display:none;">
+                <h3 style="margin-bottom:10px;">Produkte (<span id="sa-product-count">0</span>)</h3>
+                <div id="sa-product-list"></div>
+            </div>
+        </section>
+
+        <!-- ── SICHERHEIT ── -->
+        <section id="security-section" class="admin-section">
+            <h2 style="margin-top:0;">🛡 Sicherheit & Blacklist</h2>
+            <div class="form-section">
+                <h3>Nutzer bannen</h3>
+                <div class="form-row">
+                    <div class="form-group"><label>Telegram-ID oder IP</label><input type="text" id="ban-identifier" placeholder="z.B. 123456789"></div>
+                    <div class="form-group"><label>Grund</label><input type="text" id="ban-reason" placeholder="Spam, Missbrauch..."></div>
+                    <button onclick="handleBan()" style="background:#dc3545;align-self:flex-end;">Bannen</button>
+                </div>
+            </div>
+            <table style="width:100%;border-collapse:collapse;">
+                <thead><tr style="background:#1a1a1a;"><th style="padding:10px;text-align:left;color:#888;font-size:0.8rem;">ID</th><th style="padding:10px;text-align:left;color:#888;font-size:0.8rem;">Grund</th><th style="padding:10px;text-align:left;color:#888;font-size:0.8rem;">Datum</th><th style="padding:10px;"></th></tr></thead>
+                <tbody id="blacklist-body"></tbody>
+            </table>
+        </section>
+
+        <!-- ── SETTINGS ── -->
+        <section id="settings-section" class="admin-section">
+            <h2 style="margin-top:0;">⚙️ System-Einstellungen</h2>
+
+            <div class="tab-bar">
+                <button class="tab-btn active" onclick="showSettingsTab('bot')">🤖 Bot</button>
+                <button class="tab-btn" onclick="showSettingsTab('sellauth')">🛒 Sellauth</button>
+                <button class="tab-btn" onclick="showSettingsTab('telegram')">✈️ Telegram</button>
+            </div>
+
+            <!-- Bot Settings -->
+            <div id="settings-tab-bot" class="tab-pane active">
+                <div class="form-section">
+                    <h3>Telegram Begrüßungsnachricht (/start)</h3>
+                    <textarea id="welcome-message" rows="3" placeholder="Diese Nachricht erhält jeder Nutzer beim ersten Kontakt..."></textarea>
+                    <p class="hint">Wird gesendet wenn ein Nutzer /start schreibt. Markdown unterstützt.</p>
+                </div>
+                <div class="form-section">
+                    <h3>System Prompt</h3>
+                    <textarea id="system-prompt" rows="8" placeholder="Du bist ein hilfreicher Assistent für...&#10;&#10;Antworte immer auf Deutsch.&#10;Sei freundlich und präzise."></textarea>
+                    <p class="hint">Definiert die Persönlichkeit und den Kontext der KI. Wichtig: Gib an was die KI ist und was sie tun soll.</p>
+                </div>
+                <div class="form-section">
+                    <h3>Negativ-Prompts (Verbotene Themen/Verhaltensweisen)</h3>
+                    <textarea id="negative-prompt" rows="4" placeholder="Sprich nie über Konkurrenten.&#10;Gib keine Preisgarantien.&#10;Leite komplexe Anfragen an den Support weiter."></textarea>
+                </div>
+                <div class="form-section">
+                    <h3>Übergabe-Nachricht (Manuell-Modus)</h3>
+                    <input type="text" id="manual-msg-template" placeholder="Ein Mitarbeiter wird sich gleich bei dir melden. 👤">
+                </div>
+                <button onclick="saveSettings()" style="background:#28a745;width:100%;padding:13px;font-size:1rem;border-radius:8px;">💾 Einstellungen speichern</button>
+            </div>
+
+            <!-- Sellauth Settings -->
+            <div id="settings-tab-sellauth" class="tab-pane">
+                <div class="form-section">
+                    <h3>Sellauth API-Zugangsdaten</h3>
                     <div class="form-group">
-                        <label>👋 Telegram Begrüßungsnachricht (/start)</label>
-                        <textarea id="welcome-message" rows="3" placeholder="Diese Nachricht wird gesendet wenn ein Nutzer /start tippt..."></textarea>
-                        <p class="hint">Wird bei jedem /start Befehl an den Nutzer gesendet. Unterstützt Markdown.</p>
-                    </div>
-
-                    <div class="form-group">
-                        <label>🤖 System Prompt (KI-Persönlichkeit)</label>
-                        <textarea id="system-prompt" rows="8" placeholder="Du bist ein hilfreicher Assistent für..."></textarea>
-                        <p class="hint">Definiert das Verhalten und die Rolle der KI. Sei präzise und spezifisch.</p>
-                    </div>
-
-                    <div class="form-group">
-                        <label>🚫 Negativ-Prompts (Verbotene Themen)</label>
-                        <textarea id="negative-prompt" rows="4" placeholder="Antworte nie auf Fragen zu Wettbewerbern. Gib keine Preisgarantien..."></textarea>
-                        <p class="hint">Was die KI NICHT tun soll. Wird automatisch als Regel hinzugefügt.</p>
-                    </div>
-
-                    <div class="form-group">
-                        <label>🔄 Übergabe-Nachricht (bei manuellem Modus)</label>
-                        <input type="text" id="manual-msg-template" placeholder="Ein Mitarbeiter übernimmt gleich das Gespräch...">
-                        <p class="hint">Wird gesendet wenn du einen Chat auf manuell umschaltest.</p>
-                    </div>
-
-                    <div class="form-group">
-                        <label>🔑 Sellauth API Key</label>
+                        <label>API Key <span style="color:#666;font-size:0.8rem;">(Dashboard → Account → API Access)</span></label>
                         <input type="password" id="sellauth-api-key" placeholder="sa_...">
                     </div>
-
-                    <button id="save-settings">💾 Alle Einstellungen speichern</button>
+                    <div class="form-group">
+                        <label>Shop ID <span style="color:#666;font-size:0.8rem;">(Dashboard → Account → API Access)</span></label>
+                        <input type="text" id="sellauth-shop-id" placeholder="12345">
+                    </div>
+                    <div class="form-group">
+                        <label>Shop URL <span style="color:#666;font-size:0.8rem;">(Deine Shop-Adresse)</span></label>
+                        <input type="text" id="sellauth-shop-url" placeholder="https://meinshop.sellauth.com">
+                        <p class="hint">Diese URL wird für die Produkt-Links verwendet: [Shop URL]/[produkt-name]</p>
+                    </div>
+                    <button onclick="saveSettings()" style="background:#28a745;width:100%;padding:12px;">💾 Speichern</button>
                 </div>
-            </section>
+            </div>
 
-        </main>
-    </div>
+            <!-- Telegram Setup -->
+            <div id="settings-tab-telegram" class="tab-pane">
+                <div class="form-section">
+                    <h3>Telegram Webhook einrichten</h3>
+                    <p style="color:#888;font-size:0.875rem;margin-bottom:12px;">Telegram muss wissen, wohin Nachrichten geschickt werden. Trage deine App-URL ein und klicke auf "Webhook setzen".</p>
+                    <div class="form-group">
+                        <label>App-URL (Render.com URL)</label>
+                        <input type="text" id="webhook-app-url" placeholder="https://dein-bot.onrender.com">
+                    </div>
+                    <button onclick="setTelegramWebhook()" style="background:#2563eb;">✅ Webhook setzen</button>
+                    <button onclick="checkWebhookStatus()" style="background:#4a5568;margin-left:8px;">📊 Status prüfen</button>
+                    <div id="webhook-result" style="margin-top:12px;font-size:0.875rem;"></div>
+                </div>
+            </div>
+        </section>
 
-    <script src="js/api.js"></script>
-    <script src="js/dashboard.js"></script>
-    <script>
-        function showSection(id) {
-            document.querySelectorAll('.admin-section').forEach(s => s.style.display = 'none');
-            const section = document.getElementById(id + '-section');
-            if (section) {
-                section.style.display = (id === 'chats') ? 'flex' : 'block';
-            }
-            document.querySelectorAll('.nav-links button').forEach(btn => btn.classList.remove('active'));
-            const activeBtn = document.getElementById('nav-' + id);
-            if (activeBtn) activeBtn.classList.add('active');
+    </main>
+</div>
 
-            // Stats immer sichtbar
-            document.getElementById('stats-bar').style.display = 'grid';
-        }
+<script src="js/api.js"></script>
+<script src="js/dashboard.js"></script>
+<script>
+// ── Navigation ──────────────────────────────────────────────────────────────
+function showSection(id) {
+    document.querySelectorAll('.admin-section').forEach(s => s.style.display = 'none');
+    const sec = document.getElementById(id + '-section');
+    if (sec) sec.style.display = (id === 'chats') ? 'block' : 'block';
+    if (id === 'chats') sec.style.display = 'flex';
+    document.querySelectorAll('.nav-links button').forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById('nav-' + id);
+    if (btn) btn.classList.add('active');
+    document.getElementById('stats-bar').style.display = 'grid';
 
-        async function handleLogin() {
-            const user = document.getElementById('username').value;
-            const pass = document.getElementById('password').value;
-            const err = document.getElementById('login-error');
-            err.style.display = 'none';
+    // Section-spezifische Lade-Aktionen
+    if (id === 'knowledge') { loadKbCategories(); loadKbEntries(); }
+    if (id === 'sellauth')  { loadSellauthStatus(); }
+}
 
-            try {
-                const response = await fetch('/api/admin/login', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ username: user, password: pass })
-                });
-                const data = await response.json();
-                if (response.ok && data.token) {
-                    localStorage.setItem('admin_token', data.token);
-                    document.getElementById('login-overlay').style.display = 'none';
-                    document.getElementById('admin-app').style.display = 'block';
-                    if (typeof initDashboard === 'function') initDashboard();
-                    showSection('chats');
-                } else {
-                    err.style.display = 'block';
-                    err.innerText = data.error || 'Zugriff verweigert';
-                }
-            } catch (e) {
-                err.innerText = 'Verbindung fehlgeschlagen';
-                err.style.display = 'block';
-            }
-        }
+function showKbTab(tab) {
+    document.querySelectorAll('.tab-pane[id^="kb-tab"]').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('.tab-bar button').forEach(b => b.classList.remove('active'));
+    document.getElementById('kb-tab-' + tab)?.classList.add('active');
+    event.target.classList.add('active');
+    if (tab === 'browse') { loadKbCategories(); loadKbEntries(); }
+}
 
-        function handleLogout() {
-            localStorage.removeItem('admin_token');
-            window.location.reload();
-        }
+function showSettingsTab(tab) {
+    document.querySelectorAll('.tab-pane[id^="settings-tab"]').forEach(p => p.classList.remove('active'));
+    document.querySelectorAll('#settings-section .tab-bar button').forEach(b => b.classList.remove('active'));
+    document.getElementById('settings-tab-' + tab)?.classList.add('active');
+    event.target.classList.add('active');
+}
 
-        // Auto-Login wenn Token vorhanden
-        if (localStorage.getItem('admin_token')) {
+// ── Auth ─────────────────────────────────────────────────────────────────────
+async function handleLogin() {
+    const user = document.getElementById('username').value;
+    const pass = document.getElementById('password').value;
+    const err  = document.getElementById('login-error');
+    err.style.display = 'none';
+    try {
+        const r = await fetch('/api/admin/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:user,password:pass}) });
+        const d = await r.json();
+        if (r.ok && d.token) {
+            localStorage.setItem('admin_token', d.token);
             document.getElementById('login-overlay').style.display = 'none';
             document.getElementById('admin-app').style.display = 'block';
+            if (typeof initDashboard === 'function') initDashboard();
             showSection('chats');
-        }
-    </script>
+        } else { err.style.display = 'block'; err.innerText = d.error || 'Zugriff verweigert'; }
+    } catch(e) { err.style.display='block'; err.innerText='Verbindung fehlgeschlagen'; }
+}
+
+function handleLogout() { localStorage.removeItem('admin_token'); window.location.reload(); }
+
+// ── Telegram Webhook ─────────────────────────────────────────────────────────
+async function setTelegramWebhook() {
+    const appUrl = document.getElementById('webhook-app-url').value.trim();
+    if (!appUrl) return alert('Bitte App-URL eingeben');
+    const res = document.getElementById('webhook-result');
+    res.textContent = 'Setze Webhook…';
+    try {
+        const data = await api.request('/telegram/webhook', 'POST', { appUrl });
+        res.innerHTML = data.success
+            ? `<span style="color:#22c55e;">✅ Webhook erfolgreich gesetzt!</span>`
+            : `<span style="color:#ef4444;">❌ ${data.description}</span>`;
+    } catch(e) { res.innerHTML = `<span style="color:#ef4444;">❌ ${e.message}</span>`; }
+}
+
+async function checkWebhookStatus() {
+    const res = document.getElementById('webhook-result');
+    res.textContent = 'Prüfe Status…';
+    try {
+        const data = await api.request('/telegram/webhook');
+        const ok = data.url ? `<span style="color:#22c55e;">✅ Aktiv: ${data.url}</span>` : `<span style="color:#f59e0b;">⚠️ Kein Webhook gesetzt</span>`;
+        res.innerHTML = ok + (data.last_error_message ? `<br><span style="color:#ef4444;">Letzter Fehler: ${data.last_error_message}</span>` : '');
+    } catch(e) { res.innerHTML = `<span style="color:#ef4444;">❌ ${e.message}</span>`; }
+}
+
+// Auto-Login
+if (localStorage.getItem('admin_token')) {
+    document.getElementById('login-overlay').style.display = 'none';
+    document.getElementById('admin-app').style.display = 'block';
+    showSection('chats');
+}
+</script>
 </body>
 </html>

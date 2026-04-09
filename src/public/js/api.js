@@ -2,50 +2,43 @@ const API_BASE = '/api/admin';
 
 const api = {
     async request(endpoint, method = 'GET', body = null) {
-        const options = {
+        const opts = {
             method,
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${localStorage.getItem('admin_token')}`
             }
         };
-        if (body) options.body = JSON.stringify(body);
+        if (body) opts.body = JSON.stringify(body);
 
-        const response = await fetch(`${API_BASE}${endpoint}`, options);
+        const res = await fetch(`${API_BASE}${endpoint}`, opts);
 
-        if (response.status === 401) {
+        if (res.status === 401) {
             localStorage.removeItem('admin_token');
-            const overlay = document.getElementById('login-overlay');
-            const app = document.getElementById('admin-app');
-            if (overlay) overlay.style.display = 'flex';
-            if (app) app.style.display = 'none';
+            document.getElementById('login-overlay').style.display = 'flex';
+            document.getElementById('admin-app').style.display = 'none';
             return null;
         }
 
-        if (!response.ok) {
-            let errMsg = 'API Fehler';
-            try {
-                const error = await response.json();
-                errMsg = error.error || error.message || errMsg;
-            } catch (_) {}
-            throw new Error(errMsg);
+        if (!res.ok) {
+            let msg = 'API Fehler';
+            try { const e = await res.json(); msg = e.error || e.message || msg; } catch(_) {}
+            throw new Error(msg);
         }
-        return response.json();
+        return res.json();
     },
 
-    async getStats() { return this.request('/stats'); },
-    async getChats() { return this.request('/chats'); },
-    async getChatMessages(chatId) { return this.request(`/chats/${chatId}/messages`); },
-    async updateChatStatus(chatId, isManual) { return this.request(`/chats/${chatId}/status`, 'PATCH', { is_manual_mode: isManual }); },
-    async getSettings() { return this.request('/settings'); },
-    async saveSettings(settings) { return this.request('/settings', 'POST', settings); },
-    async getLearningQueue() { return this.request('/learning'); },
-    async resolveLearning(questionId, adminAnswer) { return this.request('/learning/resolve', 'POST', { questionId, adminAnswer }); },
-    async banUser(identifier, reason) { return this.request('/blacklist', 'POST', { identifier, reason }); },
-    async getBlacklist() { return this.request('/blacklist'); },
-    async removeBan(id) { return this.request(`/blacklist/${id}`, 'DELETE'); },
-    async syncSellauth() { return this.request('/sync-sellauth', 'POST'); },
-    async discoverLinks(url) { return this.request('/knowledge/discover', 'POST', { url }); },
-    async startScraping(urls) { return this.request('/scrape', 'POST', { urls }); },
-    async addManualKnowledge(title, content) { return this.request('/knowledge/manual', 'POST', { title, content }); }
+    getStats:           () => api.request('/stats'),
+    getChats:           () => api.request('/chats'),
+    getChatMessages:    (id) => api.request(`/chats/${id}/messages`),
+    updateChatStatus:   (id, m) => api.request(`/chats/${id}/status`, 'PATCH', { is_manual_mode: m }),
+    getSettings:        () => api.request('/settings'),
+    saveSettings:       (s) => api.request('/settings', 'POST', s),
+    getLearningQueue:   () => api.request('/learning'),
+    resolveLearning:    (id, ans) => api.request('/learning/resolve', 'POST', { questionId: id, adminAnswer: ans }),
+    banUser:            (id, r) => api.request('/blacklist', 'POST', { identifier: id, reason: r }),
+    getBlacklist:       () => api.request('/blacklist'),
+    removeBan:          (id) => api.request(`/blacklist/${id}`, 'DELETE'),
+    discoverLinks:      (url) => api.request('/knowledge/discover', 'POST', { url }),
+    addManualKnowledge: (t, c, cat) => api.request('/knowledge/manual', 'POST', { title: t, content: c, category_id: cat }),
 };

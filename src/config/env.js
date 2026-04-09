@@ -1,23 +1,16 @@
 const dotenv = require('dotenv');
 dotenv.config();
 
-const requiredEnvs = [
-  'SUPABASE_URL', 
-  'SUPABASE_SERVICE_ROLE_KEY', 
-  'DEEPSEEK_API_KEY', 
-  'OPENAI_API_KEY', // Neu für Vektorsuche/Embeddings
+// Fehlende Variablen als Warnung (kein harter Fehler, damit Deployment startet)
+const required = [
+  'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY',
+  'DEEPSEEK_API_KEY', 'OPENAI_API_KEY',
   'TELEGRAM_BOT_TOKEN',
-  'ADMIN_USERNAME',
-  'ADMIN_PASSWORD',
-  'VAPID_PUBLIC_KEY', // Neu für Push
-  'VAPID_PRIVATE_KEY' // Neu für Push
+  'ADMIN_USERNAME', 'ADMIN_PASSWORD'
 ];
 
-requiredEnvs.forEach(name => {
-  if (!process.env[name]) {
-    console.warn(`Warning: Missing environment variable: ${name}`);
-    // Wir werfen hier keinen Error, falls SELLAUTH optional bleiben soll
-  }
+required.forEach(name => {
+  if (!process.env[name]) console.warn(`⚠️  Fehlende Umgebungsvariable: ${name}`);
 });
 
 module.exports = {
@@ -30,22 +23,24 @@ module.exports = {
     baseUrl: 'https://api.deepseek.com',
   },
   openai: {
-    apiKey: process.env.OPENAI_API_KEY, // Benötigt für text-embedding-3-small
+    apiKey: process.env.OPENAI_API_KEY,
   },
   admin: {
     username: process.env.ADMIN_USERNAME,
     password: process.env.ADMIN_PASSWORD,
-    jwtSecret: process.env.JWT_SECRET || 'esim-secure-secret'
+    jwtSecret: process.env.JWT_SECRET || 'ai-assistant-secret-change-me'
   },
   telegram: {
     token: process.env.TELEGRAM_BOT_TOKEN,
   },
   sellauth: {
-    apiKey: process.env.SELLAUTH_API_KEY,
+    apiKey:   process.env.SELLAUTH_API_KEY   || '',
+    shopId:   process.env.SELLAUTH_SHOP_ID   || '',
+    shopUrl:  process.env.SELLAUTH_SHOP_URL  || '',
   },
   vapid: {
-    publicKey: process.env.VAPID_PUBLIC_KEY,
-    privateKey: process.env.VAPID_PRIVATE_KEY,
+    publicKey:  process.env.VAPID_PUBLIC_KEY  || '',
+    privateKey: process.env.VAPID_PRIVATE_KEY || '',
   },
   port: process.env.PORT || 3000
 };

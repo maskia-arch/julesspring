@@ -1,72 +1,75 @@
 const express = require('express');
 const router = express.Router();
-const chatController = require('../controllers/chatController');
 const telegramService = require('../services/telegramService');
 const supabase = require('../config/supabase');
+const messageProcessor = require('../services/messageProcessor');
 
 // ─── Telegram Webhook ────────────────────────────────────────────────────────
-router.post('/telegram', async (req, res, next) => {
+//
+// KRITISCH: Telegram erwartet eine 200-Antwort innerhalb von 5 Sekunden.
+// Wenn die KI-Verarbeitung länger dauert, schickt Telegram den Webhook
+// erneut → Endlos-Loop. Lösung: Sofort 200 antworten, dann async verarbeiten.
+//
+router.post('/telegram', async (req, res) => {
+  // Sofort 200 zurückgeben – egal was danach passiert
+  res.sendStatus(200);
+
+  const { message } = req.body;
+  if (!message) return;
+
+  const chatId   = message.chat?.id?.toString();
+  const text     = message.text?.trim();
+  const from     = message.from || {};
+
+  if (!chatId || !text) return;
+
   try {
-    const { message } = req.body;
-
-    // Kein Text → ignorieren (z.B. Fotos, Sticker)
-    if (!message || !message.text) {
-      return res.sendStatus(200);
-    }
-
-    const chatId = message.chat.id.toString();
-    const text = message.text.trim();
-
-    // /start Befehl: Willkommensnachricht senden
+    // /start → Willkommensnachricht
     if (text === '/start') {
       const { data: settings } = await supabase
-        .from('settings')
-        .select('welcome_message')
-        .single();
+        .from('settings').select('welcome_message').single();
 
-      const welcomeMsg = settings?.welcome_message ||
-        'Willkommen! 👋 Ich bin dein KI-Assistent. Wie kann ich dir helfen?';
+      const welcome = settings?.welcome_message ||
+        'Willkommen! 👋 Wie kann ich dir helfen?';
 
-      await telegramService.sendMessage(chatId, welcomeMsg);
-      return res.sendStatus(200);
+      await telegramService.sendMessage(chatId, welcome);
+      return;
     }
 
-    // Normaler Nachrichtenfluss
-    const chatData = {
-      body: {
-        platform: 'telegram',
-        chatId,
-        message: text,
-        metadata: {
-          username: message.from?.username || null,
-          first_name: message.from?.first_name || 'Nutzer'
-        }
+    // Alle anderen Nachrichten → MessageProcessor
+    await messageProcessor.handle({
+      platform: 'telegram',
+      chatId,
+      text,
+      metadata: {
+        username:   from.username   || null,
+        first_name: from.first_name || 'Nutzer',
+        language:   from.language_code || 'de'
       }
-    };
-
-    await chatController.handleIncomingMessage(chatData, res, next);
-  } catch (error) {
-    console.error('Telegram Webhook Error:', error);
-    // Immer 200 an Telegram zurückgeben, sonst flood von Wiederholungen
-    res.sendStatus(200);
+    });
+  } catch (err) {
+    console.error('[Webhook/Telegram] Verarbeitungsfehler:', err.message);
+    // Fehler-Fallback: Nutzer über Problem informieren
+    try {
+      await telegramService.sendMessage(chatId,
+        'Entschuldigung, ich konnte deine Nachricht gerade nicht verarbeiten. Bitte versuche es gleich nochmal. 🙏');
+    } catch (_) {}
   }
 });
 
 // ─── Sellauth Webhook ─────────────────────────────────────────────────────────
-router.post('/sellauth', async (req, res, next) => {
+router.post('/sellauth', async (req, res) => {
+  res.sendStatus(200); // Sofort bestätigen
   try {
     const event = req.body;
-
     await supabase.from('integration_logs').insert([{
       source: 'sellauth',
       event_type: event.type || 'unknown',
       payload: event,
       created_at: new Date()
     }]);
-
-    res.sendStatus(200);
-  } catch (error) {
-    next(error);
+  } catch (err) {
+    console.error('[Webhook/Sellauth]', err.message);
   }
 });
 
