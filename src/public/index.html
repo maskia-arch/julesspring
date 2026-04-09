@@ -11,79 +11,79 @@
 <!-- LOGIN -->
 <div id="login-overlay">
     <div class="login-box">
-        <div class="login-logo">🤖</div>
-        <h2>AI Assistant</h2>
-        <p style="color:#666;font-size:0.875rem;margin-bottom:1.5rem;">Admin Dashboard</p>
+        <div style="font-size:2.5rem;margin-bottom:0.5rem;">🤖</div>
+        <h2>AI Assistant Admin</h2>
         <input type="text"     id="username" placeholder="Benutzername" onkeydown="if(event.key==='Enter')handleLogin()">
         <input type="password" id="password" placeholder="Passwort"     onkeydown="if(event.key==='Enter')handleLogin()">
         <button onclick="handleLogin()">Anmelden</button>
-        <p id="login-error" class="error-msg"></p>
+        <p id="login-error" style="color:#ff6b6b;font-size:0.85rem;margin-top:8px;display:none;"></p>
     </div>
 </div>
 
 <!-- APP -->
-<div id="admin-app">
+<div id="admin-app" style="display:none;">
 
-    <!-- Sidebar Navigation -->
-    <nav id="app-nav">
-        <div class="nav-brand">AI Admin <span id="version-tag"></span></div>
-        <div class="nav-items">
-            <button class="nav-btn" onclick="showSection('chats')"    id="nav-chats">    <span class="nav-icon">💬</span><span class="nav-label">Chats</span>     <span id="learning-badge" class="nav-badge" style="display:none">0</span></button>
-            <button class="nav-btn" onclick="showSection('learning')" id="nav-learning"> <span class="nav-icon">🧠</span><span class="nav-label">Lernen</span></button>
-            <button class="nav-btn" onclick="showSection('knowledge')"id="nav-knowledge"><span class="nav-icon">📚</span><span class="nav-label">Wissen</span></button>
-            <button class="nav-btn" onclick="showSection('sellauth')" id="nav-sellauth"> <span class="nav-icon">🛒</span><span class="nav-label">Sellauth</span></button>
-            <button class="nav-btn" onclick="showSection('security')" id="nav-security"> <span class="nav-icon">🛡</span><span class="nav-label">Sicherheit</span></button>
-            <button class="nav-btn" onclick="showSection('settings')" id="nav-settings"> <span class="nav-icon">⚙️</span><span class="nav-label">Settings</span></button>
+    <!-- TOP NAVBAR -->
+    <nav class="navbar">
+        <div class="nav-logo">AI Admin <span id="version-tag" class="version-tag"></span></div>
+        <div class="nav-links">
+            <button class="nav-btn" onclick="showSection('chats')"     id="nav-chats">💬 Chats <span id="learning-badge" class="badge" style="display:none;">0</span></button>
+            <button class="nav-btn" onclick="showSection('learning')"  id="nav-learning">🧠 Lernen</button>
+            <button class="nav-btn" onclick="showSection('knowledge')" id="nav-knowledge">📚 Wissen</button>
+            <button class="nav-btn" onclick="showSection('sellauth')"  id="nav-sellauth">🛒 Sellauth</button>
+            <button class="nav-btn" onclick="showSection('security')"  id="nav-security">🛡 Sicherheit</button>
+            <button class="nav-btn" onclick="showSection('settings')"  id="nav-settings">⚙️ Settings</button>
+            <button class="nav-btn nav-logout" onclick="handleLogout()">↩ Logout</button>
         </div>
-        <div class="nav-stats">
-            <div class="nav-stat"><span id="s-chats">–</span><small>Chats</small></div>
-            <div class="nav-stat"><span id="s-knowledge">–</span><small>Wissen</small></div>
-            <div class="nav-stat"><span id="s-cost">–</span><small>Kosten</small></div>
-        </div>
-        <button onclick="handleLogout()" class="nav-logout">↩ Logout</button>
     </nav>
 
-    <!-- Content -->
-    <main id="app-content">
+    <!-- STATS BAR -->
+    <div class="stats-bar" id="stats-bar">
+        <div class="stat-card"><div class="stat-label">Total Chats</div><div class="stat-val" id="s-chats">–</div></div>
+        <div class="stat-card"><div class="stat-label">Manuell aktiv</div><div class="stat-val" id="s-manual">–</div></div>
+        <div class="stat-card"><div class="stat-label">Wissenseinträge</div><div class="stat-val" id="s-knowledge">–</div></div>
+        <div class="stat-card"><div class="stat-label">KI-Kosten</div><div class="stat-val" id="s-cost">–</div><div class="stat-sub" id="s-tokens"></div></div>
+    </div>
 
-        <!-- ══ CHATS ══════════════════════════════════════════════════════ -->
-        <section id="chats-section" class="app-section active-section">
-            <div class="chat-layout">
+    <!-- CONTENT -->
+    <div id="app-content">
 
-                <!-- Chat-Liste (WhatsApp Style) -->
-                <div class="chat-list-panel">
-                    <div class="panel-header">
-                        <h3>Chats</h3>
-                        <button onclick="loadChats()" class="icon-btn" title="Aktualisieren">↻</button>
-                    </div>
-                    <div class="chat-search">
-                        <input type="text" id="chat-search" placeholder="🔍 Chat suchen…" oninput="filterChats(this.value)">
-                    </div>
-                    <div id="chat-list"></div>
+        <!-- ══ CHATS ══ WhatsApp Style ════════════════════════════════════ -->
+        <section id="chats-section" class="app-section chat-section">
+
+            <!-- Chat-Liste -->
+            <div class="chat-list-panel">
+                <div class="panel-header">
+                    <span class="panel-title">Chats</span>
+                    <button onclick="loadChats()" class="icon-btn" title="Aktualisieren">↻</button>
                 </div>
-
-                <!-- Chat-Fenster -->
-                <div class="chat-window" id="chat-window">
-                    <div class="chat-empty-state">
-                        <div style="font-size:3rem;margin-bottom:1rem;">💬</div>
-                        <h3 style="color:#555;margin:0;">Chat auswählen</h3>
-                        <p style="color:#444;font-size:0.875rem;">Wähle links einen Chat aus um die Unterhaltung zu sehen</p>
-                    </div>
+                <div class="chat-search-wrap">
+                    <input type="text" id="chat-search" class="chat-search" placeholder="🔍 Suchen…" oninput="filterChats(this.value)">
                 </div>
-
+                <div id="chat-list" class="chat-list-scroll"></div>
             </div>
+
+            <!-- Chat-Fenster -->
+            <div class="chat-window" id="chat-window">
+                <div class="chat-placeholder">
+                    <span style="font-size:3rem;">💬</span>
+                    <p>Chat aus der Liste auswählen</p>
+                </div>
+            </div>
+
         </section>
 
         <!-- ══ LEARNING ═══════════════════════════════════════════════════ -->
-        <section id="learning-section" class="app-section">
-            <div class="section-header"><h2>🧠 Learning Center</h2></div>
-            <p style="color:#666;font-size:0.875rem;margin-bottom:16px;">Fragen die die KI nicht beantworten konnte. Deine Antworten werden direkt in die Wissensdatenbank gespeichert.</p>
+        <section id="learning-section" class="app-section" style="padding:20px 24px;overflow-y:auto;">
+            <h2 class="section-title">🧠 Learning Center</h2>
+            <p class="section-desc">Fragen die die KI nicht beantworten konnte. Deine Antworten fließen direkt in die Wissensdatenbank.</p>
             <div id="learning-list"></div>
         </section>
 
         <!-- ══ WISSEN ══════════════════════════════════════════════════════ -->
-        <section id="knowledge-section" class="app-section">
-            <div class="section-header"><h2>📚 Wissensdatenbank</h2></div>
+        <section id="knowledge-section" class="app-section" style="padding:20px 24px;overflow-y:auto;">
+            <h2 class="section-title">📚 Wissensdatenbank</h2>
+
             <div class="tab-bar">
                 <button class="tab-btn active" onclick="showKbTab('browse',this)">📋 Einträge</button>
                 <button class="tab-btn" onclick="showKbTab('manual',this)">✍️ Manuell</button>
@@ -93,22 +93,28 @@
             <!-- Einträge -->
             <div id="kb-tab-browse" class="tab-pane active">
                 <div class="kb-layout">
+                    <!-- Kategorien Sidebar -->
                     <div class="kb-sidebar">
                         <div class="kb-sidebar-header">
                             <span>Kategorien</span>
                             <button onclick="toggleAddCat()" class="icon-btn">+</button>
                         </div>
-                        <div id="add-cat-form" class="add-cat-form" style="display:none">
-                            <input type="text"  id="new-cat-name"  placeholder="Name">
+                        <div id="add-cat-form" class="add-cat-form" style="display:none;">
+                            <input type="text" id="new-cat-name" placeholder="Name">
                             <div style="display:flex;gap:6px;margin-top:6px;">
-                                <input type="color" id="new-cat-color" value="#4a9eff">
-                                <input type="text"  id="new-cat-icon"  placeholder="🏷" style="width:50px;text-align:center;">
+                                <input type="color" id="new-cat-color" value="#4a9eff" style="width:36px;padding:2px;background:#2a2a2a;border:1px solid #444;border-radius:4px;">
+                                <input type="text" id="new-cat-icon" placeholder="🏷" style="width:44px;text-align:center;">
                                 <button onclick="addCategory()" style="flex:1;font-size:0.8rem;">OK</button>
                             </div>
                         </div>
-                        <div id="kb-cat-list"></div>
+                        <div id="kb-cat-list">
+                            <div class="kb-cat-item active" onclick="filterKbByCategory(null)" id="kb-cat-all">
+                                <span>🗂</span><span style="flex:1;">Alle</span>
+                            </div>
+                        </div>
                     </div>
-                    <div id="kb-entries-list" class="kb-main"></div>
+                    <!-- Eintrags-Liste -->
+                    <div id="kb-entries-list" style="overflow-y:auto;"></div>
                 </div>
             </div>
 
@@ -117,17 +123,20 @@
                 <div class="card">
                     <div class="form-group">
                         <label>Kategorie</label>
-                        <select id="manual-cat-id" class="form-select"></select>
+                        <select id="manual-cat-id" class="form-control"></select>
                     </div>
                     <div class="form-group">
                         <label>Titel <span class="label-hint">(optional)</span></label>
-                        <input type="text" id="manual-kb-title" placeholder="z.B. eSIM Europa Tarife, Support-Zeiten">
+                        <input type="text" id="manual-kb-title" placeholder="z.B. eSIM Europa Tarife">
                     </div>
                     <div class="form-group">
                         <label>Inhalt</label>
-                        <textarea id="manual-kb-content" rows="10" placeholder="Füge hier alle relevanten Informationen ein.&#10;&#10;Tipp: Je spezifischer, desto besser kann die KI antworten.&#10;Beispiel:&#10;- Produkt: eSIM Europa 10GB&#10;- Preis: 12.99€&#10;- Gültig in: Deutschland, Frankreich, Italien...&#10;- Kauflink: https://..."></textarea>
+                        <textarea id="manual-kb-content" rows="10"
+                            placeholder="Füge hier alle relevanten Infos ein.&#10;&#10;Tipp: Je spezifischer desto besser.&#10;Beispiel:&#10;- Produkt: eSIM Deutschland 10GB&#10;- Preis: 12.99€&#10;- Kauflink: https://..."></textarea>
                     </div>
-                    <button id="save-manual-kb" onclick="saveManualKnowledge()" class="btn-success btn-full">💾 Wissen speichern & KI trainieren</button>
+                    <button id="save-manual-kb" onclick="saveManualKnowledge()" class="btn btn-success" style="width:100%;padding:12px;">
+                        💾 Wissen speichern & KI trainieren
+                    </button>
                 </div>
             </div>
 
@@ -136,134 +145,145 @@
                 <div class="card">
                     <div class="form-group">
                         <label>Kategorie für gescannte Inhalte</label>
-                        <select id="scrape-cat-id" class="form-select"></select>
+                        <select id="scrape-cat-id" class="form-control"></select>
                     </div>
-                    <div class="input-row">
+                    <div class="input-row" style="margin-bottom:6px;">
                         <input type="text" id="scrape-url" placeholder="https://deine-website.de" style="flex:1;">
                         <button id="url-discover" onclick="discoverLinks()">🔍 Links finden</button>
                     </div>
-                    <p class="hint">⚠️ Cloudflare-Schutz (z.B. ValueShop25.com): 3 Retry-Versuche. Bei Fehlern → Inhalte manuell eingeben.</p>
+                    <p class="hint">⚠️ Cloudflare-Seiten: 3 Versuche automatisch. Bei anhaltenden 503-Fehlern → Inhalt manuell eingeben.</p>
                     <div id="link-list"></div>
-                    <button id="start-scrape" style="display:none;" class="btn-success btn-full mt-10" onclick="startScraping()">▶ Ausgewählte Seiten scrapen</button>
+                    <button id="start-scrape" onclick="startScraping()" style="display:none;margin-top:12px;width:100%;" class="btn btn-success">▶ Ausgewählte Seiten scrapen</button>
                 </div>
             </div>
         </section>
 
         <!-- ══ SELLAUTH ════════════════════════════════════════════════════ -->
-        <section id="sellauth-section" class="app-section">
-            <div class="section-header"><h2>🛒 Sellauth Integration</h2></div>
-            <div class="card" style="margin-bottom:12px;">
+        <section id="sellauth-section" class="app-section" style="padding:20px 24px;overflow-y:auto;">
+            <h2 class="section-title">🛒 Sellauth Integration</h2>
+            <div class="card" style="margin-bottom:16px;">
+                <p style="color:#888;font-size:0.875rem;margin-bottom:12px;">
+                    API Key, Shop ID und Shop URL müssen zuerst unter <button onclick="showSection('settings');document.querySelector('[onclick*=sellauth]')?.click()" style="background:none;border:none;color:#4a9eff;cursor:pointer;padding:0;">⚙️ Settings → Sellauth</button> gespeichert werden.
+                </p>
                 <div style="display:flex;gap:10px;flex-wrap:wrap;">
-                    <button onclick="testSellauth()" class="btn-secondary">🔌 Verbindung testen</button>
-                    <button onclick="loadSellauthPreview()" class="btn-secondary">👁 Produkte anzeigen</button>
-                    <button onclick="syncSellauth()" id="btn-sync-sellauth" class="btn-success">🔄 Synchronisieren</button>
+                    <button onclick="testSellauth()" class="btn btn-secondary">🔌 Verbindung testen</button>
+                    <button onclick="loadSellauthPreview()" class="btn btn-secondary">👁 Produkte anzeigen</button>
+                    <button onclick="syncSellauth()" id="btn-sync-sellauth" class="btn btn-success">🔄 Jetzt synchronisieren</button>
                 </div>
-                <p class="hint" style="margin-top:10px;">Beim Sync wird pro Variante ein eigener Wissenseintrag angelegt — das verbessert die Produktsuche deutlich.</p>
+                <p class="hint" style="margin-top:8px;">Beim Sync wird pro Variante ein eigener Wissenseintrag angelegt — das ermöglicht präzise Produktempfehlungen.</p>
             </div>
             <div id="sa-preview" style="display:none;">
-                <h3 style="margin:0 0 10px;">Produkte (<span id="sa-product-count">0</span>)</h3>
+                <h3 style="margin:0 0 10px;font-size:1rem;">Produkte (<span id="sa-product-count">0</span>)</h3>
                 <div id="sa-product-list"></div>
             </div>
         </section>
 
         <!-- ══ SICHERHEIT ══════════════════════════════════════════════════ -->
-        <section id="security-section" class="app-section">
-            <div class="section-header"><h2>🛡 Sicherheit & Blacklist</h2></div>
+        <section id="security-section" class="app-section" style="padding:20px 24px;overflow-y:auto;">
+            <h2 class="section-title">🛡 Sicherheit & Blacklist</h2>
             <div class="card" style="margin-bottom:16px;">
                 <h3 class="card-title">Nutzer bannen</h3>
                 <div class="input-row">
                     <input type="text" id="ban-identifier" placeholder="Telegram-ID oder IP" style="flex:2;">
-                    <input type="text" id="ban-reason"     placeholder="Grund (optional)" style="flex:2;">
-                    <button onclick="handleBan()" class="btn-danger">⛔ Bannen</button>
+                    <input type="text" id="ban-reason" placeholder="Grund (optional)" style="flex:2;">
+                    <button onclick="handleBan()" class="btn btn-danger">⛔ Bannen</button>
                 </div>
             </div>
             <div class="card">
-                <table class="data-table">
-                    <thead><tr><th>Identifikator</th><th>Grund</th><th>Datum</th><th></th></tr></thead>
+                <table style="width:100%;border-collapse:collapse;">
+                    <thead>
+                        <tr><th class="th">Identifikator</th><th class="th">Grund</th><th class="th">Datum</th><th class="th"></th></tr>
+                    </thead>
                     <tbody id="blacklist-body"></tbody>
                 </table>
             </div>
         </section>
 
         <!-- ══ SETTINGS ════════════════════════════════════════════════════ -->
-        <section id="settings-section" class="app-section">
-            <div class="section-header"><h2>⚙️ Einstellungen</h2></div>
+        <section id="settings-section" class="app-section" style="padding:20px 24px;overflow-y:auto;">
+            <h2 class="section-title">⚙️ Einstellungen</h2>
+
             <div class="tab-bar">
                 <button class="tab-btn active" onclick="showSettingsTab('bot',this)">🤖 Bot & KI</button>
                 <button class="tab-btn" onclick="showSettingsTab('model',this)">🔬 Modell</button>
-                <button class="tab-btn" onclick="showSettingsTab('sellauth',this)">🛒 Sellauth</button>
-                <button class="tab-btn" onclick="showSettingsTab('telegram',this)">✈️ Telegram</button>
+                <button class="tab-btn" onclick="showSettingsTab('sellauth-cfg',this)">🛒 Sellauth</button>
+                <button class="tab-btn" onclick="showSettingsTab('telegram-cfg',this)">✈️ Telegram</button>
             </div>
 
-            <!-- Bot Settings -->
+            <!-- Bot -->
             <div id="settings-tab-bot" class="tab-pane active">
                 <div class="card">
                     <div class="form-group">
-                        <label>👋 Begrüßungsnachricht (/start)</label>
+                        <label>👋 Telegram Begrüßungsnachricht (/start)</label>
                         <textarea id="welcome-message" rows="3" placeholder="Willkommen! 👋 Wie kann ich dir helfen?"></textarea>
-                        <p class="hint">Wird gesendet wenn ein Nutzer /start schreibt.</p>
+                        <p class="hint">Wird bei /start gesendet. Markdown unterstützt.</p>
                     </div>
                     <div class="form-group">
                         <label>🤖 System Prompt</label>
                         <textarea id="system-prompt" rows="8" placeholder="Du bist ein hilfreicher Assistent für..."></textarea>
-                        <p class="hint">Definiert Persönlichkeit und Rolle der KI. Wichtig: Erkläre was die KI ist und wem sie hilft.</p>
+                        <p class="hint">Definiert Persönlichkeit und Rolle der KI.</p>
                     </div>
                     <div class="form-group">
                         <label>🚫 Negativ-Prompts</label>
                         <textarea id="negative-prompt" rows="3" placeholder="Sprich nie über Konkurrenten.&#10;Gib keine Preisgarantien."></textarea>
                     </div>
                     <div class="form-group">
-                        <label>🔄 Übergabe-Nachricht (bei Manuell-Modus)</label>
+                        <label>🔄 Übergabe-Nachricht (Manuell-Modus)</label>
                         <input type="text" id="manual-msg-template" placeholder="Ein Mitarbeiter übernimmt gleich das Gespräch. 👤">
                     </div>
-                    <button onclick="saveSettings()" class="btn-success btn-full">💾 Speichern</button>
+                    <button onclick="saveSettings()" class="btn btn-success" style="width:100%;padding:12px;">💾 Speichern</button>
                 </div>
             </div>
 
-            <!-- Model Settings -->
+            <!-- Modell -->
             <div id="settings-tab-model" class="tab-pane">
                 <div class="card">
-                    <h3 class="card-title">🔬 DeepSeek Modell-Konfiguration</h3>
+                    <h3 class="card-title">🔬 DeepSeek Modell</h3>
+                    <div class="form-group">
+                        <label>Modell</label>
+                        <select id="ai-model" class="form-control">
+                            <option value="deepseek-chat">deepseek-chat (Standard, schnell)</option>
+                            <option value="deepseek-reasoner">deepseek-reasoner / R1 (komplex)</option>
+                        </select>
+                    </div>
                     <div class="settings-grid">
                         <div class="form-group">
-                            <label>Modell</label>
-                            <select id="ai-model" class="form-select">
-                                <option value="deepseek-chat">deepseek-chat (Standard)</option>
-                                <option value="deepseek-reasoner">deepseek-reasoner (R1)</option>
-                            </select>
-                            <p class="hint">deepseek-chat ist schneller und günstiger. deepseek-reasoner (R1) für komplexe Anfragen.</p>
+                            <label>Max. Tokens: <span id="token-disp" class="label-val">1024</span></label>
+                            <input type="range" id="ai-max-tokens" min="256" max="4096" step="128" value="1024"
+                                oninput="document.getElementById('token-disp').textContent=this.value">
+                            <p class="hint">256–4096. Mehr = längere Antworten, teurer.</p>
                         </div>
                         <div class="form-group">
-                            <label>Max. Tokens <span id="token-val" class="label-hint"></span></label>
-                            <input type="range" id="ai-max-tokens" min="256" max="4096" step="128" oninput="document.getElementById('token-val').textContent='('+this.value+')'">
-                        </div>
-                        <div class="form-group">
-                            <label>Temperature <span id="temp-val" class="label-hint"></span></label>
-                            <input type="range" id="ai-temperature" min="0" max="1" step="0.05" oninput="document.getElementById('temp-val').textContent='('+parseFloat(this.value).toFixed(2)+')'">
-                            <p class="hint">0 = deterministisch/präzise · 1 = kreativ/variabel. Empfehlung für Support: 0.3–0.5</p>
+                            <label>Temperature: <span id="temp-disp" class="label-val">0.50</span></label>
+                            <input type="range" id="ai-temperature" min="0" max="1" step="0.05" value="0.5"
+                                oninput="document.getElementById('temp-disp').textContent=parseFloat(this.value).toFixed(2)">
+                            <p class="hint">0 = präzise · 1 = kreativ. Empfehlung: 0.3–0.5</p>
                         </div>
                     </div>
-                    <hr style="border-color:#2a2a2a;margin:16px 0;">
+                    <hr style="border:none;border-top:1px solid #2a2a2a;margin:16px 0;">
                     <h3 class="card-title">🔍 RAG Wissenssuche</h3>
                     <div class="settings-grid">
                         <div class="form-group">
-                            <label>Ähnlichkeits-Schwelle <span id="thresh-val" class="label-hint"></span></label>
-                            <input type="range" id="rag-threshold" min="0.25" max="0.80" step="0.05" oninput="document.getElementById('thresh-val').textContent='('+parseFloat(this.value).toFixed(2)+')'">
-                            <p class="hint">Niedriger = mehr Ergebnisse, höher = präziser. Empfehlung: 0.40–0.50</p>
+                            <label>Ähnlichkeits-Schwelle: <span id="thresh-disp" class="label-val">0.45</span></label>
+                            <input type="range" id="rag-threshold" min="0.25" max="0.80" step="0.05" value="0.45"
+                                oninput="document.getElementById('thresh-disp').textContent=parseFloat(this.value).toFixed(2)">
+                            <p class="hint">Niedriger = mehr Treffer. Empfehlung: 0.40–0.50</p>
                         </div>
                         <div class="form-group">
-                            <label>Anzahl Treffer <span id="count-val" class="label-hint"></span></label>
-                            <input type="range" id="rag-match-count" min="3" max="20" step="1" oninput="document.getElementById('count-val').textContent='('+this.value+')'">
-                            <p class="hint">Wie viele Wissenseinträge max. in den Prompt fließen. Empfehlung: 6–10</p>
+                            <label>Anzahl Treffer: <span id="count-disp" class="label-val">8</span></label>
+                            <input type="range" id="rag-match-count" min="3" max="20" step="1" value="8"
+                                oninput="document.getElementById('count-disp').textContent=this.value">
+                            <p class="hint">Wie viele Wissenseinträge in den Prompt fließen. 6–10 empfohlen.</p>
                         </div>
                     </div>
-                    <button onclick="saveSettings()" class="btn-success btn-full">💾 Modell-Einstellungen speichern</button>
+                    <button onclick="saveSettings()" class="btn btn-success" style="width:100%;padding:12px;margin-top:8px;">💾 Speichern</button>
                 </div>
             </div>
 
-            <!-- Sellauth Settings -->
-            <div id="settings-tab-sellauth" class="tab-pane">
+            <!-- Sellauth Config -->
+            <div id="settings-tab-sellauth-cfg" class="tab-pane">
                 <div class="card">
+                    <h3 class="card-title">Sellauth Zugangsdaten</h3>
                     <div class="form-group">
                         <label>API Key <span class="label-hint">(Dashboard → Account → API Access)</span></label>
                         <input type="password" id="sellauth-api-key" placeholder="sa_...">
@@ -275,110 +295,126 @@
                     <div class="form-group">
                         <label>Shop URL</label>
                         <input type="text" id="sellauth-shop-url" placeholder="https://meinshop.sellauth.com">
-                        <p class="hint">Produkt-Links werden so aufgebaut: [Shop URL]/[produkt-pfad]?variant=[id]</p>
+                        <p class="hint">Produkt-Links: [Shop URL]/[produkt-pfad]?variant=[id]</p>
                     </div>
-                    <button onclick="saveSettings()" class="btn-success btn-full">💾 Speichern</button>
+                    <button onclick="saveSettings()" class="btn btn-success" style="width:100%;padding:12px;">💾 Speichern</button>
                 </div>
             </div>
 
-            <!-- Telegram Settings -->
-            <div id="settings-tab-telegram" class="tab-pane">
+            <!-- Telegram Config -->
+            <div id="settings-tab-telegram-cfg" class="tab-pane">
                 <div class="card">
-                    <h3 class="card-title">Telegram Webhook</h3>
-                    <p style="color:#888;font-size:0.875rem;margin-bottom:12px;">Trage deine Render.com URL ein und setze den Webhook einmalig.</p>
+                    <h3 class="card-title">✈️ Telegram Webhook</h3>
+                    <p style="color:#888;font-size:0.875rem;margin-bottom:12px;">Einmalig einrichten. Trage deine Render.com URL ein.</p>
                     <div class="form-group">
                         <label>App-URL</label>
                         <input type="text" id="webhook-app-url" placeholder="https://dein-bot.onrender.com">
                     </div>
                     <div style="display:flex;gap:8px;">
-                        <button onclick="setTelegramWebhook()" class="btn-primary">✅ Webhook setzen</button>
-                        <button onclick="checkWebhookStatus()" class="btn-secondary">📊 Status prüfen</button>
+                        <button onclick="setTelegramWebhook()" class="btn btn-primary">✅ Webhook setzen</button>
+                        <button onclick="checkWebhookStatus()" class="btn btn-secondary">📊 Status</button>
                     </div>
                     <div id="webhook-result" style="margin-top:12px;font-size:0.875rem;"></div>
                 </div>
             </div>
         </section>
 
-    </main>
-</div>
+    </div><!-- #app-content -->
+</div><!-- #admin-app -->
 
 <script src="js/api.js"></script>
 <script src="js/dashboard.js"></script>
 <script>
 // ── Navigation ────────────────────────────────────────────────────────────────
 function showSection(id) {
-    document.querySelectorAll('.app-section').forEach(s => s.classList.remove('active-section'));
-    document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById(id + '-section')?.classList.add('active-section');
-    document.getElementById('nav-' + id)?.classList.add('active');
+    document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });
+    document.querySelectorAll('.nav-btn').forEach(function(b) { b.classList.remove('active'); });
+    var sec = document.getElementById(id + '-section');
+    if (sec) sec.style.display = (id === 'chats') ? 'flex' : 'block';
+    var btn = document.getElementById('nav-' + id);
+    if (btn) btn.classList.add('active');
     if (id === 'knowledge') { loadKbCategories(); loadKbEntries(); }
-    if (id === 'sellauth')  { /* lazy */ }
 }
 
 function showKbTab(tab, btn) {
-    document.querySelectorAll('#knowledge-section .tab-pane').forEach(p => p.classList.remove('active'));
-    document.querySelectorAll('#knowledge-section .tab-bar .tab-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('kb-tab-' + tab)?.classList.add('active');
+    document.querySelectorAll('#knowledge-section .tab-pane').forEach(function(p) { p.classList.remove('active'); });
+    document.querySelectorAll('#knowledge-section .tab-bar .tab-btn').forEach(function(b) { b.classList.remove('active'); });
+    var el = document.getElementById('kb-tab-' + tab);
+    if (el) el.classList.add('active');
     if (btn) btn.classList.add('active');
     if (tab === 'browse') { loadKbCategories(); loadKbEntries(); }
 }
 
 function showSettingsTab(tab, btn) {
-    document.querySelectorAll('[id^="settings-tab-"]').forEach(p => p.classList.remove('active'));
-    document.querySelectorAll('#settings-section .tab-bar .tab-btn').forEach(b => b.classList.remove('active'));
-    document.getElementById('settings-tab-' + tab)?.classList.add('active');
+    document.querySelectorAll('[id^="settings-tab-"]').forEach(function(p) { p.classList.remove('active'); });
+    document.querySelectorAll('#settings-section .tab-bar .tab-btn').forEach(function(b) { b.classList.remove('active'); });
+    var el = document.getElementById('settings-tab-' + tab);
+    if (el) el.classList.add('active');
     if (btn) btn.classList.add('active');
 }
 
 // ── Auth ──────────────────────────────────────────────────────────────────────
 async function handleLogin() {
-    const user = document.getElementById('username').value.trim();
-    const pass = document.getElementById('password').value;
-    const err  = document.getElementById('login-error');
+    var user = document.getElementById('username').value.trim();
+    var pass = document.getElementById('password').value;
+    var err  = document.getElementById('login-error');
     err.style.display = 'none';
     try {
-        const r = await fetch('/api/admin/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:user,password:pass}) });
-        const d = await r.json();
+        var r = await fetch('/api/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: user, password: pass })
+        });
+        var d = await r.json();
         if (r.ok && d.token) {
             localStorage.setItem('admin_token', d.token);
             document.getElementById('login-overlay').style.display = 'none';
-            document.getElementById('admin-app').style.display  = 'flex';
+            document.getElementById('admin-app').style.display     = 'block';
             if (typeof initDashboard === 'function') initDashboard();
             showSection('chats');
-        } else { err.style.display = 'block'; err.textContent = d.error || 'Zugriff verweigert'; }
-    } catch(e) { err.style.display='block'; err.textContent='Verbindung fehlgeschlagen'; }
+        } else {
+            err.style.display = 'block';
+            err.textContent = d.error || 'Zugriff verweigert';
+        }
+    } catch(e) {
+        err.style.display = 'block';
+        err.textContent = 'Verbindung fehlgeschlagen';
+    }
 }
 
-function handleLogout() { localStorage.removeItem('admin_token'); window.location.reload(); }
+function handleLogout() {
+    localStorage.removeItem('admin_token');
+    window.location.reload();
+}
 
-// ── Telegram Webhook ──────────────────────────────────────────────────────────
+// ── Telegram ──────────────────────────────────────────────────────────────────
 async function setTelegramWebhook() {
-    const appUrl = document.getElementById('webhook-app-url').value.trim();
-    if (!appUrl) return alert('Bitte App-URL eingeben');
-    const res = document.getElementById('webhook-result');
-    res.textContent = '…';
+    var appUrl = document.getElementById('webhook-app-url').value.trim();
+    if (!appUrl) return alert('App-URL eingeben');
+    var res = document.getElementById('webhook-result');
+    res.textContent = 'Setze Webhook…';
     try {
-        const d = await api.request('/telegram/webhook', 'POST', { appUrl });
-        res.innerHTML = d.success ? `<span style="color:#22c55e;">✅ Webhook gesetzt!</span>` : `<span style="color:#ef4444;">❌ ${d.description}</span>`;
-    } catch(e) { res.innerHTML = `<span style="color:#ef4444;">❌ ${e.message}</span>`; }
+        var d = await api.request('/telegram/webhook', 'POST', { appUrl: appUrl });
+        res.innerHTML = d.success ? '<span style="color:#22c55e;">✅ Webhook gesetzt!</span>' : '<span style="color:#ef4444;">❌ ' + (d.description||'Fehler') + '</span>';
+    } catch(e) { res.innerHTML = '<span style="color:#ef4444;">❌ ' + e.message + '</span>'; }
 }
 
 async function checkWebhookStatus() {
-    const res = document.getElementById('webhook-result');
+    var res = document.getElementById('webhook-result');
     res.textContent = 'Prüfe…';
     try {
-        const d = await api.request('/telegram/webhook');
+        var d = await api.request('/telegram/webhook');
         res.innerHTML = d.url
-            ? `<span style="color:#22c55e;">✅ Aktiv: ${d.url}</span>`
-            : `<span style="color:#f59e0b;">⚠️ Kein Webhook gesetzt</span>`;
-        if (d.last_error_message) res.innerHTML += `<br><span style="color:#ef4444;">Letzter Fehler: ${d.last_error_message}</span>`;
-    } catch(e) { res.innerHTML = `<span style="color:#ef4444;">❌ ${e.message}</span>`; }
+            ? '<span style="color:#22c55e;">✅ Aktiv: ' + d.url + '</span>'
+            : '<span style="color:#f59e0b;">⚠️ Kein Webhook gesetzt</span>';
+        if (d.last_error_message) res.innerHTML += '<br><span style="color:#ef4444;">Letzter Fehler: ' + d.last_error_message + '</span>';
+    } catch(e) { res.innerHTML = '<span style="color:#ef4444;">❌ ' + e.message + '</span>'; }
 }
 
-// Auto-Login
+// ── Auto-Login ────────────────────────────────────────────────────────────────
 if (localStorage.getItem('admin_token')) {
     document.getElementById('login-overlay').style.display = 'none';
-    document.getElementById('admin-app').style.display  = 'flex';
+    document.getElementById('admin-app').style.display     = 'block';
     showSection('chats');
 }
 </script>

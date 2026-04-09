@@ -1,44 +1,48 @@
-const API_BASE = '/api/admin';
+// api.js - var statt const damit api global erreichbar ist
+var API_BASE = '/api/admin';
 
-const api = {
-    async request(endpoint, method = 'GET', body = null) {
-        const opts = {
-            method,
+var api = {
+    async request(endpoint, method, body) {
+        method = method || 'GET';
+        var options = {
+            method: method,
             headers: {
                 'Content-Type': 'application/json',
-                'Authorization': `Bearer ${localStorage.getItem('admin_token')}`
+                'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')
             }
         };
-        if (body) opts.body = JSON.stringify(body);
+        if (body) options.body = JSON.stringify(body);
 
-        const res = await fetch(`${API_BASE}${endpoint}`, opts);
+        var response = await fetch(API_BASE + endpoint, options);
 
-        if (res.status === 401) {
+        if (response.status === 401) {
             localStorage.removeItem('admin_token');
-            document.getElementById('login-overlay').style.display = 'flex';
-            document.getElementById('admin-app').style.display = 'none';
+            var overlay = document.getElementById('login-overlay');
+            var app = document.getElementById('admin-app');
+            if (overlay) overlay.style.display = 'flex';
+            if (app) app.style.display = 'none';
             return null;
         }
 
-        if (!res.ok) {
-            let msg = 'API Fehler';
-            try { const e = await res.json(); msg = e.error || e.message || msg; } catch(_) {}
-            throw new Error(msg);
+        if (!response.ok) {
+            var errMsg = 'API Fehler';
+            try { var e = await response.json(); errMsg = e.error || e.message || errMsg; } catch(x) {}
+            throw new Error(errMsg);
         }
-        return res.json();
+        return response.json();
     },
 
-    getStats:           () => api.request('/stats'),
-    getChats:           () => api.request('/chats'),
-    getChatMessages:    (id) => api.request(`/chats/${id}/messages`),
-    updateChatStatus:   (id, m) => api.request(`/chats/${id}/status`, 'PATCH', { is_manual_mode: m }),
-    getSettings:        () => api.request('/settings'),
-    saveSettings:       (s) => api.request('/settings', 'POST', s),
-    getLearningQueue:   () => api.request('/learning'),
-    resolveLearning:    (id, ans) => api.request('/learning/resolve', 'POST', { questionId: id, adminAnswer: ans }),
-    banUser:            (id, r) => api.request('/blacklist', 'POST', { identifier: id, reason: r }),
-    getBlacklist:       () => api.request('/blacklist'),
-    removeBan:          (id) => api.request(`/blacklist/${id}`, 'DELETE'),
-    discoverLinks:      (url) => api.request('/knowledge/discover', 'POST', { url }),
-    addManualKnowledge: (t, c, cat) => api.request('/knowledge/manual', 'POST', { title: t, content: c, category_id: cat }),
+    getStats:           function() { return api.request('/stats'); },
+    getChats:           function() { return api.request('/chats'); },
+    getChatMessages:    function(id) { return api.request('/chats/' + id + '/messages'); },
+    updateChatStatus:   function(id, m) { return api.request('/chats/' + id + '/status', 'PATCH', { is_manual_mode: m }); },
+    getSettings:        function() { return api.request('/settings'); },
+    saveSettings:       function(s) { return api.request('/settings', 'POST', s); },
+    getLearningQueue:   function() { return api.request('/learning'); },
+    resolveLearning:    function(id, ans) { return api.request('/learning/resolve', 'POST', { questionId: id, adminAnswer: ans }); },
+    banUser:            function(id, r) { return api.request('/blacklist', 'POST', { identifier: id, reason: r }); },
+    getBlacklist:       function() { return api.request('/blacklist'); },
+    removeBan:          function(id) { return api.request('/blacklist/' + id, 'DELETE'); },
+    discoverLinks:      function(url) { return api.request('/knowledge/discover', 'POST', { url: url }); },
+    addManualKnowledge: function(t, c, cat) { return api.request('/knowledge/manual', 'POST', { title: t, content: c, category_id: cat }); }
 };

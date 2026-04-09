@@ -34,26 +34,42 @@ const adminController = {
         supabase.from('learning_queue').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
         supabase.from('messages').select('prompt_tokens, completion_tokens')
       ]);
-      const tin  = (tokenUsage || []).reduce((s, m) => s + (m.prompt_tokens     || 0), 0);
-      const tout = (tokenUsage || []).reduce((s, m) => s + (m.completion_tokens || 0), 0);
-      const cost = ((tin / 1_000_000) * 0.14 + (tout / 1_000_000) * 0.28).toFixed(4);
+      const tin  = (tokenUsage||[]).reduce((s,m) => s+(m.prompt_tokens||0), 0);
+      const tout = (tokenUsage||[]).reduce((s,m) => s+(m.completion_tokens||0), 0);
+      const cost = ((tin/1_000_000)*0.14 + (tout/1_000_000)*0.28).toFixed(4);
       res.json({
         version: getVersion(),
-        stats: { totalChats: totalChats||0, activeManual: activeManual||0, knowledgeEntries: totalKnowledge||0, pendingLearning: pendingLearning||0, totalCost: `${cost} $`, totalTokens: tin + tout }
+        stats: {
+          totalChats: totalChats||0, activeManual: activeManual||0,
+          knowledgeEntries: totalKnowledge||0, pendingLearning: pendingLearning||0,
+          totalCost: `${cost} $`, totalTokens: tin+tout
+        }
       });
     } catch (e) { next(e); }
   },
 
-  // VERBESSERT: Enthält jetzt last_message für Chat-Vorschau
+  // FIX: select('*') statt expliziter Spalten → robust gegen fehlende Migrations
   async getChats(req, res, next) {
     try {
       const { data, error } = await supabase
         .from('chats')
-        .select('id, platform, is_manual_mode, last_message, last_message_role, message_count, updated_at, first_name, username, metadata')
+        .select('*')
         .order('updated_at', { ascending: false })
         .limit(100);
       if (error) throw error;
-      res.json(data || []);
+
+      // Normalize: Felder die in alten Schemas fehlen könnten → Fallback
+      const normalized = (data||[]).map(c => ({
+        ...c,
+        is_manual_mode:    c.is_manual_mode    ?? false,
+        last_message:      c.last_message      ?? null,
+        last_message_role: c.last_message_role ?? 'user',
+        message_count:     c.message_count     ?? 0,
+        first_name:        c.first_name        ?? c.metadata?.first_name ?? null,
+        username:          c.username          ?? c.metadata?.username   ?? null,
+      }));
+
+      res.json(normalized);
     } catch (e) { next(e); }
   },
 
@@ -61,11 +77,15 @@ const adminController = {
     try {
       const { chatId } = req.params;
       const [{ data: chat }, { data: msgs, error }] = await Promise.all([
-        supabase.from('chats').select('is_manual_mode, first_name, username, platform').eq('id', chatId).single(),
+        supabase.from('chats').select('*').eq('id', chatId).single(),
         supabase.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending: true }).limit(200)
       ]);
       if (error) throw error;
-      res.json({ is_manual: chat?.is_manual_mode || false, chat_info: chat || {}, messages: msgs || [] });
+      res.json({
+        is_manual:  chat?.is_manual_mode ?? false,
+        chat_info:  chat || {},
+        messages:   msgs || []
+      });
     } catch (e) { next(e); }
   },
 
@@ -85,7 +105,8 @@ const adminController = {
       if (!chatId || !content) return res.status(400).json({ error: 'Fehlende Felder' });
       const { data: chat } = await supabase.from('chats').select('platform').eq('id', chatId).single();
       await supabase.from('messages').insert([{ chat_id: chatId, role: 'assistant', content, is_manual: true }]);
-      await supabase.from('chats').update({ last_message: content.substring(0,120), last_message_role: 'assistant', updated_at: new Date() }).eq('id', chatId);
+      // last_message aktualisieren (ignoriert Fehler falls Spalte fehlt)
+      await supabase.from('chats').update({ last_message: content.substring(0,120), last_message_role: 'assistant', updated_at: new Date() }).eq('id', chatId).catch(() => {});
       if (chat?.platform === 'telegram') await telegramService.sendMessage(chatId, content);
       res.json({ success: true });
     } catch (e) { next(e); }
@@ -147,12 +168,17 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
+  // Knowledge Categories - mit Fallback falls Tabelle nicht existiert
   async getKnowledgeCategories(req, res, next) {
     try {
       const { data, error } = await supabase.from('knowledge_categories').select('*').order('name');
-      if (error) throw error;
+      if (error) {
+        // Tabelle existiert noch nicht → leeres Array zurückgeben
+        console.warn('[Categories] Tabelle nicht gefunden (schema4.sql ausführen):', error.message);
+        return res.json([]);
+      }
       res.json(data || []);
-    } catch (e) { next(e); }
+    } catch (e) { res.json([]); }
   },
   async createKnowledgeCategory(req, res, next) {
     try {
@@ -175,12 +201,27 @@ const adminController = {
     try {
       const { category_id } = req.query;
       let q = supabase.from('knowledge_base')
-        .select('id, title, content, source, category_id, created_at, knowledge_categories(name, color, icon)')
+        .select('id, title, content, source, category_id, created_at')
         .order('created_at', { ascending: false }).limit(200);
       if (category_id) q = q.eq('category_id', category_id);
       const { data, error } = await q;
       if (error) throw error;
-      res.json((data||[]).map(e => ({ ...e, content_preview: (e.content||'').substring(0,200) })));
+      
+      // Kategorien separat laden (fail-safe)
+      let categories = [];
+      try {
+        const { data: cats } = await supabase.from('knowledge_categories').select('id, name, color, icon');
+        categories = cats || [];
+      } catch {}
+
+      const catMap = {};
+      categories.forEach(c => { catMap[c.id] = c; });
+
+      res.json((data||[]).map(e => ({
+        ...e,
+        content_preview: (e.content||'').substring(0, 200),
+        knowledge_categories: e.category_id ? catMap[e.category_id] || null : null
+      })));
     } catch (e) { next(e); }
   },
   async deleteKnowledgeEntry(req, res, next) {
@@ -197,11 +238,9 @@ const adminController = {
       if (!content) return res.status(400).json({ error: 'Inhalt fehlt' });
       const fullContent = title ? `### ${title}\n${content}` : content;
       const embedding   = await deepseekService.generateEmbedding(fullContent);
-      const { data, error } = await supabase.from('knowledge_base').insert([{
-        content: fullContent, title: title||null,
-        category_id: category_id ? parseInt(category_id) : null,
-        embedding, source: 'manual_entry'
-      }]).select();
+      const insertData  = { content: fullContent, title: title||null, embedding, source: 'manual_entry' };
+      if (category_id) insertData.category_id = parseInt(category_id);
+      const { data, error } = await supabase.from('knowledge_base').insert([insertData]).select();
       if (error) throw error;
       res.json({ success: true, data: data[0] });
     } catch (e) { next(e); }
@@ -226,11 +265,9 @@ const adminController = {
         for (const chunk of page.chunks) {
           try {
             const emb = await deepseekService.generateEmbedding(chunk);
-            await supabase.from('knowledge_base').insert([{
-              content: `Quelle: ${page.url}\n${chunk}`, title: page.title,
-              category_id: category_id ? parseInt(category_id) : null,
-              embedding: emb, source: 'web_scrape', metadata: { url: page.url }
-            }]);
+            const ins = { content: `Quelle: ${page.url}\n${chunk}`, title: page.title, embedding: emb, source: 'web_scrape', metadata: { url: page.url } };
+            if (category_id) ins.category_id = parseInt(category_id);
+            await supabase.from('knowledge_base').insert([ins]);
             saved++;
           } catch {}
         }
@@ -273,7 +310,8 @@ const adminController = {
       res.json({
         products: products.map(p => ({
           id: p.id, name: p.name, type: p.type, price: p.price, currency: p.currency,
-          stock: p.stock_count, url: s.sellauth_shop_url ? sellauthService.buildProductUrl(s.sellauth_shop_url, p.path) : p.path,
+          stock: p.stock_count,
+          url: s.sellauth_shop_url ? sellauthService.buildProductUrl(s.sellauth_shop_url, p.path) : p.path,
           variants: (p.variants||[]).length, visibility: p.visibility
         })),
         total: products.length
@@ -295,7 +333,6 @@ const adminController = {
       res.json(info.result || info);
     } catch (e) { next(e); }
   },
-
   async savePushSubscription(req, res, next) {
     try {
       const { subscription } = req.body;

@@ -1,337 +1,377 @@
-// ── Init ─────────────────────────────────────────────────────────────────────
-let _allChats = [];
-let _currentChatId = null;
-let _allCategories = [];
-let _currentKbCatId = null;
+// ── State ─────────────────────────────────────────────────────────────────────
+var _allChats     = [];
+var _currentChat  = null;
+var _kbCatId      = null;
+var _allKbCats    = [];
 
-document.addEventListener('DOMContentLoaded', () => {
+// ── Init ──────────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
     if (localStorage.getItem('admin_token')) initDashboard();
     setInterval(updateStats, 30000);
-    setInterval(() => { if (_currentChatId) refreshCurrentChat(); }, 15000);
+    setInterval(function() { if (_currentChat) refreshMessages(); }, 15000);
 });
 
-async function initDashboard() {
-    await Promise.all([ updateStats(), loadChats(), loadSettings(), loadLearningQueue(), loadBlacklist() ]);
+function initDashboard() {
+    updateStats();
+    loadChats();
+    loadSettings();
+    loadLearningQueue();
+    loadBlacklist();
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 async function updateStats() {
     try {
-        const d = await api.getStats();
-        const s = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
-        s('s-chats',     d.stats.totalChats);
-        s('s-knowledge', d.stats.knowledgeEntries);
-        s('s-cost',      d.stats.totalCost);
-        s('version-tag', `v${d.version}`);
-        const badge = document.getElementById('learning-badge');
-        if (badge) { badge.textContent = d.stats.pendingLearning; badge.style.display = d.stats.pendingLearning > 0 ? 'inline-block' : 'none'; }
-    } catch(e) { console.error('Stats:', e); }
+        var d = await api.getStats();
+        var sv = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
+        sv('s-chats',    d.stats.totalChats);
+        sv('s-manual',   d.stats.activeManual);
+        sv('s-knowledge',d.stats.knowledgeEntries);
+        sv('s-cost',     d.stats.totalCost);
+        sv('s-tokens',   (d.stats.totalTokens||0).toLocaleString() + ' Token');
+        sv('version-tag','v' + d.version);
+        var badge = document.getElementById('learning-badge');
+        if (badge) {
+            badge.textContent = d.stats.pendingLearning;
+            badge.style.display = d.stats.pendingLearning > 0 ? 'inline-block' : 'none';
+        }
+    } catch(e) { console.error('Stats Fehler:', e.message); }
 }
 
 // ── Chat List ─────────────────────────────────────────────────────────────────
 async function loadChats() {
-    const el = document.getElementById('chat-list');
+    var el = document.getElementById('chat-list');
     if (!el) return;
     try {
         _allChats = await api.getChats() || [];
         renderChatList(_allChats);
-    } catch(e) { el.innerHTML = '<p style="padding:1rem;color:#666;font-size:0.85rem;">Ladefehler</p>'; }
+    } catch(e) {
+        el.innerHTML = '<p style="padding:1rem;color:#666;font-size:0.85rem;">Fehler beim Laden: ' + esc(e.message) + '</p>';
+    }
 }
 
 function renderChatList(chats) {
-    const el = document.getElementById('chat-list');
-    if (!el) return;
-    if (!chats?.length) {
-        el.innerHTML = '<p style="padding:1.5rem;color:#555;font-size:0.85rem;text-align:center;">Noch keine Chats.<br>Wenn Kunden schreiben, erscheinen sie hier.</p>';
+    var el = document.getElementById('chat-list');
+    if (!chats || !chats.length) {
+        el.innerHTML = '<p style="padding:1.5rem 1rem;color:#555;font-size:0.82rem;text-align:center;">Noch keine Chats.<br>Kunden-Nachrichten erscheinen hier.</p>';
         return;
     }
-    el.innerHTML = chats.map(c => {
-        const name      = c.first_name || c.username || c.id.substring(0,12);
-        const preview   = c.last_message ? truncate(c.last_message, 42) : 'Kein Inhalt';
-        const roleIcon  = c.last_message_role === 'assistant' ? '🤖 ' : '';
-        const time      = c.updated_at ? relativeTime(c.updated_at) : '';
-        const platform  = c.platform || 'telegram';
-        const avatarCls = platform === 'telegram' ? 'telegram-avatar' : 'web-avatar';
-        const avatarTxt = platform === 'telegram' ? '✈️' : '🌐';
-        const selected  = _currentChatId === c.id ? 'selected' : '';
-        const manual    = c.is_manual_mode ? 'manual-active' : '';
-        const modeBadge = c.is_manual_mode
-            ? '<span class="chat-mode-badge badge-manual">MANUELL</span>'
-            : '<span class="chat-mode-badge badge-ai">KI</span>';
-        return `
-            <div class="chat-item ${selected} ${manual}" onclick="selectChat('${esc(c.id)}')" data-chat-id="${esc(c.id)}">
-                <div class="chat-avatar ${avatarCls}">${avatarTxt}</div>
-                <div class="chat-item-body">
-                    <div class="chat-item-top">
-                        <span class="chat-item-name">${esc(name)}</span>
-                        <span class="chat-item-time">${time}</span>
-                    </div>
-                    <div class="chat-item-preview">
-                        <span class="preview-role">${roleIcon}</span>${esc(preview)}
-                    </div>
-                </div>
-                ${modeBadge}
-            </div>`;
+    el.innerHTML = chats.map(function(c) {
+        var name     = c.first_name || c.username || (c.id + '').substring(0, 12);
+        var preview  = c.last_message ? trunc(c.last_message, 40) : 'Kein Inhalt';
+        var prefix   = c.last_message_role === 'assistant' ? '🤖 ' : '';
+        var time     = c.updated_at ? relTime(c.updated_at) : '';
+        var isTg     = c.platform !== 'web_widget';
+        var avCls    = isTg ? 'avatar-tg' : 'avatar-web';
+        var avIcon   = isTg ? '✈️' : '🌐';
+        var selected = _currentChat === c.id ? 'selected' : '';
+        var manual   = c.is_manual_mode ? 'manual-active' : '';
+        var modeCls  = c.is_manual_mode ? 'mode-manual' : 'mode-ai';
+        var modeText = c.is_manual_mode ? 'MENSCH' : 'KI';
+        return '<div class="chat-item ' + selected + ' ' + manual + '" onclick="selectChat(\'' + esc(c.id) + '\')" data-id="' + esc(c.id) + '">' +
+            '<div class="chat-avatar ' + avCls + '">' + avIcon + '</div>' +
+            '<div class="chat-item-body">' +
+                '<div class="chat-item-row1">' +
+                    '<span class="ci-name" title="' + esc(c.id) + '">' + esc(name) + '</span>' +
+                    '<span class="ci-time">' + time + '</span>' +
+                '</div>' +
+                '<div class="ci-preview">' + prefix + esc(preview) + '</div>' +
+            '</div>' +
+            '<span class="ci-mode ' + modeCls + '">' + modeText + '</span>' +
+        '</div>';
     }).join('');
 }
 
-function filterChats(query) {
-    if (!query) { renderChatList(_allChats); return; }
-    const q = query.toLowerCase();
-    renderChatList(_allChats.filter(c =>
-        c.id.toLowerCase().includes(q) ||
-        (c.first_name||'').toLowerCase().includes(q) ||
-        (c.username||'').toLowerCase().includes(q) ||
-        (c.last_message||'').toLowerCase().includes(q)
-    ));
+function filterChats(q) {
+    if (!q) { renderChatList(_allChats); return; }
+    q = q.toLowerCase();
+    renderChatList(_allChats.filter(function(c) {
+        return (c.id+'').toLowerCase().includes(q) ||
+               (c.first_name||'').toLowerCase().includes(q) ||
+               (c.username||'').toLowerCase().includes(q) ||
+               (c.last_message||'').toLowerCase().includes(q);
+    }));
 }
 
 // ── Chat Window ───────────────────────────────────────────────────────────────
 async function selectChat(chatId) {
-    _currentChatId = chatId;
-    // Aktiv markieren
-    document.querySelectorAll('.chat-item').forEach(el => el.classList.remove('selected'));
-    document.querySelector(`.chat-item[data-chat-id="${chatId}"]`)?.classList.add('selected');
+    _currentChat = chatId;
+    // Selection highlight
+    document.querySelectorAll('.chat-item').forEach(function(el) { el.classList.remove('selected'); });
+    var row = document.querySelector('.chat-item[data-id="' + chatId + '"]');
+    if (row) row.classList.add('selected');
 
-    const win = document.getElementById('chat-window');
-    win.innerHTML = '<div class="chat-empty-state"><p style="color:#444;">Lädt…</p></div>';
+    var win = document.getElementById('chat-window');
+    win.innerHTML = '<div class="chat-placeholder"><p style="color:#444;">Lädt…</p></div>';
+
+    // Mobile: show chat window
+    var sec = document.getElementById('chats-section');
+    if (sec) sec.classList.add('chat-open');
 
     try {
-        const data = await api.getChatMessages(chatId);
-        const info = data.chat_info || {};
-        const name = info.first_name || info.username || chatId.substring(0,14);
+        var data = await api.getChatMessages(chatId);
+        var info = data.chat_info || {};
+        var name = info.first_name || info.username || chatId.substring(0, 16);
+        var isTg = info.platform !== 'web_widget';
+        var avCls = isTg ? 'avatar-tg' : 'avatar-web';
 
-        win.innerHTML = `
-            <div class="chat-window-header">
-                <div class="chat-avatar ${info.platform==='telegram'?'telegram-avatar':'web-avatar'}" style="width:36px;height:36px;font-size:0.9rem;">
-                    ${info.platform==='telegram'?'✈️':'🌐'}
-                </div>
-                <div class="chat-window-info">
-                    <div class="chat-window-name">${esc(name)}</div>
-                    <div class="chat-window-meta">${esc(chatId)} · ${info.platform||'telegram'}</div>
-                </div>
-                <div class="chat-window-actions">
-                    <div class="toggle-wrap">
-                        <span class="toggle-label" id="mode-label-${esc(chatId)}">${data.is_manual?'Manuell':'KI aktiv'}</span>
-                        <label class="toggle">
-                            <input type="checkbox" id="mode-${esc(chatId)}" ${data.is_manual?'checked':''}
-                                   onchange="toggleChatStatus('${esc(chatId)}', this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                    <button onclick="quickBan('${esc(chatId)}')" class="btn-danger" style="padding:6px 10px;font-size:0.75rem;">⛔</button>
-                    <button onclick="loadChats()" class="icon-btn" title="Aktualisieren">↻</button>
-                </div>
-            </div>
+        win.innerHTML =
+            '<div class="cw-header">' +
+                '<div class="chat-avatar ' + avCls + '" style="width:36px;height:36px;font-size:0.9rem;">' + (isTg?'✈️':'🌐') + '</div>' +
+                '<div class="cw-info">' +
+                    '<div class="cw-name">' + esc(name) + '</div>' +
+                    '<div class="cw-sub">' + esc(chatId) + ' &middot; ' + (info.platform||'telegram') + '</div>' +
+                '</div>' +
+                '<div class="cw-actions">' +
+                    '<div class="toggle-row">' +
+                        '<span id="mode-lbl-' + esc(chatId) + '">' + (data.is_manual ? 'Manuell' : 'KI aktiv') + '</span>' +
+                        '<label class="toggle">' +
+                            '<input type="checkbox" id="mode-chk-' + esc(chatId) + '" ' + (data.is_manual?'checked':'') + ' onchange="toggleMode(\'' + esc(chatId) + '\',this.checked)">' +
+                            '<span class="toggle-track"></span>' +
+                        '</label>' +
+                    '</div>' +
+                    '<button onclick="quickBan(\'' + esc(chatId) + '\')" class="btn btn-danger" style="padding:5px 9px;font-size:0.75rem;" title="Bannen">⛔</button>' +
+                    (window.innerWidth > 700 ? '' : '<button onclick="closeChat()" class="icon-btn" title="Zurück">←</button>') +
+                '</div>' +
+            '</div>' +
+            '<div class="messages-area" id="msg-' + esc(chatId) + '">' + renderMsgs(data.messages || []) + '</div>' +
+            '<div class="chat-input-bar">' +
+                '<textarea id="reply-' + esc(chatId) + '" rows="1" placeholder="Nachricht als Admin…" ' +
+                    'onkeydown="replyKey(event,\'' + esc(chatId) + '\')" oninput="autoH(this)"></textarea>' +
+                '<button class="send-btn" onclick="sendMsg(\'' + esc(chatId) + '\')">➤</button>' +
+            '</div>';
 
-            <div class="messages-area" id="msg-area-${esc(chatId)}">
-                ${renderMessages(data.messages || [])}
-            </div>
-
-            <div class="chat-input-bar">
-                <textarea id="reply-${esc(chatId)}" placeholder="Nachricht als Admin senden…" rows="1"
-                    onkeydown="handleReplyKey(event,'${esc(chatId)}')"
-                    oninput="autoResize(this)"></textarea>
-                <button class="send-btn" onclick="sendAdminMessage('${esc(chatId)}')">➤</button>
-            </div>`;
-
-        // Scroll to bottom
-        const area = document.getElementById(`msg-area-${chatId}`);
-        if (area) area.scrollTop = area.scrollHeight;
-
-    } catch(e) { win.innerHTML = `<div class="chat-empty-state"><p style="color:#ef4444;">Fehler: ${esc(e.message)}</p></div>`; }
+        scrollBottom('msg-' + chatId);
+    } catch(e) {
+        win.innerHTML = '<div class="chat-placeholder"><p style="color:#ef4444;">Fehler: ' + esc(e.message) + '</p></div>';
+    }
 }
 
-function renderMessages(messages) {
-    if (!messages.length) return '<p style="text-align:center;color:#444;padding:2rem;font-size:0.875rem;">Noch keine Nachrichten.</p>';
+function closeChat() {
+    _currentChat = null;
+    var sec = document.getElementById('chats-section');
+    if (sec) sec.classList.remove('chat-open');
+    var win = document.getElementById('chat-window');
+    if (win) win.innerHTML = '<div class="chat-placeholder"><span style="font-size:3rem;">💬</span><p>Chat auswählen</p></div>';
+}
 
-    let html = '';
-    let lastDate = null;
+function renderMsgs(messages) {
+    if (!messages.length) return '<p style="text-align:center;color:#444;padding:2rem;font-size:0.85rem;">Noch keine Nachrichten.</p>';
 
-    messages.forEach(m => {
-        const date = new Date(m.created_at).toLocaleDateString('de-DE', { day:'2-digit', month:'short', year:'numeric' });
+    var html = '';
+    var lastDate = null;
+
+    messages.forEach(function(m) {
+        var date = new Date(m.created_at).toLocaleDateString('de-DE', { day: '2-digit', month: 'short', year: 'numeric' });
         if (date !== lastDate) {
-            html += `<div class="date-sep">${date}</div>`;
+            html += '<div class="date-sep">' + date + '</div>';
             lastDate = date;
         }
-        const time   = new Date(m.created_at).toLocaleTimeString('de-DE', { hour:'2-digit', minute:'2-digit' });
-        const cls    = m.role + (m.is_manual ? ' manual' : '');
-        const tokens = m.prompt_tokens ? `<span class="msg-tokens">${(m.prompt_tokens||0)+(m.completion_tokens||0)}tkn</span>` : '';
-        const label  = m.role === 'assistant' ? (m.is_manual ? '👤 Admin' : '🤖 KI') : '👤 Nutzer';
+        var time   = new Date(m.created_at).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+        var isMan  = m.is_manual ? ' manual' : '';
+        var who    = m.role === 'assistant' ? (m.is_manual ? '👤 Admin' : '🤖 KI') : '👤 Nutzer';
+        var tkns   = (m.prompt_tokens||0) + (m.completion_tokens||0);
+        var tkBadge= tkns > 0 ? '<span class="tk-badge">' + tkns + 'tkn</span>' : '';
 
-        html += `
-            <div class="msg-row ${cls}">
-                <div class="msg-bubble">
-                    ${m.content.replace(/\n/g,'<br>')}
-                    <div class="msg-meta">
-                        <span style="color:inherit;opacity:0.5;">${label}</span>
-                        ${tokens}
-                        <span>${time}</span>
-                    </div>
-                </div>
-            </div>`;
+        html += '<div class="msg-row ' + m.role + isMan + '">' +
+            '<div class="msg-bubble">' +
+                esc(m.content).replace(/\n/g, '<br>') +
+                '<div class="msg-footer">' +
+                    '<span style="opacity:0.5;">' + who + '</span>' +
+                    tkBadge +
+                    '<span>' + time + '</span>' +
+                '</div>' +
+            '</div>' +
+        '</div>';
     });
     return html;
 }
 
-async function refreshCurrentChat() {
-    if (!_currentChatId) return;
+async function refreshMessages() {
+    if (!_currentChat) return;
     try {
-        const data  = await api.getChatMessages(_currentChatId);
-        const area  = document.getElementById(`msg-area-${_currentChatId}`);
+        var data = await api.getChatMessages(_currentChat);
+        var area = document.getElementById('msg-' + _currentChat);
         if (!area) return;
-        const wasAtBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 60;
-        area.innerHTML = renderMessages(data.messages || []);
-        if (wasAtBottom) area.scrollTop = area.scrollHeight;
-    } catch {}
+        var atBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
+        area.innerHTML = renderMsgs(data.messages || []);
+        if (atBottom) scrollBottom('msg-' + _currentChat);
+    } catch(e) {}
 }
 
-async function sendAdminMessage(chatId) {
-    const ta      = document.getElementById(`reply-${chatId}`);
-    const content = ta?.value?.trim();
+async function sendMsg(chatId) {
+    var ta = document.getElementById('reply-' + chatId);
+    var content = ta ? ta.value.trim() : '';
     if (!content) return;
     ta.value = ''; ta.style.height = 'auto';
     try {
-        await api.request('/manual-message', 'POST', { chatId, content });
-        await refreshCurrentChat();
+        await api.request('/manual-message', 'POST', { chatId: chatId, content: content });
+        await refreshMessages();
         loadChats();
     } catch(e) { alert('Fehler: ' + e.message); }
 }
 
-function handleReplyKey(e, chatId) {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAdminMessage(chatId); }
+function replyKey(e, chatId) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMsg(chatId); }
 }
 
-function autoResize(el) {
+function autoH(el) {
     el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+    el.style.height = Math.min(el.scrollHeight, 100) + 'px';
 }
 
-async function toggleChatStatus(chatId, isManual) {
+function scrollBottom(id) {
+    var el = document.getElementById(id);
+    if (el) el.scrollTop = el.scrollHeight;
+}
+
+async function toggleMode(chatId, isManual) {
     try {
         await api.updateChatStatus(chatId, isManual);
-        const label = document.getElementById(`mode-label-${chatId}`);
-        if (label) label.textContent = isManual ? 'Manuell' : 'KI aktiv';
+        var lbl = document.getElementById('mode-lbl-' + chatId);
+        if (lbl) lbl.textContent = isManual ? 'Manuell' : 'KI aktiv';
         loadChats();
+        updateStats();
     } catch(e) { alert('Fehler: ' + e.message); }
 }
 
 async function quickBan(chatId) {
-    if (!confirm(`Nutzer ${chatId} bannen?`)) return;
-    try { await api.banUser(chatId, 'Direktbann'); showToast('✅ Gebannt'); loadBlacklist(); }
-    catch(e) { alert('Fehler: ' + e.message); }
+    if (!confirm('Nutzer ' + chatId + ' bannen?')) return;
+    try {
+        await api.banUser(chatId, 'Direktbann über Dashboard');
+        showToast('✅ Nutzer gebannt');
+        loadBlacklist();
+        loadChats();
+    } catch(e) { alert('Fehler: ' + e.message); }
 }
 
 // ── Learning ──────────────────────────────────────────────────────────────────
 async function loadLearningQueue() {
-    const el = document.getElementById('learning-list');
+    var el = document.getElementById('learning-list');
     if (!el) return;
     try {
-        const queue = await api.getLearningQueue();
-        if (!queue?.length) { el.innerHTML = '<p style="color:#555;padding:8px;font-size:0.875rem;">Keine offenen Fragen. 🎉</p>'; return; }
-        el.innerHTML = queue.map(item => `
-            <div class="card">
-                <p style="font-size:0.75rem;color:#666;margin-bottom:4px;">Kundenfrage:</p>
-                <p style="font-weight:700;margin-bottom:10px;">"${esc(item.unanswered_question)}"</p>
-                <textarea id="learn-ans-${item.id}" rows="4" placeholder="Deine Antwort → wird in die Wissensdatenbank gespeichert…" style="margin-bottom:8px;"></textarea>
-                <button onclick="resolveLearning('${item.id}')" class="btn-success btn-full">✅ Speichern & KI trainieren</button>
-            </div>`).join('');
-    } catch(e) { el.innerHTML = '<p style="color:#ef4444;">Ladefehler</p>'; }
+        var queue = await api.getLearningQueue() || [];
+        if (!queue.length) {
+            el.innerHTML = '<p style="color:#555;font-size:0.875rem;">Keine offenen Fragen. 🎉</p>';
+            return;
+        }
+        el.innerHTML = queue.map(function(item) {
+            return '<div class="card">' +
+                '<p style="font-size:0.75rem;color:#888;margin-bottom:4px;">Kundenfrage:</p>' +
+                '<p style="font-weight:700;margin-bottom:10px;">"' + esc(item.unanswered_question) + '"</p>' +
+                '<textarea id="learn-' + item.id + '" rows="3" placeholder="Deine Antwort → wird in Wissensdatenbank gespeichert…" style="width:100%;margin-bottom:8px;"></textarea>' +
+                '<button onclick="resolveLearning(\'' + item.id + '\')" class="btn btn-success" style="width:100%;">✅ Wissen speichern & KI trainieren</button>' +
+            '</div>';
+        }).join('');
+    } catch(e) {
+        el.innerHTML = '<p style="color:#ef4444;">Fehler beim Laden: ' + esc(e.message) + '</p>';
+    }
 }
 
 async function resolveLearning(id) {
-    const ans = document.getElementById(`learn-ans-${id}`)?.value?.trim();
-    if (!ans) return alert('Bitte Antwort eingeben');
-    try { await api.resolveLearning(id, ans); showToast('✅ Wissen gespeichert!'); loadLearningQueue(); updateStats(); }
-    catch(e) { alert('Fehler: ' + e.message); }
+    var el = document.getElementById('learn-' + id);
+    var ans = el ? el.value.trim() : '';
+    if (!ans) return alert('Bitte eine Antwort eingeben');
+    try {
+        await api.resolveLearning(id, ans);
+        showToast('✅ Wissen gespeichert!');
+        loadLearningQueue();
+        updateStats();
+    } catch(e) { alert('Fehler: ' + e.message); }
 }
 
 // ── Knowledge ─────────────────────────────────────────────────────────────────
 async function loadKbCategories() {
-    const el = document.getElementById('kb-cat-list');
-    if (!el) return;
     try {
-        _allCategories = await api.request('/knowledge/categories') || [];
-        // Dropdowns befüllen
-        ['manual-cat-id','scrape-cat-id'].forEach(selId => {
-            const sel = document.getElementById(selId);
+        _allKbCats = await api.request('/knowledge/categories') || [];
+        // Dropdowns
+        ['manual-cat-id', 'scrape-cat-id'].forEach(function(selId) {
+            var sel = document.getElementById(selId);
             if (!sel) return;
             sel.innerHTML = '<option value="">– Keine Kategorie –</option>' +
-                _allCategories.map(c => `<option value="${c.id}">${c.icon||''} ${esc(c.name)}</option>`).join('');
+                _allKbCats.map(function(c) {
+                    return '<option value="' + c.id + '">' + (c.icon||'') + ' ' + esc(c.name) + '</option>';
+                }).join('');
         });
         // Sidebar
-        el.innerHTML = `
-            <div class="kb-cat-item ${!_currentKbCatId?'active':''}" onclick="filterKbByCategory(null)">
-                <span>🗂</span><span style="flex:1;">Alle</span>
-            </div>` +
-            _allCategories.map(c => `
-                <div class="kb-cat-item ${_currentKbCatId===c.id?'active':''}" onclick="filterKbByCategory(${c.id})">
-                    <span class="kb-cat-dot" style="background:${c.color}"></span>
-                    <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${c.icon||''} ${esc(c.name)}</span>
-                    <button class="kb-cat-del" onclick="event.stopPropagation();deleteCategory(${c.id})">✕</button>
-                </div>`).join('');
-    } catch(e) { console.error('Categories:', e); }
+        var list = document.getElementById('kb-cat-list');
+        if (list) {
+            list.innerHTML =
+                '<div class="kb-cat-item ' + (!_kbCatId ? 'active' : '') + '" onclick="filterKbByCategory(null)" id="kb-cat-all">' +
+                    '<span>🗂</span><span style="flex:1;">Alle</span>' +
+                '</div>' +
+                _allKbCats.map(function(c) {
+                    return '<div class="kb-cat-item ' + (_kbCatId === c.id ? 'active' : '') + '" onclick="filterKbByCategory(' + c.id + ')">' +
+                        '<span class="kb-cat-dot" style="background:' + c.color + '"></span>' +
+                        '<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + (c.icon||'') + ' ' + esc(c.name) + '</span>' +
+                        '<button onclick="event.stopPropagation();delCat(' + c.id + ')" style="background:none;border:none;color:#555;cursor:pointer;padding:0 2px;font-size:0.75rem;">✕</button>' +
+                    '</div>';
+                }).join('');
+        }
+    } catch(e) { console.error('Categories:', e.message); }
 }
 
 async function loadKbEntries(catId) {
-    const el = document.getElementById('kb-entries-list');
+    var el = document.getElementById('kb-entries-list');
     if (!el) return;
-    el.innerHTML = '<p style="color:#555;font-size:0.875rem;padding:8px;">Lädt…</p>';
+    el.innerHTML = '<p style="color:#555;font-size:0.85rem;padding:8px;">Lädt…</p>';
     try {
-        const url = catId ? `/knowledge/entries?category_id=${catId}` : '/knowledge/entries';
-        const entries = await api.request(url) || [];
-        if (!entries.length) { el.innerHTML = '<p style="color:#555;padding:8px;font-size:0.875rem;">Keine Einträge.</p>'; return; }
-        el.innerHTML = entries.map(e => {
-            const cat = e.knowledge_categories;
-            const catPill = cat
-                ? `<span class="pill" style="background:${cat.color}22;color:${cat.color};">${cat.icon||''} ${esc(cat.name)}</span>`
+        var url = catId ? '/knowledge/entries?category_id=' + catId : '/knowledge/entries';
+        var entries = await api.request(url) || [];
+        if (!entries.length) {
+            el.innerHTML = '<p style="color:#555;font-size:0.85rem;padding:8px;">Keine Einträge.</p>';
+            return;
+        }
+        el.innerHTML = entries.map(function(e) {
+            var cat = e.knowledge_categories;
+            var catPill = cat
+                ? '<div class="cat-pill" style="background:' + cat.color + '22;color:' + cat.color + ';">' + (cat.icon||'') + ' ' + esc(cat.name) + '</div>'
                 : '';
-            return `
-                <div class="kb-entry">
-                    <div class="kb-entry-body">
-                        ${catPill}
-                        <div class="kb-entry-title">${esc(e.title||'(kein Titel)')}</div>
-                        <div class="kb-entry-preview">${esc(e.content_preview)}</div>
-                        <div class="kb-entry-footer">
-                            <span>${esc(e.source)}</span>
-                            <span>·</span>
-                            <span>${new Date(e.created_at).toLocaleDateString('de-DE')}</span>
-                        </div>
-                    </div>
-                    <button onclick="deleteKbEntry('${e.id}')" class="icon-btn" style="flex-shrink:0;" title="Löschen">🗑</button>
-                </div>`;
+            return '<div class="kb-entry">' +
+                '<div class="kb-entry-body">' +
+                    catPill +
+                    '<div class="kb-entry-title">' + esc(e.title || '(kein Titel)') + '</div>' +
+                    '<div class="kb-entry-preview">' + esc(e.content_preview) + '</div>' +
+                    '<div class="kb-entry-meta"><span>' + esc(e.source) + '</span><span>·</span><span>' + new Date(e.created_at).toLocaleDateString('de-DE') + '</span></div>' +
+                '</div>' +
+                '<button onclick="delKbEntry(\'' + e.id + '\')" class="icon-btn" style="flex-shrink:0;" title="Löschen">🗑</button>' +
+            '</div>';
         }).join('');
-    } catch(e) { el.innerHTML = `<p style="color:#ef4444;">Fehler: ${esc(e.message)}</p>`; }
+    } catch(e) {
+        el.innerHTML = '<p style="color:#ef4444;padding:8px;">Fehler: ' + esc(e.message) + '</p>';
+    }
 }
 
 function filterKbByCategory(catId) {
-    _currentKbCatId = catId;
-    document.querySelectorAll('.kb-cat-item').forEach(el => el.classList.remove('active'));
-    const idx = catId
-        ? _allCategories.findIndex(c => c.id === catId)
-        : -1;
-    document.querySelectorAll('.kb-cat-item')[idx + 1]?.classList.add('active');
+    _kbCatId = catId;
+    document.querySelectorAll('.kb-cat-item').forEach(function(el) { el.classList.remove('active'); });
+    var active = catId ? document.querySelector('.kb-cat-item[onclick="filterKbByCategory(' + catId + ')"]') : document.getElementById('kb-cat-all');
+    if (active) active.classList.add('active');
     loadKbEntries(catId);
 }
 
-async function deleteKbEntry(id) {
+async function delKbEntry(id) {
     if (!confirm('Eintrag löschen?')) return;
-    try { await api.request(`/knowledge/entries/${id}`, 'DELETE'); loadKbEntries(_currentKbCatId); updateStats(); showToast('🗑 Gelöscht'); }
-    catch(e) { alert('Fehler: ' + e.message); }
+    try {
+        await api.request('/knowledge/entries/' + id, 'DELETE');
+        showToast('🗑 Gelöscht');
+        loadKbEntries(_kbCatId);
+        updateStats();
+    } catch(e) { alert('Fehler: ' + e.message); }
 }
 
 function toggleAddCat() {
-    const f = document.getElementById('add-cat-form');
-    f.style.display = f.style.display === 'none' ? 'block' : 'none';
+    var f = document.getElementById('add-cat-form');
+    if (f) f.style.display = f.style.display === 'none' ? 'block' : 'none';
 }
 
 async function addCategory() {
-    const name  = document.getElementById('new-cat-name')?.value?.trim();
-    const color = document.getElementById('new-cat-color')?.value || '#4a9eff';
-    const icon  = document.getElementById('new-cat-icon')?.value?.trim() || '📌';
+    var name  = (document.getElementById('new-cat-name')?.value||'').trim();
+    var color = document.getElementById('new-cat-color')?.value || '#4a9eff';
+    var icon  = (document.getElementById('new-cat-icon')?.value||'').trim() || '📌';
     if (!name) return alert('Name eingeben');
     try {
-        await api.request('/knowledge/categories', 'POST', { name, color, icon });
+        await api.request('/knowledge/categories', 'POST', { name: name, color: color, icon: icon });
         document.getElementById('new-cat-name').value = '';
         document.getElementById('add-cat-form').style.display = 'none';
         showToast('✅ Kategorie angelegt');
@@ -339,118 +379,136 @@ async function addCategory() {
     } catch(e) { alert('Fehler: ' + e.message); }
 }
 
-async function deleteCategory(id) {
+async function delCat(id) {
     if (!confirm('Kategorie löschen? Einträge bleiben erhalten.')) return;
-    try { await api.request(`/knowledge/categories/${id}`, 'DELETE'); showToast('🗑 Gelöscht'); loadKbCategories(); }
-    catch(e) { alert('Fehler: ' + e.message); }
+    try {
+        await api.request('/knowledge/categories/' + id, 'DELETE');
+        showToast('🗑 Kategorie gelöscht');
+        loadKbCategories();
+    } catch(e) { alert('Fehler: ' + e.message); }
 }
 
 async function saveManualKnowledge() {
-    const title   = document.getElementById('manual-kb-title')?.value?.trim();
-    const content = document.getElementById('manual-kb-content')?.value?.trim();
-    const cat_id  = document.getElementById('manual-cat-id')?.value || null;
-    const btn     = document.getElementById('save-manual-kb');
-    if (!content) return alert('Inhalt eingeben!');
+    var title   = (document.getElementById('manual-kb-title')?.value||'').trim();
+    var content = (document.getElementById('manual-kb-content')?.value||'').trim();
+    var catId   = document.getElementById('manual-cat-id')?.value || null;
+    var btn     = document.getElementById('save-manual-kb');
+    if (!content) return alert('Bitte Inhalt eingeben!');
     btn.disabled = true; btn.textContent = 'Speichert…';
     try {
-        await api.addManualKnowledge(title, content, cat_id);
+        await api.addManualKnowledge(title, content, catId);
         showToast('✅ Wissen gespeichert!');
-        document.getElementById('manual-kb-title').value  = '';
+        document.getElementById('manual-kb-title').value   = '';
         document.getElementById('manual-kb-content').value = '';
         updateStats();
-        loadKbEntries(_currentKbCatId);
+        loadKbEntries(_kbCatId);
     } catch(e) { alert('Fehler: ' + e.message); }
     finally { btn.disabled = false; btn.textContent = '💾 Wissen speichern & KI trainieren'; }
 }
 
 // ── Scraper ───────────────────────────────────────────────────────────────────
 async function discoverLinks() {
-    const url = document.getElementById('scrape-url')?.value?.trim();
+    var url = (document.getElementById('scrape-url')?.value||'').trim();
     if (!url) return alert('URL eingeben');
-    const btn = document.getElementById('url-discover');
+    var btn = document.getElementById('url-discover');
     btn.textContent = '🔍 Suche…'; btn.disabled = true;
     document.getElementById('link-list').innerHTML = '';
     try {
-        const data = await api.discoverLinks(url);
-        const ll   = document.getElementById('link-list');
-        if (!data.links?.length) { ll.innerHTML = '<p style="color:#666;padding:8px;font-size:0.875rem;">Keine Links gefunden.</p>'; return; }
-        ll.innerHTML = `
-            <div class="link-discovery-box">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;font-size:0.8rem;color:#888;">
-                    <span>${data.links.length} Links gefunden</span>
-                    <div><button onclick="setAllLinks(true)" class="btn-secondary" style="padding:3px 8px;font-size:0.75rem;">Alle</button> <button onclick="setAllLinks(false)" class="btn-secondary" style="padding:3px 8px;font-size:0.75rem;margin-left:4px;">Keine</button></div>
-                </div>
-                ${data.links.map(l => `<div class="link-item"><input type="checkbox" name="scrape-links" value="${esc(l)}" checked><label>${l.length>80?l.substring(0,80)+'…':l}</label></div>`).join('')}
-            </div>`;
+        var data = await api.discoverLinks(url);
+        var ll   = document.getElementById('link-list');
+        if (!data.links || !data.links.length) {
+            ll.innerHTML = '<p style="color:#888;padding:8px;font-size:0.85rem;">Keine Links gefunden.</p>';
+            return;
+        }
+        var rows = data.links.map(function(l) {
+            return '<div class="link-item"><input type="checkbox" name="scrape-links" value="' + esc(l) + '" checked>' +
+                '<label>' + (l.length > 80 ? l.substring(0, 80) + '…' : l) + '</label></div>';
+        }).join('');
+        ll.innerHTML = '<div style="background:var(--bg3);border:1px solid var(--border);border-radius:8px;padding:12px;max-height:240px;overflow-y:auto;">' +
+            '<div style="display:flex;justify-content:space-between;margin-bottom:8px;font-size:0.8rem;color:#888;">' +
+                '<span>' + data.links.length + ' Links</span>' +
+                '<span><button onclick="setAllLinks(true)" class="btn btn-secondary" style="padding:2px 7px;font-size:0.72rem;">Alle</button> ' +
+                '<button onclick="setAllLinks(false)" class="btn btn-secondary" style="padding:2px 7px;font-size:0.72rem;">Keine</button></span>' +
+            '</div>' + rows + '</div>';
         document.getElementById('start-scrape').style.display = 'block';
-    } catch(e) { document.getElementById('link-list').innerHTML = `<p style="color:#ef4444;padding:8px;">⚠️ ${esc(e.message)}</p>`; }
+    } catch(e) {
+        document.getElementById('link-list').innerHTML = '<p style="color:#ef4444;padding:8px;">⚠️ ' + esc(e.message) + '</p>';
+    }
     finally { btn.textContent = '🔍 Links finden'; btn.disabled = false; }
 }
 
-function setAllLinks(v) { document.querySelectorAll('input[name="scrape-links"]').forEach(el => el.checked = v); }
+function setAllLinks(v) {
+    document.querySelectorAll('input[name="scrape-links"]').forEach(function(el) { el.checked = v; });
+}
 
 async function startScraping() {
-    const links  = Array.from(document.querySelectorAll('input[name="scrape-links"]:checked')).map(el => el.value);
-    const cat_id = document.getElementById('scrape-cat-id')?.value || null;
+    var links  = Array.from(document.querySelectorAll('input[name="scrape-links"]:checked')).map(function(el) { return el.value; });
+    var catId  = document.getElementById('scrape-cat-id')?.value || null;
     if (!links.length) return alert('Mindestens einen Link auswählen');
-    const btn = document.getElementById('start-scrape');
-    btn.textContent = `⏳ ${links.length} Seiten werden gescannt…`; btn.disabled = true;
+    var btn = document.getElementById('start-scrape');
+    btn.textContent = '⏳ ' + links.length + ' Seiten werden gescannt…'; btn.disabled = true;
     try {
-        const r = await api.request('/scrape', 'POST', { urls: links, category_id: cat_id });
-        showToast(`✅ ${r.processedUrls} Seiten, ${r.savedChunks} Chunks gespeichert`);
-        updateStats(); loadKbEntries(_currentKbCatId);
+        var r = await api.request('/scrape', 'POST', { urls: links, category_id: catId });
+        showToast('✅ ' + r.processedUrls + ' Seiten, ' + r.savedChunks + ' Chunks gespeichert');
+        updateStats();
+        loadKbEntries(_kbCatId);
     } catch(e) { alert('Fehler: ' + e.message); }
     finally { btn.textContent = '▶ Ausgewählte Seiten scrapen'; btn.disabled = false; }
 }
 
 // ── Sellauth ──────────────────────────────────────────────────────────────────
 async function testSellauth() {
-    const s = await api.getSettings();
-    if (!s.sellauth_api_key || !s.sellauth_shop_id) return alert('API Key und Shop ID in Einstellungen → Sellauth eintragen!');
     try {
-        const r = await api.request('/sellauth/test', 'POST', { apiKey: s.sellauth_api_key, shopId: s.sellauth_shop_id });
-        if (r.ok) showToast(`✅ Verbunden: ${r.shopName}`);
-        else alert('❌ ' + r.error);
+        var s = await api.getSettings();
+        if (!s.sellauth_api_key || !s.sellauth_shop_id) {
+            return alert('Bitte zuerst API Key und Shop ID unter ⚙️ Settings → Sellauth speichern!');
+        }
+        var r = await api.request('/sellauth/test', 'POST', { apiKey: s.sellauth_api_key, shopId: s.sellauth_shop_id });
+        if (r.ok) showToast('✅ Verbunden: ' + r.shopName);
+        else alert('❌ Verbindung fehlgeschlagen: ' + r.error);
     } catch(e) { alert('Fehler: ' + e.message); }
 }
 
 async function loadSellauthPreview() {
-    const preview = document.getElementById('sa-preview');
-    const list    = document.getElementById('sa-product-list');
+    var preview = document.getElementById('sa-preview');
+    var list    = document.getElementById('sa-product-list');
+    if (!preview || !list) return;
     preview.style.display = 'block';
-    list.innerHTML = '<p style="color:#666;">Lädt Produkte…</p>';
+    list.innerHTML = '<p style="color:#888;">Lade Produkte…</p>';
     try {
-        const data = await api.request('/sellauth/preview');
+        var data = await api.request('/sellauth/preview');
         document.getElementById('sa-product-count').textContent = data.total;
-        list.innerHTML = data.products.map(p => `
-            <div class="sa-card">
-                <div class="sa-card-title">
-                    ${esc(p.name)}
-                    <span class="badge-type ${p.type==='variant'?'badge-variant':'badge-single'}">${p.type==='variant'?`${p.variants} Varianten`:'Einzelprodukt'}</span>
-                    ${p.stock !== null ? `<span style="font-size:0.75rem;color:#888;margin-left:auto;">Bestand: ${p.stock}</span>` : ''}
-                </div>
-                ${p.price ? `<div style="color:#f59e0b;font-size:0.85rem;">💰 ${p.price} ${p.currency}</div>` : ''}
-                <div class="sa-link">🔗 ${esc(p.url)}</div>
-            </div>`).join('');
-    } catch(e) { list.innerHTML = `<p style="color:#ef4444;">${esc(e.message)}</p>`; }
+        list.innerHTML = data.products.map(function(p) {
+            var typeBadge = p.type === 'variant'
+                ? '<span class="sa-badge sa-variant-badge">' + p.variants + ' Varianten</span>'
+                : '<span class="sa-badge sa-single-badge">Einzelprodukt</span>';
+            return '<div class="sa-card">' +
+                '<div class="sa-title">' + esc(p.name) + ' ' + typeBadge +
+                    (p.stock !== null ? '<span style="margin-left:auto;font-size:0.75rem;color:#888;">Bestand: ' + p.stock + '</span>' : '') +
+                '</div>' +
+                (p.price ? '<div style="color:#f59e0b;font-size:0.85rem;margin-bottom:4px;">💰 ' + p.price + ' ' + (p.currency||'EUR') + '</div>' : '') +
+                '<div class="sa-link">🔗 ' + esc(p.url) + '</div>' +
+            '</div>';
+        }).join('');
+    } catch(e) { list.innerHTML = '<p style="color:#ef4444;">' + esc(e.message) + '</p>'; }
 }
 
 async function syncSellauth() {
-    const btn = document.getElementById('btn-sync-sellauth');
+    var btn = document.getElementById('btn-sync-sellauth');
     btn.textContent = '⏳ Synchronisiere…'; btn.disabled = true;
     try {
-        const r = await api.request('/sellauth/sync', 'POST');
-        showToast(`✅ ${r.message}`);
+        var r = await api.request('/sellauth/sync', 'POST');
+        showToast('✅ ' + r.message);
         updateStats();
     } catch(e) { alert('Fehler: ' + e.message); }
-    finally { btn.textContent = '🔄 Synchronisieren'; btn.disabled = false; }
+    finally { btn.textContent = '🔄 Jetzt synchronisieren'; btn.disabled = false; }
 }
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 async function loadSettings() {
     try {
-        const s = await api.getSettings();
-        const sv  = (id, v) => { const el = document.getElementById(id); if (el) el.value = v ?? ''; };
+        var s  = await api.getSettings();
+        var sv = function(id, val) { var el = document.getElementById(id); if (el) el.value = val != null ? val : ''; };
         sv('system-prompt',       s.system_prompt);
         sv('negative-prompt',     s.negative_prompt);
         sv('welcome-message',     s.welcome_message);
@@ -458,24 +516,30 @@ async function loadSettings() {
         sv('sellauth-api-key',    s.sellauth_api_key);
         sv('sellauth-shop-id',    s.sellauth_shop_id);
         sv('sellauth-shop-url',   s.sellauth_shop_url);
-        // Model sliders
-        const setSlider = (id, val) => {
-            const el = document.getElementById(id);
-            if (el) { el.value = val; el.dispatchEvent(new Event('input')); }
+
+        // Modell-Einstellungen
+        var model = document.getElementById('ai-model');
+        if (model && s.ai_model) model.value = s.ai_model;
+
+        var setSlider = function(id, val, dispId) {
+            var el = document.getElementById(id);
+            if (el && val != null) {
+                el.value = val;
+                var disp = document.getElementById(dispId);
+                if (disp) disp.textContent = (id === 'ai-temperature' || id === 'rag-threshold')
+                    ? parseFloat(val).toFixed(2) : val;
+            }
         };
-        setSlider('ai-max-tokens',   s.ai_max_tokens   || 1024);
-        setSlider('ai-temperature',  s.ai_temperature  || 0.5);
-        setSlider('rag-threshold',   s.rag_threshold   || 0.45);
-        setSlider('rag-match-count', s.rag_match_count || 8);
-        // Model select
-        const modelSel = document.getElementById('ai-model');
-        if (modelSel && s.ai_model) modelSel.value = s.ai_model;
-    } catch(e) { console.error('Settings:', e); }
+        setSlider('ai-max-tokens',   s.ai_max_tokens   || 1024, 'token-disp');
+        setSlider('ai-temperature',  s.ai_temperature  || 0.5,  'temp-disp');
+        setSlider('rag-threshold',   s.rag_threshold   || 0.45, 'thresh-disp');
+        setSlider('rag-match-count', s.rag_match_count || 8,    'count-disp');
+    } catch(e) { console.error('Settings Fehler:', e.message); }
 }
 
 async function saveSettings() {
-    const gv  = id => document.getElementById(id)?.value ?? '';
-    const settings = {
+    var gv = function(id) { var el = document.getElementById(id); return el ? el.value : ''; };
+    var settings = {
         system_prompt:       gv('system-prompt'),
         negative_prompt:     gv('negative-prompt'),
         welcome_message:     gv('welcome-message'),
@@ -489,73 +553,94 @@ async function saveSettings() {
         rag_threshold:       parseFloat(gv('rag-threshold'))  || 0.45,
         rag_match_count:     parseInt(gv('rag-match-count'))  || 8
     };
-    try { await api.saveSettings(settings); showToast('✅ Gespeichert!'); }
-    catch(e) { alert('Fehler: ' + e.message); }
+    try {
+        await api.saveSettings(settings);
+        showToast('✅ Einstellungen gespeichert!');
+    } catch(e) { alert('Fehler beim Speichern: ' + e.message); }
 }
 
 // ── Blacklist ─────────────────────────────────────────────────────────────────
 async function loadBlacklist() {
-    const tbody = document.getElementById('blacklist-body');
+    var tbody = document.getElementById('blacklist-body');
     if (!tbody) return;
     try {
-        const list = await api.getBlacklist();
-        if (!list?.length) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1rem;color:#555;">Leer</td></tr>'; return; }
-        tbody.innerHTML = list.map(item => `
-            <tr>
-                <td><code style="font-size:0.8rem;">${esc(item.identifier)}</code></td>
-                <td style="color:#aaa;">${esc(item.reason||'–')}</td>
-                <td style="color:#555;">${new Date(item.created_at).toLocaleDateString('de-DE')}</td>
-                <td><button onclick="removeBan('${item.id}')" class="btn-danger" style="padding:4px 10px;font-size:0.75rem;">Löschen</button></td>
-            </tr>`).join('');
-    } catch(e) { tbody.innerHTML = '<tr><td colspan="4" style="color:#ef4444;padding:10px;">Ladefehler</td></tr>'; }
+        var list = await api.getBlacklist() || [];
+        if (!list.length) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1rem;color:#555;">Blacklist ist leer</td></tr>';
+            return;
+        }
+        tbody.innerHTML = list.map(function(item) {
+            return '<tr>' +
+                '<td><code style="font-size:0.8rem;">' + esc(item.identifier) + '</code></td>' +
+                '<td style="color:#aaa;">' + esc(item.reason||'–') + '</td>' +
+                '<td style="color:#555;">' + new Date(item.created_at).toLocaleDateString('de-DE') + '</td>' +
+                '<td><button onclick="removeBan(\'' + item.id + '\')" class="btn btn-danger" style="padding:3px 9px;font-size:0.75rem;">Löschen</button></td>' +
+            '</tr>';
+        }).join('');
+    } catch(e) {
+        tbody.innerHTML = '<tr><td colspan="4" style="color:#ef4444;padding:10px;">Fehler: ' + esc(e.message) + '</td></tr>';
+    }
 }
 
 async function handleBan() {
-    const id     = document.getElementById('ban-identifier')?.value?.trim();
-    const reason = document.getElementById('ban-reason')?.value?.trim();
+    var id     = (document.getElementById('ban-identifier')?.value||'').trim();
+    var reason = (document.getElementById('ban-reason')?.value||'').trim();
     if (!id) return alert('Identifikator eingeben');
-    try { await api.banUser(id, reason); document.getElementById('ban-identifier').value=''; document.getElementById('ban-reason').value=''; showToast('✅ Gebannt'); loadBlacklist(); }
-    catch(e) { alert('Fehler: ' + e.message); }
+    try {
+        await api.banUser(id, reason);
+        document.getElementById('ban-identifier').value = '';
+        document.getElementById('ban-reason').value     = '';
+        showToast('✅ Nutzer gebannt');
+        loadBlacklist();
+    } catch(e) { alert('Fehler: ' + e.message); }
 }
 
 async function removeBan(id) {
     if (!confirm('Bann aufheben?')) return;
-    try { await api.removeBan(id); loadBlacklist(); showToast('✅ Bann aufgehoben'); }
-    catch(e) { alert('Fehler: ' + e.message); }
+    try {
+        await api.removeBan(id);
+        showToast('✅ Bann aufgehoben');
+        loadBlacklist();
+    } catch(e) { alert('Fehler: ' + e.message); }
 }
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 function esc(s) {
     if (s == null) return '';
-    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    return String(s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
 }
 
-function truncate(s, n) { return s && s.length > n ? s.substring(0, n) + '…' : (s||''); }
+function trunc(s, n) { return s && s.length > n ? s.substring(0, n) + '…' : (s||''); }
 
-function relativeTime(iso) {
-    const diff = Date.now() - new Date(iso).getTime();
-    const mins = Math.floor(diff / 60000);
-    if (mins < 1)   return 'jetzt';
-    if (mins < 60)  return `${mins}m`;
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24)   return `${hrs}h`;
-    const days = Math.floor(hrs / 24);
-    if (days < 7)   return `${days}d`;
-    return new Date(iso).toLocaleDateString('de-DE', { day:'2-digit', month:'2-digit' });
+function relTime(iso) {
+    var diff = Date.now() - new Date(iso).getTime();
+    var m    = Math.floor(diff / 60000);
+    if (m < 1)  return 'jetzt';
+    if (m < 60) return m + 'm';
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + 'h';
+    var d = Math.floor(h / 24);
+    if (d < 7)  return d + 'd';
+    return new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
 }
 
 function showToast(msg) {
-    let t = document.getElementById('_toast');
+    var t = document.getElementById('_toast');
     if (!t) {
         t = document.createElement('div');
         t.id = '_toast';
-        t.style.cssText = 'position:fixed;bottom:24px;right:24px;padding:12px 20px;border-radius:10px;z-index:99999;font-weight:600;font-size:0.875rem;box-shadow:0 8px 24px rgba(0,0,0,0.5);transition:opacity 0.3s;pointer-events:none;';
+        t.style.cssText = 'position:fixed;bottom:20px;right:20px;padding:11px 18px;border-radius:9px;' +
+            'z-index:99999;font-weight:600;font-size:0.875rem;box-shadow:0 8px 24px rgba(0,0,0,0.5);' +
+            'transition:opacity 0.3s;pointer-events:none;color:#fff;';
         document.body.appendChild(t);
     }
-    t.style.background = msg.includes('❌') ? '#991b1b' : '#15803d';
-    t.style.color = '#fff';
-    t.textContent = msg;
-    t.style.opacity = '1';
+    t.style.background = msg.startsWith('✅') ? '#15803d' : (msg.startsWith('🗑') ? '#374151' : '#991b1b');
+    t.textContent      = msg;
+    t.style.opacity    = '1';
     clearTimeout(t._t);
-    t._t = setTimeout(() => t.style.opacity='0', 3500);
+    t._t = setTimeout(function() { t.style.opacity = '0'; }, 3500);
 }
