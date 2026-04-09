@@ -8,23 +8,17 @@ const jwt = require('jsonwebtoken');
 
 const adminController = {
 
-  // ─── AUTH ──────────────────────────────────────────────────────────────
   async login(req, res, next) {
     try {
       const { username, password } = req.body;
       if (username === process.env.ADMIN_USERNAME && password === process.env.ADMIN_PASSWORD) {
-        const token = jwt.sign(
-          { role: 'admin' },
-          process.env.JWT_SECRET || 'ai-assistant-secret',
-          { expiresIn: '24h' }
-        );
+        const token = jwt.sign({ role: 'admin' }, process.env.JWT_SECRET || 'ai-assistant-secret', { expiresIn: '24h' });
         return res.json({ success: true, token });
       }
       res.status(401).json({ error: 'Falsche Zugangsdaten' });
     } catch (e) { next(e); }
   },
 
-  // ─── STATS ────────────────────────────────────────────────────────────
   async getStats(req, res, next) {
     try {
       const [
@@ -40,30 +34,24 @@ const adminController = {
         supabase.from('learning_queue').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
         supabase.from('messages').select('prompt_tokens, completion_tokens')
       ]);
-
-      const totalIn  = (tokenUsage || []).reduce((s, m) => s + (m.prompt_tokens     || 0), 0);
-      const totalOut = (tokenUsage || []).reduce((s, m) => s + (m.completion_tokens || 0), 0);
-      const cost     = ((totalIn / 1_000_000) * 0.14 + (totalOut / 1_000_000) * 0.28).toFixed(4);
-
+      const tin  = (tokenUsage || []).reduce((s, m) => s + (m.prompt_tokens     || 0), 0);
+      const tout = (tokenUsage || []).reduce((s, m) => s + (m.completion_tokens || 0), 0);
+      const cost = ((tin / 1_000_000) * 0.14 + (tout / 1_000_000) * 0.28).toFixed(4);
       res.json({
         version: getVersion(),
-        stats: {
-          totalChats:      totalChats    || 0,
-          activeManual:    activeManual  || 0,
-          knowledgeEntries:totalKnowledge|| 0,
-          pendingLearning: pendingLearning||0,
-          totalCost:       `${cost} $`,
-          totalTokens:     totalIn + totalOut
-        }
+        stats: { totalChats: totalChats||0, activeManual: activeManual||0, knowledgeEntries: totalKnowledge||0, pendingLearning: pendingLearning||0, totalCost: `${cost} $`, totalTokens: tin + tout }
       });
     } catch (e) { next(e); }
   },
 
-  // ─── CHATS ────────────────────────────────────────────────────────────
+  // VERBESSERT: Enthält jetzt last_message für Chat-Vorschau
   async getChats(req, res, next) {
     try {
       const { data, error } = await supabase
-        .from('chats').select('*').order('updated_at', { ascending: false }).limit(100);
+        .from('chats')
+        .select('id, platform, is_manual_mode, last_message, last_message_role, message_count, updated_at, first_name, username, metadata')
+        .order('updated_at', { ascending: false })
+        .limit(100);
       if (error) throw error;
       res.json(data || []);
     } catch (e) { next(e); }
@@ -72,10 +60,12 @@ const adminController = {
   async getChatMessages(req, res, next) {
     try {
       const { chatId } = req.params;
-      const { data: chat } = await supabase.from('chats').select('is_manual_mode').eq('id', chatId).single();
-      const { data: msgs, error } = await supabase.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending: true });
+      const [{ data: chat }, { data: msgs, error }] = await Promise.all([
+        supabase.from('chats').select('is_manual_mode, first_name, username, platform').eq('id', chatId).single(),
+        supabase.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending: true }).limit(200)
+      ]);
       if (error) throw error;
-      res.json({ is_manual: chat?.is_manual_mode || false, messages: msgs || [] });
+      res.json({ is_manual: chat?.is_manual_mode || false, chat_info: chat || {}, messages: msgs || [] });
     } catch (e) { next(e); }
   },
 
@@ -83,8 +73,7 @@ const adminController = {
     try {
       const { chatId } = req.params;
       const { is_manual_mode } = req.body;
-      const { data, error } = await supabase
-        .from('chats').update({ is_manual_mode, updated_at: new Date() }).eq('id', chatId).select();
+      const { data, error } = await supabase.from('chats').update({ is_manual_mode, updated_at: new Date() }).eq('id', chatId).select();
       if (error) throw error;
       res.json(data[0]);
     } catch (e) { next(e); }
@@ -93,22 +82,15 @@ const adminController = {
   async sendManualMessage(req, res, next) {
     try {
       const { chatId, content } = req.body;
-      if (!chatId || !content) return res.status(400).json({ error: 'chatId und content erforderlich' });
-
+      if (!chatId || !content) return res.status(400).json({ error: 'Fehlende Felder' });
       const { data: chat } = await supabase.from('chats').select('platform').eq('id', chatId).single();
-
       await supabase.from('messages').insert([{ chat_id: chatId, role: 'assistant', content, is_manual: true }]);
-
-      if (chat?.platform === 'telegram') {
-        await telegramService.sendMessage(chatId, content);
-      }
-
-      await supabase.from('chats').update({ updated_at: new Date() }).eq('id', chatId);
+      await supabase.from('chats').update({ last_message: content.substring(0,120), last_message_role: 'assistant', updated_at: new Date() }).eq('id', chatId);
+      if (chat?.platform === 'telegram') await telegramService.sendMessage(chatId, content);
       res.json({ success: true });
     } catch (e) { next(e); }
   },
 
-  // ─── SETTINGS ────────────────────────────────────────────────────────
   async getSettings(req, res, next) {
     try {
       const { data, error } = await supabase.from('settings').select('*').single();
@@ -119,14 +101,12 @@ const adminController = {
 
   async updateSettings(req, res, next) {
     try {
-      const { data, error } = await supabase
-        .from('settings').upsert({ id: 1, ...req.body, updated_at: new Date() }).select();
+      const { data, error } = await supabase.from('settings').upsert({ id: 1, ...req.body, updated_at: new Date() }).select();
       if (error) throw error;
       res.json(data[0]);
     } catch (e) { next(e); }
   },
 
-  // ─── BLACKLIST ────────────────────────────────────────────────────────
   async getBlacklist(req, res, next) {
     try {
       const { data, error } = await supabase.from('blacklist').select('*').order('created_at', { ascending: false });
@@ -134,17 +114,15 @@ const adminController = {
       res.json(data || []);
     } catch (e) { next(e); }
   },
-
   async banUser(req, res, next) {
     try {
       const { identifier, reason } = req.body;
       if (!identifier) return res.status(400).json({ error: 'Identifikator fehlt' });
-      const { data, error } = await supabase.from('blacklist').insert([{ identifier, reason: reason || '' }]).select();
+      const { data, error } = await supabase.from('blacklist').insert([{ identifier, reason: reason||'' }]).select();
       if (error) throw error;
       res.json({ success: true, data: data[0] });
     } catch (e) { next(e); }
   },
-
   async removeBan(req, res, next) {
     try {
       const { error } = await supabase.from('blacklist').delete().eq('id', req.params.id);
@@ -153,7 +131,6 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
-  // ─── LEARNING ────────────────────────────────────────────────────────
   async getLearningQueue(req, res, next) {
     try {
       const { data, error } = await supabase.from('learning_queue').select('*').eq('status', 'pending').order('created_at', { ascending: false });
@@ -161,7 +138,6 @@ const adminController = {
       res.json(data || []);
     } catch (e) { next(e); }
   },
-
   async resolveLearning(req, res, next) {
     try {
       const { questionId, adminAnswer } = req.body;
@@ -171,26 +147,22 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
-  // ─── KNOWLEDGE CATEGORIES ─────────────────────────────────────────────
   async getKnowledgeCategories(req, res, next) {
     try {
-      const { data, error } = await supabase
-        .from('knowledge_categories').select('*, knowledge_base(count)').order('name');
+      const { data, error } = await supabase.from('knowledge_categories').select('*').order('name');
       if (error) throw error;
       res.json(data || []);
     } catch (e) { next(e); }
   },
-
   async createKnowledgeCategory(req, res, next) {
     try {
       const { name, color, icon } = req.body;
       if (!name) return res.status(400).json({ error: 'Name fehlt' });
-      const { data, error } = await supabase.from('knowledge_categories').insert([{ name, color: color || '#4a9eff', icon: icon || '📌' }]).select();
+      const { data, error } = await supabase.from('knowledge_categories').insert([{ name, color: color||'#4a9eff', icon: icon||'📌' }]).select();
       if (error) throw error;
       res.json(data[0]);
     } catch (e) { next(e); }
   },
-
   async deleteKnowledgeCategory(req, res, next) {
     try {
       const { error } = await supabase.from('knowledge_categories').delete().eq('id', req.params.id);
@@ -199,30 +171,18 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
-  // ─── KNOWLEDGE BASE ───────────────────────────────────────────────────
   async getKnowledgeEntries(req, res, next) {
     try {
       const { category_id } = req.query;
       let q = supabase.from('knowledge_base')
         .select('id, title, content, source, category_id, created_at, knowledge_categories(name, color, icon)')
-        .order('created_at', { ascending: false })
-        .limit(200);
-
+        .order('created_at', { ascending: false }).limit(200);
       if (category_id) q = q.eq('category_id', category_id);
-
       const { data, error } = await q;
       if (error) throw error;
-
-      // Inhalt kürzen für Listenansicht
-      const result = (data || []).map(e => ({
-        ...e,
-        content_preview: (e.content || '').substring(0, 200) + ((e.content || '').length > 200 ? '...' : '')
-      }));
-
-      res.json(result);
+      res.json((data||[]).map(e => ({ ...e, content_preview: (e.content||'').substring(0,200) })));
     } catch (e) { next(e); }
   },
-
   async deleteKnowledgeEntry(req, res, next) {
     try {
       const { error } = await supabase.from('knowledge_base').delete().eq('id', req.params.id);
@@ -235,137 +195,92 @@ const adminController = {
     try {
       const { title, content, category_id } = req.body;
       if (!content) return res.status(400).json({ error: 'Inhalt fehlt' });
-
       const fullContent = title ? `### ${title}\n${content}` : content;
       const embedding   = await deepseekService.generateEmbedding(fullContent);
-
       const { data, error } = await supabase.from('knowledge_base').insert([{
-        content:     fullContent,
-        title:       title || null,
+        content: fullContent, title: title||null,
         category_id: category_id ? parseInt(category_id) : null,
-        embedding,
-        source: 'manual_entry'
+        embedding, source: 'manual_entry'
       }]).select();
-
       if (error) throw error;
       res.json({ success: true, data: data[0] });
     } catch (e) { next(e); }
   },
 
-  // ─── WEB SCRAPER ──────────────────────────────────────────────────────
   async discoverLinks(req, res, next) {
     try {
       const { url } = req.body;
       if (!url) return res.status(400).json({ error: 'URL fehlt' });
       const links = await scraperService.discoverLinks(url);
       res.json({ links });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
+    } catch (e) { res.status(500).json({ error: e.message }); }
   },
 
   async startScraping(req, res, next) {
     try {
       const { urls, category_id } = req.body;
-      if (!urls?.length) return res.status(400).json({ error: 'Keine URLs angegeben' });
-
+      if (!urls?.length) return res.status(400).json({ error: 'Keine URLs' });
       const scraped = await scraperService.processMultipleUrls(urls);
       let saved = 0;
-
       for (const page of scraped) {
         for (const chunk of page.chunks) {
           try {
-            const embedding = await deepseekService.generateEmbedding(chunk);
+            const emb = await deepseekService.generateEmbedding(chunk);
             await supabase.from('knowledge_base').insert([{
-              content:     `Quelle: ${page.url}\n${chunk}`,
-              title:       page.title,
+              content: `Quelle: ${page.url}\n${chunk}`, title: page.title,
               category_id: category_id ? parseInt(category_id) : null,
-              embedding,
-              source:   'web_scrape',
-              metadata: { url: page.url, title: page.title }
+              embedding: emb, source: 'web_scrape', metadata: { url: page.url }
             }]);
             saved++;
-          } catch (e) {
-            console.warn(`Chunk für ${page.url} fehlgeschlagen:`, e.message);
-          }
+          } catch {}
         }
       }
-
       res.json({ success: true, savedChunks: saved, processedUrls: scraped.length });
     } catch (e) { next(e); }
   },
 
-  // ─── SELLAUTH INTEGRATION ─────────────────────────────────────────────
-
-  // Verbindung testen
   async testSellauthConnection(req, res, next) {
     try {
       const { apiKey, shopId } = req.body;
       if (!apiKey || !shopId) return res.status(400).json({ error: 'API Key und Shop ID erforderlich' });
-      const result = await sellauthService.testConnection(apiKey, shopId);
-      res.json(result);
+      const r = await sellauthService.testConnection(apiKey, shopId);
+      res.json(r);
     } catch (e) { next(e); }
   },
 
-  // Vollständiger Sync
   async syncSellauth(req, res, next) {
     try {
-      // Konfiguration aus Settings laden (oder aus Request-Body für manuelle Tests)
       let { apiKey, shopId, shopUrl } = req.body || {};
-
       if (!apiKey || !shopId || !shopUrl) {
-        const { data: settings } = await supabase.from('settings').select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single();
-        apiKey  = apiKey  || settings?.sellauth_api_key  || '';
-        shopId  = shopId  || settings?.sellauth_shop_id  || '';
-        shopUrl = shopUrl || settings?.sellauth_shop_url || '';
+        const { data: s } = await supabase.from('settings').select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single();
+        apiKey  = apiKey  || s?.sellauth_api_key  || '';
+        shopId  = shopId  || s?.sellauth_shop_id  || '';
+        shopUrl = shopUrl || s?.sellauth_shop_url || '';
       }
-
-      if (!apiKey)  return res.status(400).json({ error: 'Kein Sellauth API Key konfiguriert. Bitte in den Einstellungen eintragen.' });
-      if (!shopId)  return res.status(400).json({ error: 'Keine Sellauth Shop ID konfiguriert. Bitte in den Einstellungen eintragen.' });
-      if (!shopUrl) return res.status(400).json({ error: 'Keine Shop URL konfiguriert (z.B. https://meinshop.sellauth.com). Bitte in den Einstellungen eintragen.' });
-
+      if (!apiKey)  return res.status(400).json({ error: 'Kein Sellauth API Key konfiguriert.' });
+      if (!shopId)  return res.status(400).json({ error: 'Keine Shop ID konfiguriert.' });
+      if (!shopUrl) return res.status(400).json({ error: 'Keine Shop URL konfiguriert.' });
       const results = await sellauthService.syncToKnowledgeBase(apiKey, shopId, shopUrl);
-
-      res.json({
-        success: true,
-        message: `${results.saved} von ${results.total} Produkten erfolgreich importiert.`,
-        details: results
-      });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
+      res.json({ success: true, message: `${results.saved} Einträge für ${results.total} Produkte importiert.`, details: results });
+    } catch (e) { res.status(500).json({ error: e.message }); }
   },
 
-  // Produkte ohne Sync anzeigen (Vorschau)
   async previewSellauthProducts(req, res, next) {
     try {
-      const { data: settings } = await supabase.from('settings').select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single();
-      const apiKey  = settings?.sellauth_api_key  || '';
-      const shopId  = settings?.sellauth_shop_id  || '';
-      const shopUrl = settings?.sellauth_shop_url || '';
-
-      if (!apiKey || !shopId) return res.status(400).json({ error: 'Sellauth nicht konfiguriert' });
-
-      const products = await sellauthService.getAllProducts(apiKey, shopId);
-      const preview  = products.map(p => ({
-        id:        p.id,
-        name:      p.name,
-        type:      p.type,
-        price:     p.price,
-        currency:  p.currency,
-        stock:     p.stock_count,
-        url:       shopUrl ? sellauthService.buildProductUrl(shopUrl, p.path) : p.path,
-        variants:  (p.variants || []).length,
-        visibility:p.visibility
-      }));
-
-      res.json({ products: preview, total: preview.length });
-    } catch (e) {
-      res.status(500).json({ error: e.message });
-    }
+      const { data: s } = await supabase.from('settings').select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single();
+      if (!s?.sellauth_api_key || !s?.sellauth_shop_id) return res.status(400).json({ error: 'Sellauth nicht konfiguriert' });
+      const products = await sellauthService.getAllProducts(s.sellauth_api_key, s.sellauth_shop_id);
+      res.json({
+        products: products.map(p => ({
+          id: p.id, name: p.name, type: p.type, price: p.price, currency: p.currency,
+          stock: p.stock_count, url: s.sellauth_shop_url ? sellauthService.buildProductUrl(s.sellauth_shop_url, p.path) : p.path,
+          variants: (p.variants||[]).length, visibility: p.visibility
+        })),
+        total: products.length
+      });
+    } catch (e) { res.status(500).json({ error: e.message }); }
   },
 
-  // ─── TELEGRAM SETUP ───────────────────────────────────────────────────
   async setupWebhook(req, res, next) {
     try {
       const { appUrl } = req.body;
@@ -374,7 +289,6 @@ const adminController = {
       res.json({ success: result.ok, description: result.description });
     } catch (e) { next(e); }
   },
-
   async getWebhookInfo(req, res, next) {
     try {
       const info = await telegramService.getWebhookInfo();
@@ -382,12 +296,10 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
-  // ─── PUSH ────────────────────────────────────────────────────────────
   async savePushSubscription(req, res, next) {
     try {
       const { subscription } = req.body;
-      const { error } = await supabase
-        .from('admin_subscriptions').upsert([{ subscription_data: subscription }], { onConflict: 'subscription_data' });
+      const { error } = await supabase.from('admin_subscriptions').upsert([{ subscription_data: subscription }], { onConflict: 'subscription_data' });
       if (error) throw error;
       res.json({ success: true });
     } catch (e) { next(e); }
