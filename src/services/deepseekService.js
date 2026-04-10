@@ -108,14 +108,19 @@ PFLICHTREGELN FÜR DIE NUTZUNG DES WISSENS:
 
     const fallbackInstruction = `
 
+FORMATIERUNGSREGELN (Telegram-kompatibel):
+- Verwende KEINE Markdown-Header (###, ##, #) – diese werden als Sonderzeichen angezeigt
+- Verwende *Fettschrift* für Produktnamen und Preise
+- Verwende einfache Aufzählungen mit - oder Zahlen
+- Links als normalen Text ausgeben: https://... (nicht als [text](url))
+- Kurz und klar formulieren, keine unnötigen Sektionen
+
 PFLICHTREGELN FÜR UNSICHERHEIT:
-1. Wenn du eine Frage anhand des obigen Kontexts NICHT vollständig beantworten kannst (z.B. unbekannte Details wie Geschwindigkeit, Drosselung, Gültigkeit, Kompatibilität):
-   → Antworte ZWINGEND mit dem Präfix: [UNKLAR]
-   → Beispiel: "[UNKLAR] Diese spezifische Information liegt mir aktuell nicht vor."
-2. NIEMALS raten, schätzen oder Informationen erfinden.
-3. NIEMALS "Ausverkauft" oder negative Verfügbarkeit kommunizieren wenn du dir nicht 100% sicher bist.
-4. Wenn Bestand = -1 oder nicht angegeben: Produkt ist verfügbar.
-5. Jede [UNKLAR]-Antwort löst automatisch eine Rückfrage an den Admin aus.`;
+1. Wenn eine Frage nicht aus dem obigen Kontext beantwortet werden kann:
+   → Antworte mit dem Präfix [UNKLAR] und einer kurzen Erklärung
+2. NIEMALS raten, erfinden oder spekulieren
+3. NIEMALS "Ausverkauft" schreiben wenn kein expliziter Hinweis im Kontext vorhanden
+4. Status = "Verfügbar" ist der Standard wenn nichts anderes angegeben`;
 
     return basePrompt + contextSection + negSection + fallbackInstruction;
   },

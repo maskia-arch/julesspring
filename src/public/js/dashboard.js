@@ -516,7 +516,7 @@ async function syncSellauth() {
         var r = await api.request('/sellauth/sync', 'POST');
         if (!r) { showToast('❌ Kein Ergebnis - Server prüfen'); return; }
         var msg = r.message || '';
-        if (r.details && r.details.deleted) msg += ' (' + r.details.deleted + ' alte Einträge bereinigt)';
+        if (r.details && r.details.deletedOld) msg += ' (' + r.details.deletedOld + ' alte bereinigt)';
         showToast('✅ ' + msg);
         updateStats();
     } catch(e) { alert('Fehler: ' + e.message); }
