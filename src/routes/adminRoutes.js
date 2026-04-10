@@ -23,7 +23,14 @@ router.post('/manual-message',          ctrl.sendManualMessage);
 // Learning Center
 router.get('/learning',          ctrl.getLearningQueue);
 router.post('/learning/resolve', ctrl.resolveLearning);
-router.delete('/learning/:id',   ctrl.deleteLearning);   // Ablehnen / Löschen
+router.delete('/learning/:id',   ctrl.deleteLearning);
+
+// ─── Abuse / Flagging ────────────────────────────────────────────────────────
+router.get('/flags',              ctrl.getFlags);
+router.get('/flags/chats',        ctrl.getFlaggedChats);
+router.post('/flags',             ctrl.flagChat);
+router.delete('/flags/:chatId',   ctrl.unflagChat);
+router.post('/flags/:chatId/unmute', ctrl.unmuteChat);
 
 // ─── Wissensdatenbank ────────────────────────────────────────────────────────
 // Kategorien

@@ -7,18 +7,31 @@ var _allKbCats    = [];
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
     if (localStorage.getItem('admin_token')) initDashboard();
-    setInterval(updateStats, 30000);
-    setInterval(function() { if (_currentChat) refreshMessages(); }, 15000);
+// Intervals managed by initDashboard
 });
 
 function initDashboard() {
-    updateStats();
-    loadChats();
-    loadSettings();
-    loadLearningQueue();
-    loadBlacklist();
-    // Push Notifications initialisieren
+    _safeRun(updateStats);
+    _safeRun(loadChats);
+    _safeRun(loadSettings);
+    _safeRun(loadLearningQueue);
+    _safeRun(loadBlacklist);
     setTimeout(initPushNotifications, 1500);
+
+    // Smarte Intervalle: Chats live (8s), Stats seltener (30s), Auto-Refresh bei Fehler
+    clearInterval(window._statsInterval);
+    clearInterval(window._chatsInterval);
+    window._statsInterval = setInterval(function() { _safeRun(updateStats); }, 30000);
+    window._chatsInterval = setInterval(function() {
+        _safeRun(loadChats);
+        if (_currentChat) _safeRun(refreshMessages);
+    }, 8000);
+}
+
+// Error-Boundary: async Funktionen crashen nie das Dashboard
+async function _safeRun(fn) {
+    try { await fn(); }
+    catch(e) { console.warn('[Dashboard]', fn.name || 'fn', e.message); }
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
@@ -598,6 +611,37 @@ async function saveSettings() {
 }
 
 // ── Blacklist ─────────────────────────────────────────────────────────────────
+async function loadFlaggedChats() {
+    var el = document.getElementById('flagged-list');
+    if (!el) return;
+    try {
+        var chats = await api.getFlaggedChats() || [];
+        if (!chats.length) { el.innerHTML = '<p style="color:#555;font-size:0.85rem;padding:8px;">Keine geflaggten Chats.</p>'; return; }
+        el.innerHTML = chats.map(function(c) {
+            var name = c.first_name || c.username || c.id.substring(0,12);
+            var mutedBadge = c.auto_muted ? '<span style="background:#431407;color:#f87171;padding:1px 6px;border-radius:4px;font-size:0.7rem;">STUMM</span>' : '';
+            return '<div style="display:flex;align-items:center;gap:10px;padding:10px;border-bottom:1px solid #2a2a2a;">' +
+                '<div style="flex:1;">' +
+                    '<div style="font-weight:600;font-size:0.875rem;">' + esc(name) + ' ' + mutedBadge + '</div>' +
+                    '<div style="font-size:0.75rem;color:#888;">🚩 ' + c.flag_count + ' Flags' + (c.mute_reason ? ' · ' + esc(c.mute_reason) : '') + '</div>' +
+                '</div>' +
+                (c.auto_muted ? '<button onclick="unmuteChat('' + esc(c.id) + '')" class="btn btn-secondary btn-sm">Stummschaltung aufheben</button>' : '') +
+                '<button onclick="unflagChat('' + esc(c.id) + '')" class="btn btn-danger btn-sm">Flags löschen</button>' +
+            '</div>';
+        }).join('');
+    } catch(e) { el.innerHTML = '<p style="color:#ef4444;font-size:0.85rem;">Fehler: ' + esc(e.message) + '</p>'; }
+}
+
+async function unflagChat(chatId) {
+    try { await api.unflagChat(chatId); showToast('✅ Flags gelöscht'); loadFlaggedChats(); }
+    catch(e) { alert('Fehler: ' + e.message); }
+}
+
+async function unmuteChat(chatId) {
+    try { await api.unmuteChat(chatId); showToast('✅ Stummschaltung aufgehoben'); loadFlaggedChats(); loadChats(); }
+    catch(e) { alert('Fehler: ' + e.message); }
+}
+
 async function loadBlacklist() {
     var tbody = document.getElementById('blacklist-body');
     if (!tbody) return;

@@ -9,8 +9,6 @@
     <link rel="stylesheet" href="css/style.css">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0d0d0d">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <link rel="apple-touch-icon" href="/icon-192.png">
 </head>
 <body>
@@ -197,6 +195,13 @@
                     <tbody id="blacklist-body"></tbody>
                 </table>
             </div>
+        
+            <!-- Geflaggte Chats -->
+            <div class="card" style="margin-top:16px;border-color:#431407;">
+                <h3 class="card-title">🚩 Geflaggte Chats (Auto-Erkennung)</h3>
+                <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">3 Flags = automatischer System-Bann. KI wird bei Verdacht stumm geschaltet.</p>
+                <div id="flagged-list"><p style="color:#555;font-size:0.85rem;">Lädt...</p></div>
+            </div>
         </section>
 
         <!-- ══ SETTINGS ════════════════════════════════════════════════════ -->
@@ -230,13 +235,9 @@
                     </div>
                     <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
                 </div>
-
-                <!-- Push Notifications Card -->
                 <div class="card" style="border-color:#1e3a5f;">
                     <h3 class="card-title">🔔 Push-Benachrichtigungen</h3>
-                    <div id="push-status">
-                        <p style="color:#666;font-size:0.875rem;">Wird geladen...</p>
-                    </div>
+                    <div id="push-status"><p style="color:#666;font-size:0.875rem;">Wird geladen...</p></div>
                 </div>
             </div>
 

@@ -6,6 +6,7 @@ const syncJobManager   = require('../services/syncJobManager');
 const telegramService = require('../services/telegramService');
 const { getVersion }      = require('../utils/versionLoader');
 const notificationService = require('../services/notificationService');
+const abuseDetector       = require('../services/abuseDetector');
 const jwt = require('jsonwebtoken');
 
 const adminController = {
@@ -225,13 +226,62 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
-  // Lernaufgabe ablehnen (löschen) ohne in die Wissensdatenbank aufzunehmen
   async deleteLearning(req, res, next) {
     try {
-      const { id } = req.params;
-      const { error } = await supabase.from('learning_queue').delete().eq('id', id);
+      const { error } = await supabase.from('learning_queue').delete().eq('id', req.params.id);
       if (error) throw error;
       res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  // ── Abuse / Flagging ───────────────────────────────────────────────────
+
+  async getFlags(req, res, next) {
+    try {
+      const { data, error } = await supabase
+        .from('user_flags').select('*, chats(id, platform, first_name, username, flag_count, auto_muted)')
+        .order('created_at', { ascending: false }).limit(100);
+      if (error) throw error;
+      res.json(data || []);
+    } catch (e) { next(e); }
+  },
+
+  async flagChat(req, res, next) {
+    try {
+      const { chatId, reason } = req.body;
+      if (!chatId) return res.status(400).json({ error: 'chatId fehlt' });
+      const result = await abuseDetector.flagByAdmin(chatId, reason || 'manual');
+      res.json({ success: true, ...result });
+    } catch (e) { next(e); }
+  },
+
+  async unflagChat(req, res, next) {
+    try {
+      const { chatId } = req.params;
+      await supabase.from('user_flags').delete().eq('chat_id', chatId);
+      await supabase.from('chats').update({ flag_count: 0, auto_muted: false, mute_reason: null }).eq('id', chatId);
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  async unmuteChat(req, res, next) {
+    try {
+      const { chatId } = req.params;
+      await abuseDetector.unmute(chatId);
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  async getFlaggedChats(req, res, next) {
+    try {
+      const { data, error } = await supabase
+        .from('chats')
+        .select('id, platform, first_name, username, flag_count, auto_muted, mute_reason, updated_at')
+        .gt('flag_count', 0)
+        .order('flag_count', { ascending: false })
+        .limit(50);
+      if (error) throw error;
+      res.json(data || []);
     } catch (e) { next(e); }
   },
 
