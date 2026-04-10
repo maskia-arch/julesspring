@@ -59,6 +59,9 @@ router.post('/blacklist',      ctrl.banUser);
 router.delete('/blacklist/:id',ctrl.removeBan);
 
 // Push
-router.post('/push-subscription', ctrl.savePushSubscription);
+router.post('/push-subscription',    ctrl.savePushSubscription);
+router.get('/push/vapid-key',          ctrl.getVapidPublicKey);
+router.post('/push/test',              ctrl.sendTestPush);
+router.post('/push/settings',          ctrl.updateNotificationSettings);
 
 module.exports = router;

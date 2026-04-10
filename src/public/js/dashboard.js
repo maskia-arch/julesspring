@@ -17,6 +17,8 @@ function initDashboard() {
     loadSettings();
     loadLearningQueue();
     loadBlacklist();
+    // Push Notifications initialisieren
+    setTimeout(initPushNotifications, 1500);
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
@@ -802,6 +804,141 @@ async function saveSettings() {
         if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = origText || '💾 Speichern'; }
     }
 }
+
+
+// ── Web Push Notifications ────────────────────────────────────────────────────
+
+var _pushSubscribed = false;
+
+async function initPushNotifications() {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+        console.log('[Push] Nicht unterstützt in diesem Browser');
+        _updatePushUI('unsupported');
+        return;
+    }
+
+    try {
+        // Service Worker registrieren
+        var reg = await navigator.serviceWorker.register('/sw.js');
+        await navigator.serviceWorker.ready;
+
+        // Bestehende Subscription prüfen
+        var existing = await reg.pushManager.getSubscription();
+        if (existing) {
+            _pushSubscribed = true;
+            _updatePushUI('subscribed');
+            return;
+        }
+        _updatePushUI('unsubscribed');
+    } catch(e) {
+        console.warn('[Push] SW-Registrierung fehlgeschlagen:', e.message);
+        _updatePushUI('error');
+    }
+}
+
+async function subscribePush() {
+    var btn = document.getElementById('push-subscribe-btn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Wird aktiviert...'; }
+
+    try {
+        var reg = await navigator.serviceWorker.ready;
+
+        // VAPID Public Key vom Server laden
+        var keyData = await api.request('/push/vapid-key');
+        if (!keyData?.publicKey) {
+            alert('VAPID_PUBLIC_KEY fehlt in den Server-Einstellungen.
+Bitte in Render.com Environment Variables setzen.');
+            return;
+        }
+
+        // Subscription erstellen
+        var subscription = await reg.pushManager.subscribe({
+            userVisibleOnly:      true,
+            applicationServerKey: _urlBase64ToUint8Array(keyData.publicKey)
+        });
+
+        // Subscription an Server senden
+        await api.request('/push-subscription', 'POST', { subscription: subscription.toJSON() });
+
+        _pushSubscribed = true;
+        _updatePushUI('subscribed');
+        showToast('✅ Push-Benachrichtigungen aktiviert!');
+
+        // Sofort Testbenachrichtigung senden
+        setTimeout(async function() {
+            try { await api.request('/push/test', 'POST'); } catch(_) {}
+        }, 1000);
+
+    } catch(e) {
+        console.error('[Push] Subscribe fehlgeschlagen:', e.message);
+        if (e.name === 'NotAllowedError') {
+            alert('Benachrichtigungen wurden blockiert. Bitte in den Browser-Einstellungen erlauben.');
+        } else {
+            alert('Push-Aktivierung fehlgeschlagen: ' + e.message);
+        }
+        _updatePushUI('error');
+    } finally {
+        if (btn) { btn.disabled = false; }
+    }
+}
+
+async function unsubscribePush() {
+    try {
+        var reg = await navigator.serviceWorker.ready;
+        var sub = await reg.pushManager.getSubscription();
+        if (sub) await sub.unsubscribe();
+        _pushSubscribed = false;
+        _updatePushUI('unsubscribed');
+        showToast('🔕 Push-Benachrichtigungen deaktiviert');
+    } catch(e) {
+        alert('Fehler: ' + e.message);
+    }
+}
+
+async function sendTestPush() {
+    try {
+        await api.request('/push/test', 'POST');
+        showToast('📨 Test-Benachrichtigung gesendet!');
+    } catch(e) {
+        alert('Fehler: ' + e.message);
+    }
+}
+
+function _updatePushUI(status) {
+    var container = document.getElementById('push-status');
+    if (!container) return;
+
+    var html = '';
+    if (status === 'unsupported') {
+        html = '<div style="color:#888;font-size:0.85rem;">⚠️ Web Push wird in diesem Browser nicht unterstützt. Bitte Chrome auf Android verwenden.</div>';
+    } else if (status === 'subscribed') {
+        html = '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">' +
+            '<span style="color:#4ade80;font-size:0.875rem;">✅ Benachrichtigungen aktiv</span>' +
+            '<button onclick="sendTestPush()" class="btn btn-secondary btn-sm">📨 Test senden</button>' +
+            '<button onclick="unsubscribePush()" class="btn btn-danger btn-sm">Deaktivieren</button>' +
+            '</div>';
+    } else if (status === 'unsubscribed') {
+        html = '<div>' +
+            '<p style="color:#94a3b8;font-size:0.85rem;margin-bottom:8px;">Erhalte Benachrichtigungen wenn Kunden schreiben — auch wenn das Dashboard geschlossen ist.</p>' +
+            '<button id="push-subscribe-btn" onclick="subscribePush()" class="btn btn-success">🔔 Benachrichtigungen aktivieren</button>' +
+            '</div>';
+    } else {
+        html = '<div style="color:#ef4444;font-size:0.85rem;">❌ Fehler beim Laden. Seite neu laden und erneut versuchen.</div>';
+    }
+    container.innerHTML = html;
+}
+
+function _urlBase64ToUint8Array(base64String) {
+    var padding = '='.repeat((4 - base64String.length % 4) % 4);
+    var base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+    var rawData = window.atob(base64);
+    var outputArray = new Uint8Array(rawData.length);
+    for (var i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
+}
+
 
 function showToast(msg) {
     var t = document.getElementById('_toast');

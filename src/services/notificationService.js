@@ -1,69 +1,113 @@
-const webpush = require('web-push');
-const supabase = require('../config/supabase');
-const logger = require('../utils/logger');
-const { vapid } = require('../config/env');
+/**
+ * notificationService.js v1.1.17
+ * Sendet Web Push Notifications an alle registrierten Admin-Geräte
+ */
 
-if (vapid.publicKey && vapid.privateKey) {
-  webpush.setVapidDetails(
-    'mailto:admin@deine-domain.com',
-    vapid.publicKey,
-    vapid.privateKey
-  );
+const supabase = require('../config/supabase');
+const logger   = require('../utils/logger');
+
+let webpush = null;
+let vapidConfigured = false;
+
+function getWebPush() {
+  if (webpush) return webpush;
+  try {
+    webpush = require('web-push');
+    const pubKey  = process.env.VAPID_PUBLIC_KEY;
+    const privKey = process.env.VAPID_PRIVATE_KEY;
+    if (pubKey && privKey) {
+      webpush.setVapidDetails('mailto:admin@valueshop25.com', pubKey, privKey);
+      vapidConfigured = true;
+      logger.info('[Push] VAPID konfiguriert');
+    } else {
+      logger.warn('[Push] VAPID_PUBLIC_KEY oder VAPID_PRIVATE_KEY fehlen → Push deaktiviert');
+    }
+  } catch (e) {
+    logger.warn('[Push] web-push nicht installiert:', e.message);
+  }
+  return webpush;
 }
 
 const notificationService = {
-  async sendAdminNotification(title, body, url = '/admin') {
+
+  async sendNewMessageNotification({ chatId, text, firstName, platform, isFirstMessage }) {
+    if (!vapidConfigured) {
+      getWebPush(); // Versucht zu initialisieren
+      if (!vapidConfigured) return;
+    }
+
+    const name = firstName || chatId || 'Unbekannt';
+    const icon = platform === 'telegram' ? '✈️' : '🌐';
+
+    const payload = JSON.stringify({
+      title:  isFirstMessage
+        ? `${icon} Neuer Chat: ${name}`
+        : `${icon} ${name}: neue Nachricht`,
+      body:   text.substring(0, 100) + (text.length > 100 ? '…' : ''),
+      icon:   '/icon-192.png',
+      tag:    `chat-${chatId}`,
+      url:    '/admin',
+      chatId: chatId
+    });
+
+    await notificationService._pushToAll(payload);
+  },
+
+  async _pushToAll(payload) {
+    const wp = getWebPush();
+    if (!wp) return;
+
     try {
-      const { data: subscriptions, error } = await supabase
+      const { data: subs } = await supabase
         .from('admin_subscriptions')
-        .select('*');
+        .select('id, subscription_data');
 
-      if (error) throw error;
-      if (!subscriptions || subscriptions.length === 0) return;
+      if (!subs?.length) return;
 
-      const payload = JSON.stringify({
-        notification: {
-          title: title,
-          body: body,
-          icon: '/assets/logo.png',
-          data: { url: url }
+      const invalid = [];
+
+      await Promise.all(subs.map(async (row) => {
+        try {
+          const sub = typeof row.subscription_data === 'string'
+            ? JSON.parse(row.subscription_data)
+            : row.subscription_data;
+
+          await wp.sendNotification(sub, payload, { TTL: 60 });
+        } catch (err) {
+          // 410 Gone = Subscription abgelaufen → löschen
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            invalid.push(row.id);
+          } else {
+            logger.warn(`[Push] Senden fehlgeschlagen: ${err.message}`);
+          }
         }
-      });
+      }));
 
-      const notificationPromises = subscriptions.map(sub => {
-        return webpush.sendNotification(sub.subscription_data, payload)
-          .catch(async (err) => {
-            if (err.statusCode === 404 || err.statusCode === 410) {
-              await supabase
-                .from('admin_subscriptions')
-                .delete()
-                .eq('id', sub.id);
-            }
-            logger.error('Push Notification Error für Sub ID ' + sub.id + ':', err.message);
-          });
-      });
-
-      await Promise.all(notificationPromises);
-    } catch (error) {
-      logger.error('Global Notification Service Error:', error.message);
+      // Abgelaufene Subscriptions entfernen
+      if (invalid.length) {
+        await supabase.from('admin_subscriptions').delete().in('id', invalid);
+        logger.info(`[Push] ${invalid.length} abgelaufene Subscriptions entfernt`);
+      }
+    } catch (err) {
+      logger.warn(`[Push] _pushToAll Fehler: ${err.message}`);
     }
   },
 
-  async notifyNewLearningCase(question) {
-    return this.sendAdminNotification(
-      '🧠 Neuer Learning-Case',
-      `Die KI benötigt Hilfe bei einer eSIM-Frage: "${question.substring(0, 50)}..."`,
-      '/admin#learning'
-    );
-  },
-
-  async notifyNewManualChat(chatId) {
-    return this.sendAdminNotification(
-      '👤 Manuelle Übernahme angefordert',
-      `Ein Kunde (ID: ${chatId}) wartet auf eine Antwort im Live-Chat.`,
-      `/admin#chat/${chatId}`
-    );
+  // Testbenachrichtigung senden (aus dem Dashboard)
+  async sendTestNotification() {
+    const payload = JSON.stringify({
+      title: '✅ Push Notifications aktiv!',
+      body:  'Du erhältst jetzt Benachrichtigungen wenn Kunden schreiben.',
+      icon:  '/icon-192.png',
+      tag:   'test-notification',
+      url:   '/admin'
+    });
+    await this._pushToAll(payload);
+    return true;
   }
 };
+
+// Bei Serverstart VAPID initialisieren
+getWebPush();
 
 module.exports = notificationService;

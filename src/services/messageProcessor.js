@@ -8,7 +8,8 @@ const supabase         = require('../config/supabase');
 const deepseekService  = require('./deepseekService');
 const telegramService  = require('./telegramService');
 const embeddingService = require('./embeddingService');
-const logger           = require('../utils/logger');
+const logger              = require('../utils/logger');
+const notificationService = require('./notificationService');
 
 // Settings-Cache (30s)
 let _settingsCache     = null;
@@ -27,11 +28,25 @@ const messageProcessor = {
     ]);
     if (!chat) throw new Error('Chat konnte nicht angelegt werden');
 
-    // 2. Nutzer-Nachricht speichern (fire & forget — kein .catch() auf Query)
+    // 2. Nutzer-Nachricht speichern (fire & forget)
+    const isFirstMessage = !(await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('chat_id', chat.id).then(r => r.count > 0).catch(() => false));
     void (async () => {
       try {
         await supabase.from('messages').insert([{ chat_id: chat.id, role: 'user', content: text }]);
       } catch (e) { logger.warn('[MP] user msg insert:', e.message); }
+    })();
+
+    // Push-Benachrichtigung an Admin (fire & forget)
+    void (async () => {
+      try {
+        await notificationService.sendNewMessageNotification({
+          chatId:         chat.id,
+          text:           text,
+          firstName:      metadata?.first_name || null,
+          platform:       platform,
+          isFirstMessage: isFirstMessage
+        });
+      } catch (_) {}
     })();
 
     this._updateChatPreview(chat.id, text, 'user');
@@ -87,10 +102,10 @@ const messageProcessor = {
 
     this._updateChatPreview(chat.id, aiResult.text, 'assistant');
 
-    // 9. Learning Queue bei leerem Kontext ODER [UNKLAR]
-    const noContext = context.length === 0;
-    const unclear   = aiResult.text.includes('[UNKLAR]');
-    if (noContext || unclear) {
+    // 9. Learning Queue NUR bei explizitem [UNKLAR] in der KI-Antwort
+    //    NICHT bei leerem Kontext — der deckt auch Small Talk, Spam etc. ab
+    const unclear = aiResult.text.includes('[UNKLAR]');
+    if (unclear) {
       void (async () => {
         try {
           await supabase.from('learning_queue').insert([{
@@ -100,7 +115,7 @@ const messageProcessor = {
           }]);
         } catch (_) {}
       })();
-      logger.info(`[MP] Learning Queue: "${text.substring(0,50)}" (noCtx=${noContext}, unklar=${unclear})`);
+      logger.info(`[MP] Learning Queue: "${text.substring(0,50)}"`);
     }
 
     return aiResult.text;
@@ -108,10 +123,7 @@ const messageProcessor = {
 
   async _searchKnowledge(query, settings) {
     try {
-      const embResult = await embeddingService.createEmbedding(query);
-      const vector    = embResult.embedding || embResult; // supports both old and new format
-      const embTokens = embResult.tokens    || 0;
-      if (embTokens) this._lastEmbeddingTokens = (this._lastEmbeddingTokens || 0) + embTokens;
+      const vector    = await embeddingService.createEmbedding(query);
       const threshold = parseFloat(settings.rag_threshold)  || 0.45;
       const count     = parseInt(settings.rag_match_count)  || 8;
 

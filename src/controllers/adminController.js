@@ -4,7 +4,8 @@ const scraperService  = require('../services/scraperService');
 const sellauthService  = require('../services/sellauthService');
 const syncJobManager   = require('../services/syncJobManager');
 const telegramService = require('../services/telegramService');
-const { getVersion }  = require('../utils/versionLoader');
+const { getVersion }      = require('../utils/versionLoader');
+const notificationService = require('../services/notificationService');
 const jwt = require('jsonwebtoken');
 
 const adminController = {
@@ -391,7 +392,45 @@ const adminController = {
   async savePushSubscription(req, res, next) {
     try {
       const { subscription } = req.body;
-      await supabase.from('admin_subscriptions').upsert([{ subscription_data: subscription }], { onConflict: 'subscription_data' });
+      if (!subscription?.endpoint) return res.status(400).json({ error: 'Ungültige Subscription' });
+
+      // Subscription als JSON-String speichern für web-push Kompatibilität
+      const subData = typeof subscription === 'string' ? subscription : JSON.stringify(subscription);
+
+      // Zuerst alte Einträge für diesen Endpoint entfernen
+      await supabase.from('admin_subscriptions').delete()
+        .filter('subscription_data->endpoint', 'eq', subscription.endpoint);
+
+      await supabase.from('admin_subscriptions').insert([{
+        subscription_data: subData
+      }]);
+
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  async getVapidPublicKey(req, res, next) {
+    const key = process.env.VAPID_PUBLIC_KEY;
+    if (!key) return res.status(500).json({ error: 'VAPID_PUBLIC_KEY nicht konfiguriert' });
+    res.json({ publicKey: key });
+  },
+
+  async sendTestPush(req, res, next) {
+    try {
+      await notificationService.sendTestNotification();
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  async updateNotificationSettings(req, res, next) {
+    try {
+      const { notify_new_chat, notify_every_msg } = req.body;
+      await supabase.from('settings').upsert({
+        id: 1,
+        notify_new_chat:  notify_new_chat  !== undefined ? Boolean(notify_new_chat)  : true,
+        notify_every_msg: notify_every_msg !== undefined ? Boolean(notify_every_msg) : false,
+        updated_at: new Date()
+      });
       res.json({ success: true });
     } catch (e) { next(e); }
   }
