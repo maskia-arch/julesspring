@@ -29,11 +29,10 @@ app.use(errorHandler);
 
 const server = app.listen(port, () => {
   logger.info(`Server läuft auf Port ${port}`);
-  // Warte 5s bis Server stabil ist, dann Webhook + KeepAlive starten
-  setTimeout(() => {
-    autoRegisterWebhook();
-    startKeepAlive();
-  }, 5000);
+  // Render.com benötigt ~30-45s bis DNS + ausgehende Verbindungen bereit sind
+  // Webhook nach 45s, KeepAlive separate gestaffelt
+  setTimeout(() => autoRegisterWebhook(), 45000);
+  setTimeout(() => startKeepAlive(),       60000);
 });
 
 // ── Auto-Register Webhook ─────────────────────────────────────────────────────
@@ -64,9 +63,9 @@ async function autoRegisterWebhook() {
     if (result.ok) {
       logger.info(`[Webhook] ✅ Auto-registriert: ${appUrl}/api/webhooks/telegram`);
       // Persistent in DB speichern
-      try {
-        await supabase.from('settings').upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() });
-      } catch (_) {}
+      await supabase.from('settings')
+        .upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() })
+        .catch(() => {});
     } else {
       logger.warn(`[Webhook] Auto-Registrierung fehlgeschlagen: ${result.description}`);
     }
@@ -97,8 +96,9 @@ function startKeepAlive() {
     }
   }
 
-  // Erst nach 30s, dann alle 14 Minuten
-  setTimeout(() => { ping(); setInterval(ping, 14 * 60 * 1000); }, 30000);
+  // Sofort pingen (Funktion wird bereits verzögert aufgerufen), dann alle 14 Minuten
+  ping();
+  setInterval(ping, 14 * 60 * 1000);
   logger.info(`[KeepAlive] Aktiv → ${appUrl}/health`);
 }
 

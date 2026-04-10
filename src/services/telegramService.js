@@ -100,7 +100,7 @@ const telegramService = {
       const response = await axios.post(
         `https://api.telegram.org/bot${telegram.token}/setWebhook`,
         { url: `${url}/api/webhooks/telegram` },
-        { timeout: 10000 }
+        { timeout: 20000 } // 20s – Render braucht beim Kaltstart länger
       );
       return response.data;
     } catch (error) {
