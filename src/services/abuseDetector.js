@@ -30,6 +30,14 @@ const abuseDetector = {
    */
   async check(chatId, text) {
     try {
+      // Prüfe ob user_flags Tabelle existiert (schema10.sql ausgeführt?)
+      const { error: tableCheck } = await supabase.from('user_flags').select('id').limit(1);
+      if (tableCheck && tableCheck.code === '42P01') {
+        // Tabelle existiert nicht → Abuse-Check deaktiviert, kein Crash
+        return { blocked: false, reason: null, flagged: false };
+      }
+    } catch { return { blocked: false, reason: null, flagged: false }; }
+    try {
       const settings = await this._loadSettings();
 
       // 1. Nachricht auf Blacklist prüfen (bereits gebannt)
@@ -71,7 +79,7 @@ const abuseDetector = {
       return { blocked: false, reason: null, flagged: false };
     } catch (err) {
       logger.warn(`[Abuse] Check-Fehler (nicht fatal): ${err.message}`);
-      return { blocked: false, reason: null, flagged: false }; // Im Zweifel: durchlassen
+      return { blocked: false, reason: null, flagged: false };
     }
   },
 

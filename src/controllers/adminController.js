@@ -6,7 +6,11 @@ const syncJobManager   = require('../services/syncJobManager');
 const telegramService = require('../services/telegramService');
 const { getVersion }      = require('../utils/versionLoader');
 const notificationService = require('../services/notificationService');
-const abuseDetector       = require('../services/abuseDetector');
+// abuseDetector wird lazy geladen - verhindert Crash wenn schema10.sql noch nicht ausgeführt
+function getAbuseDetector() {
+  try { return require('../services/abuseDetector'); }
+  catch(e) { return null; }
+}
 const jwt = require('jsonwebtoken');
 
 const adminController = {
@@ -250,7 +254,8 @@ const adminController = {
     try {
       const { chatId, reason } = req.body;
       if (!chatId) return res.status(400).json({ error: 'chatId fehlt' });
-      const result = await abuseDetector.flagByAdmin(chatId, reason || 'manual');
+      const ad = getAbuseDetector(); if (!ad) return res.status(503).json({ error: 'Abuse-System nicht verfügbar (schema10.sql ausführen)' });
+      const result = await ad.flagByAdmin(chatId, reason || 'manual');
       res.json({ success: true, ...result });
     } catch (e) { next(e); }
   },
@@ -267,7 +272,7 @@ const adminController = {
   async unmuteChat(req, res, next) {
     try {
       const { chatId } = req.params;
-      await abuseDetector.unmute(chatId);
+      const ad2 = getAbuseDetector(); if (ad2) await ad2.unmute(chatId);
       res.json({ success: true });
     } catch (e) { next(e); }
   },

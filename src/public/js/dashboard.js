@@ -10,15 +10,40 @@ document.addEventListener('DOMContentLoaded', function() {
 // Intervals managed by initDashboard
 });
 
-function initDashboard() {
-    _safeRun(updateStats);
-    _safeRun(loadChats);
+// Dashboard-Loader mit Loading-Gate
+// App wird erst angezeigt wenn Stats + Chats erfolgreich geladen
+async function initDashboard() {
+    _showLoadingGate(true);
+
+    // Kritische Daten laden (Stats + Chats müssen klappen)
+    var loaded = false;
+    var attempts = 0;
+
+    while (!loaded && attempts < 5) {
+        attempts++;
+        try {
+            await Promise.all([updateStats(), loadChats()]);
+            loaded = true;
+        } catch(e) {
+            console.warn('[Dashboard] Ladeversuch ' + attempts + ' fehlgeschlagen:', e.message);
+            if (attempts < 5) await new Promise(function(r) { setTimeout(r, 1200); });
+        }
+    }
+
+    _showLoadingGate(false);
+
+    if (!loaded) {
+        _showLoadError();
+        return;
+    }
+
+    // Sekundäre Daten laden (non-blocking)
     _safeRun(loadSettings);
     _safeRun(loadLearningQueue);
     _safeRun(loadBlacklist);
-    setTimeout(initPushNotifications, 1500);
+    setTimeout(initPushNotifications, 2000);
 
-    // Smarte Intervalle: Chats live (8s), Stats seltener (30s), Auto-Refresh bei Fehler
+    // Intervalle
     clearInterval(window._statsInterval);
     clearInterval(window._chatsInterval);
     window._statsInterval = setInterval(function() { _safeRun(updateStats); }, 30000);
@@ -28,17 +53,57 @@ function initDashboard() {
     }, 8000);
 }
 
-// Error-Boundary: async Funktionen crashen nie das Dashboard
+function _showLoadingGate(show) {
+    var el = document.getElementById('_loading-gate');
+    if (!el && show) {
+        el = document.createElement('div');
+        el.id = '_loading-gate';
+        el.style.cssText = 'position:fixed;inset:0;background:#111;z-index:9998;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;';
+        el.innerHTML = '<div style="font-size:2.5rem;">🤖</div>' +
+            '<div style="color:#60a5fa;font-size:1rem;font-weight:600;">AI Admin lädt...</div>' +
+            '<div style="width:200px;height:4px;background:#1e293b;border-radius:2px;overflow:hidden;">' +
+                '<div id="_load-bar" style="height:100%;background:linear-gradient(90deg,#2563eb,#4ade80);border-radius:2px;width:0%;transition:width 0.5s;"></div>' +
+            '</div>' +
+            '<div id="_load-msg" style="color:#64748b;font-size:0.8rem;"></div>';
+        document.body.appendChild(el);
+        // Animierter Ladebalken
+        var w = 0;
+        el._bar = setInterval(function() {
+            w = Math.min(w + 8, 85); // max 85% bis Daten da
+            var bar = document.getElementById('_load-bar');
+            if (bar) bar.style.width = w + '%';
+        }, 300);
+    }
+    if (el) {
+        if (!show) {
+            var bar = document.getElementById('_load-bar');
+            if (bar) bar.style.width = '100%';
+            clearInterval(el._bar);
+            setTimeout(function() { if (el.parentNode) el.parentNode.removeChild(el); }, 400);
+        }
+    }
+}
+
+function _showLoadError() {
+    var app = document.getElementById('app-content');
+    if (app) app.innerHTML = '<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:60vh;gap:16px;color:#94a3b8;text-align:center;padding:2rem;">' +
+        '<div style="font-size:2rem;">⚠️</div>' +
+        '<div style="font-size:1rem;font-weight:600;">Dashboard konnte nicht laden</div>' +
+        '<div style="font-size:0.85rem;color:#64748b;">Server nicht erreichbar oder DB-Fehler.<br>Render-Logs prüfen.</div>' +
+        '<button onclick="window.location.reload()" class="btn btn-primary" style="margin-top:8px;">↺ Neu laden</button>' +
+        '</div>';
+}
+
 async function _safeRun(fn) {
     try { await fn(); }
-    catch(e) { console.warn('[Dashboard]', fn.name || 'fn', e.message); }
+    catch(e) { console.warn('[Dashboard]', fn.name || '', e.message); }
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
 async function updateStats() {
     try {
         var d = await api.getStats();
-        if (!d || !d.stats) return; // Server nicht erreichbar - still bleiben
+        if (!d || !d.stats) throw new Error('Keine Stats vom Server');
         var sv = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
         sv('s-chats',    d.stats.totalChats);
         sv('s-manual',   d.stats.activeManual);
@@ -60,7 +125,7 @@ async function loadChats() {
     if (!el) return;
     try {
         var chats = await api.getChats();
-        if (chats === null) return; // Netzwerkfehler - Liste nicht leeren
+        if (chats === null) throw new Error('Keine Chats vom Server');
         _allChats = chats || [];
         renderChatList(_allChats);
     } catch(e) {

@@ -1,57 +1,48 @@
-// api.js v1.2 – Smart Cache + Retry + Dedup
+// api.js v1.2.0 - no null caching, dedup, retry
 var API_BASE = '/api/admin';
+var _cache   = {};
+var _pending = {};
 
-// ── Cache-Store ───────────────────────────────────────────────────────────────
-var _cache = {};            // { key: { data, ts } }
-var _pending = {};          // laufende GET-Requests (dedup)
-
-// Cache-TTLs in Millisekunden
 var CACHE_TTLS = {
-    '/stats':       15000,   // Stats: 15s
-    '/settings':    60000,   // Settings: 60s (ändern sich selten)
-    '/blacklist':   30000,
-    '/learning':    10000,
-    '/chats':       5000,    // Chats: 5s (live-nah)
-    '/knowledge/categories': 120000  // Kategorien: 2min
+    '/stats':    15000,
+    '/settings': 60000,
+    '/blacklist':30000,
+    '/learning': 10000,
+    '/chats':     5000,
+    '/knowledge/categories': 120000
 };
 
 var api = {
-
-    // ── Request mit Cache + Retry ────────────────────────────────────────
     async request(endpoint, method, body) {
         method = method || 'GET';
 
-        // Cache nur für GET (ohne Body)
+        // Nur GET cachen, nur wenn Wert nicht null
         if (method === 'GET') {
             var ttl = CACHE_TTLS[endpoint];
             if (ttl) {
                 var cached = _cache[endpoint];
-                if (cached && (Date.now() - cached.ts) < ttl) {
-                    return cached.data; // Cache-Hit – kein Netzwerk
+                if (cached && cached.data !== null && (Date.now() - cached.ts) < ttl) {
+                    return cached.data;
                 }
             }
-
-            // Dedup: gleicher Endpoint läuft bereits
             if (_pending[endpoint]) return _pending[endpoint];
         }
 
         var maxRetries = (method === 'GET') ? 3 : 2;
-        var attempt    = 0;
-        var lastErr;
+        var attempt = 0, lastErr;
 
         while (attempt < maxRetries) {
             attempt++;
             try {
                 var result = await api._doFetch(endpoint, method, body);
-
-                // Erfolgreichen GET cachen
+                // Null NICHT cachen (Server-Fehler oder Cold-Start)
                 if (method === 'GET' && result !== null && CACHE_TTLS[endpoint]) {
                     _cache[endpoint] = { data: result, ts: Date.now() };
                 }
                 return result;
             } catch (err) {
                 lastErr = err;
-                if (err._status && err._status >= 400 && err._status < 500) throw err;
+                if (err._status >= 400 && err._status < 500) throw err;
                 if (attempt >= maxRetries) break;
                 await new Promise(function(r) { setTimeout(r, attempt * 600); });
             }
@@ -69,9 +60,8 @@ var api = {
         };
         if (body) opts.body = JSON.stringify(body);
 
-        var key = endpoint;
         var promise = fetch(API_BASE + endpoint, opts).then(async function(res) {
-            if (method === 'GET') delete _pending[key];
+            if (method === 'GET') delete _pending[endpoint];
 
             if (res.status === 401) { _showSessionHint(); return null; }
 
@@ -83,45 +73,37 @@ var api = {
                 throw err;
             }
             try { return await res.json(); } catch(_) { return null; }
-
         }).catch(function(err) {
-            if (method === 'GET') delete _pending[key];
-            if (!err._status) console.warn('[API] ' + endpoint + ':', err.message);
+            if (method === 'GET') delete _pending[endpoint];
+            if (!err._status) console.warn('[API]', endpoint + ':', err.message);
             throw err;
         });
 
-        if (method === 'GET') _pending[key] = promise;
+        if (method === 'GET') _pending[endpoint] = promise;
         return promise;
     },
 
-    // Cache für einen Endpoint manuell invalidieren
-    invalidate(endpoint) {
-        if (endpoint) delete _cache[endpoint];
-        else _cache = {}; // Alles leeren
-    },
+    invalidate: function(ep) { if (ep) delete _cache[ep]; else _cache = {}; },
 
-    // ── API-Methoden ──────────────────────────────────────────────────────
-    getStats:           function() { return api.request('/stats'); },
-    getChats:           function() { return api.request('/chats'); },
-    getChatMessages:    function(id) { return api.request('/chats/' + id + '/messages'); },
-    updateChatStatus:   function(id, m) { return api.request('/chats/' + id + '/status', 'PATCH', { is_manual_mode: m }); },
-    getSettings:        function() { return api.request('/settings'); },
-    saveSettings:       function(s) { api.invalidate('/settings'); return api.request('/settings', 'POST', s); },
-    getLearningQueue:   function() { return api.request('/learning'); },
-    resolveLearning:    function(id, ans) { api.invalidate('/learning'); return api.request('/learning/resolve', 'POST', { questionId: id, adminAnswer: ans }); },
-    banUser:            function(id, r) { api.invalidate('/blacklist'); return api.request('/blacklist', 'POST', { identifier: id, reason: r }); },
-    getBlacklist:       function() { return api.request('/blacklist'); },
-    removeBan:          function(id) { api.invalidate('/blacklist'); return api.request('/blacklist/' + id, 'DELETE'); },
-    discoverLinks:      function(url) { return api.request('/knowledge/discover', 'POST', { url: url }); },
+    getStats:         function() { return api.request('/stats'); },
+    getChats:         function() { return api.request('/chats'); },
+    getChatMessages:  function(id) { return api.request('/chats/' + id + '/messages'); },
+    updateChatStatus: function(id, m) { return api.request('/chats/' + id + '/status', 'PATCH', { is_manual_mode: m }); },
+    getSettings:      function() { return api.request('/settings'); },
+    saveSettings:     function(s) { api.invalidate('/settings'); return api.request('/settings', 'POST', s); },
+    getLearningQueue: function() { return api.request('/learning'); },
+    resolveLearning:  function(id, ans) { api.invalidate('/learning'); return api.request('/learning/resolve', 'POST', { questionId: id, adminAnswer: ans }); },
+    banUser:          function(id, r) { api.invalidate('/blacklist'); return api.request('/blacklist', 'POST', { identifier: id, reason: r }); },
+    getBlacklist:     function() { return api.request('/blacklist'); },
+    removeBan:        function(id) { api.invalidate('/blacklist'); return api.request('/blacklist/' + id, 'DELETE'); },
+    discoverLinks:    function(url) { return api.request('/knowledge/discover', 'POST', { url: url }); },
     addManualKnowledge: function(t, c, cat) { return api.request('/knowledge/manual', 'POST', { title: t, content: c, category_id: cat }); },
-    // Abuse
-    getFlaggedChats:    function() { return api.request('/flags/chats'); },
-    flagChat:           function(id, reason) { return api.request('/flags', 'POST', { chatId: id, reason: reason }); },
-    unflagChat:         function(id) { return api.request('/flags/' + id, 'DELETE'); },
-    unmuteChat:         function(id) { return api.request('/flags/' + id + '/unmute', 'POST'); }
+    getFlaggedChats:  function() { return api.request('/flags/chats'); },
+    flagChat:         function(id, reason) { return api.request('/flags', 'POST', { chatId: id, reason: reason }); },
+    unflagChat:       function(id) { return api.request('/flags/' + id, 'DELETE'); },
+    unmuteChat:       function(id) { return api.request('/flags/' + id + '/unmute', 'POST'); }
 };
 
-// ── Session-Hint ──────────────────────────────────────────────────────────────
 var _hintShown = false;
 function _showSessionHint() {
     if (_hintShown) return; _hintShown = true;
