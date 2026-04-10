@@ -131,6 +131,7 @@ async function selectChat(chatId) {
                         '</label>' +
                     '</div>' +
                     '<button onclick="quickBan(\'' + esc(chatId) + '\')" class="btn btn-danger" style="padding:5px 9px;font-size:0.75rem;" title="Bannen">⛔</button>' +
+    '<button class="icon-btn back-btn" onclick="closeChat()" title="Zurück" style="display:none;">←</button>' +
                     (window.innerWidth > 700 ? '' : '<button onclick="closeChat()" class="icon-btn" title="Zurück">←</button>') +
                 '</div>' +
             '</div>' +

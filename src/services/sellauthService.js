@@ -1,16 +1,15 @@
 /**
- * sellauthService.js v1.1.2
+ * sellauthService.js v1.1.4
  *
- * Verbesserungen:
- * - Pro Variante ein eigener Knowledge-Eintrag (bessere Vektorsuche)
- * - Semantisch reicheres Format mit Kundenfragen-Sprache
- * - Jede Variante hat ihren eigenen Direktlink
+ * Fix: Produktlinks verwenden nur {shopUrl}/{product.path}
+ * Sellauth hat KEIN ?variant=ID URL-Parameter.
+ * Varianten werden auf der Produktseite ausgewählt.
  */
 
-const axios  = require('axios');
+const axios   = require('axios');
 const supabase = require('../config/supabase');
 const deepseekService = require('./deepseekService');
-const logger = require('../utils/logger');
+const logger  = require('../utils/logger');
 
 const SELLAUTH_API = 'https://api.sellauth.com/v1';
 
@@ -55,53 +54,74 @@ const sellauthService = {
     } catch { return []; }
   },
 
-  buildProductUrl(shopUrl, path) {
-    return `${shopUrl.replace(/\/$/, '')}/${path}`;
+  // FIX: Nur product.path – kein ?variant=ID
+  buildProductUrl(shopUrl, productPath) {
+    return `${shopUrl.replace(/\/$/, '')}/${productPath}`;
   },
 
-  // ── VERBESSERT: Pro Variante ein eigener Eintrag ──────────────────────
-  formatVariantKnowledge(product, variant, shopUrl, categoryName) {
-    const productUrl = this.buildProductUrl(shopUrl, product.path);
-    // Direktlink mit vorausgewählter Variante
-    const variantUrl = `${productUrl}?variant=${variant.id}`;
-    const price      = variant.price ? `${variant.price} ${product.currency || 'EUR'}` : null;
-    const stock      = variant.stock !== null ? variant.stock : '∞';
+  // Format für Variante: Link führt immer zur Produktseite
+  formatVariantKnowledge(product, variant, productUrl, categoryName) {
+    const price = variant.price ? `${variant.price} ${product.currency || 'EUR'}` : null;
+    const stock = variant.stock !== null ? variant.stock : null;
+    const inStock = stock === null || stock > 0;
 
-    // Semantisch reiches Format: enthält Kundenfragen-Sprache und alle relevanten Begriffe
-    return [
-      `Produkt: ${product.name} – ${variant.name}`,
+    const lines = [
+      `Produkt: ${product.name}`,
+      `Option/Variante: ${variant.name}`,
       price ? `Preis: ${price}` : '',
-      `Verfügbarkeit: ${stock > 0 || stock === '∞' ? 'Verfügbar' : 'Ausverkauft'}`,
-      `Direkter Kauflink: ${variantUrl}`,
-      `Shop-Seite: ${productUrl}`,
+      inStock ? 'Status: Verfügbar' : 'Status: Ausverkauft',
+      `Kauflink: ${productUrl}`,
       categoryName ? `Kategorie: ${categoryName}` : '',
-      product.description
-        ? `Beschreibung: ${product.description.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().substring(0, 400)}`
-        : '',
-      '',
-      // Suchbegriffe: hilft der Vektorsuche bei Kundenanfragen
-      `Suchbegriffe: ${[product.name, variant.name, categoryName].filter(Boolean).join(', ')}`,
-      `Wenn ein Kunde nach diesem Tarif oder Produkt fragt, empfiehl: ${variant.name} von ${product.name} für ${price || 'diesen Preis'}.`,
-      `Kauflink für Kunden: ${variantUrl}`
-    ].filter(Boolean).join('\n');
+    ];
+
+    // Produktbeschreibung (einmal, nicht pro Variante redundant)
+    if (product.description) {
+      const clean = product.description.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+      if (clean.length > 10) lines.push(`Info: ${clean.substring(0, 500)}`);
+    }
+
+    lines.push('');
+    lines.push(`Wenn ein Kunde "${variant.name}" oder "${product.name}" sucht: Link → ${productUrl}`);
+    if (price) lines.push(`Empfehlung: "${variant.name}" für ${price} – Kauflink: ${productUrl}`);
+
+    return lines.filter(l => l !== undefined && l !== null && l !== '').join('\n');
   },
 
-  // Format für Produkte ohne Varianten (Typ: single)
-  formatSingleProductKnowledge(product, shopUrl, categoryName) {
-    const url   = this.buildProductUrl(shopUrl, product.path);
+  // Format für Produkte ohne Varianten
+  formatSingleProductKnowledge(product, productUrl, categoryName) {
     const price = product.price ? `${product.price} ${product.currency || 'EUR'}` : null;
-
-    return [
+    const lines = [
       `Produkt: ${product.name}`,
       price ? `Preis: ${price}` : '',
-      `Kauflink: ${url}`,
+      `Kauflink: ${productUrl}`,
       categoryName ? `Kategorie: ${categoryName}` : '',
-      product.description
-        ? `Beschreibung: ${product.description.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim().substring(0, 400)}`
-        : '',
+    ];
+    if (product.description) {
+      const clean = product.description.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+      if (clean.length > 10) lines.push(`Info: ${clean.substring(0, 500)}`);
+    }
+    lines.push('');
+    lines.push(`Wenn ein Kunde dieses Produkt sucht: Link → ${productUrl}`);
+    return lines.filter(Boolean).join('\n');
+  },
+
+  // Übersichts-Eintrag für Variant-Produkt (alle Optionen auf einen Blick)
+  formatOverviewKnowledge(product, productUrl, categoryName) {
+    const variantLines = (product.variants || []).map(v => {
+      const price = v.price ? `${v.price} ${product.currency || 'EUR'}` : '?';
+      const stock = v.stock !== null && v.stock <= 0 ? ' (ausverkauft)' : '';
+      return `  • ${v.name}: ${price}${stock}`;
+    }).join('\n');
+
+    return [
+      `Produkt-Übersicht: ${product.name}`,
+      categoryName ? `Kategorie: ${categoryName}` : '',
+      `Kauflink (alle Optionen auf dieser Seite): ${productUrl}`,
       '',
-      `Suchbegriffe: ${[product.name, categoryName].filter(Boolean).join(', ')}`,
-      `Wenn ein Kunde dieses Produkt sucht, gib ihm den Link: ${url}`
+      `Verfügbare Optionen:`,
+      variantLines,
+      '',
+      `Kunden können auf der Seite ${productUrl} die gewünschte Option auswählen und direkt kaufen.`
     ].filter(Boolean).join('\n');
   },
 
@@ -114,65 +134,66 @@ const sellauthService = {
     ]);
 
     results.total = products.length;
+    logger.info(`[Sellauth] ${products.length} Produkte geladen`);
 
-    const { data: kbCat } = await supabase
-      .from('knowledge_categories').select('id').eq('name', 'Sellauth Import').single();
-    const categoryId = kbCat?.id || null;
+    // Sellauth-Import Kategorie-ID holen
+    let categoryId = null;
+    try {
+      const { data: kbCat } = await supabase.from('knowledge_categories').select('id').eq('name', 'Sellauth Import').single();
+      categoryId = kbCat?.id || null;
+    } catch {}
 
-    // Alle alten Sellauth-Einträge löschen → Fresh Sync
+    // Alte Einträge löschen
     await supabase.from('knowledge_base').delete().eq('source', 'sellauth_sync');
 
     for (const product of products) {
       if (product.visibility === 'hidden') { results.skipped++; continue; }
 
-      const cat = categories.find(c => c.id === product.category_id);
-      const catName = cat?.name || null;
+      const cat        = categories.find(c => c.id === product.category_id);
+      const catName    = cat?.name || null;
+      const productUrl = this.buildProductUrl(shopUrl, product.path);
 
       try {
         if (product.type === 'variant' && product.variants?.length) {
-          // Eine Eintrag pro Variante – für präzise Vektorsuche
+
+          // 1. Pro Variante ein Eintrag
           for (const variant of product.variants) {
-            const content   = this.formatVariantKnowledge(product, variant, shopUrl, catName);
+            const content   = this.formatVariantKnowledge(product, variant, productUrl, catName);
             const embedding = await deepseekService.generateEmbedding(content);
             const title     = `${product.name} – ${variant.name}`;
 
             await supabase.from('knowledge_base').insert([{
-              content, embedding,
-              title,
+              content, embedding, title,
               source:      'sellauth_sync',
               category_id: categoryId,
               metadata: {
                 product_id:   product.id,
                 variant_id:   variant.id,
-                product_path: product.path,
-                product_url:  this.buildProductUrl(shopUrl, product.path),
-                variant_url:  `${this.buildProductUrl(shopUrl, product.path)}?variant=${variant.id}`,
+                product_url:  productUrl,
                 price:        variant.price,
                 currency:     product.currency,
                 stock:        variant.stock,
                 type:         'variant'
               }
             }]);
-
             results.saved++;
-            await new Promise(r => setTimeout(r, 250)); // Rate-Limit
+            await new Promise(r => setTimeout(r, 200));
           }
 
-          // Zusätzlich: ein Übersichts-Eintrag für das gesamte Produkt
-          const overview = this._buildProductOverview(product, shopUrl, catName, categories);
-          const emb      = await deepseekService.generateEmbedding(overview);
+          // 2. Übersichts-Eintrag mit allen Varianten
+          const overview  = this.formatOverviewKnowledge(product, productUrl, catName);
+          const embOver   = await deepseekService.generateEmbedding(overview);
           await supabase.from('knowledge_base').insert([{
-            content: overview, embedding: emb,
-            title:   `${product.name} (Übersicht)`,
+            content: overview, embedding: embOver,
+            title:   `${product.name} (alle Optionen)`,
             source:  'sellauth_sync',
             category_id: categoryId,
-            metadata: { product_id: product.id, type: 'overview' }
+            metadata: { product_id: product.id, product_url: productUrl, type: 'overview' }
           }]);
-          await new Promise(r => setTimeout(r, 250));
+          await new Promise(r => setTimeout(r, 200));
 
         } else {
-          // Einzelprodukt
-          const content   = this.formatSingleProductKnowledge(product, shopUrl, catName);
+          const content   = this.formatSingleProductKnowledge(product, productUrl, catName);
           const embedding = await deepseekService.generateEmbedding(content);
           await supabase.from('knowledge_base').insert([{
             content, embedding,
@@ -180,16 +201,15 @@ const sellauthService = {
             source:      'sellauth_sync',
             category_id: categoryId,
             metadata: {
-              product_id:   product.id,
-              product_path: product.path,
-              product_url:  this.buildProductUrl(shopUrl, product.path),
-              price:        product.price,
-              currency:     product.currency,
-              type:         'single'
+              product_id:  product.id,
+              product_url: productUrl,
+              price:       product.price,
+              currency:    product.currency,
+              type:        'single'
             }
           }]);
           results.saved++;
-          await new Promise(r => setTimeout(r, 250));
+          await new Promise(r => setTimeout(r, 200));
         }
 
         logger.info(`[Sellauth] ✓ ${product.name}`);
@@ -199,28 +219,8 @@ const sellauthService = {
       }
     }
 
-    logger.info(`[Sellauth] Sync fertig: ${results.saved} Einträge für ${results.total} Produkte`);
+    logger.info(`[Sellauth] Sync: ${results.saved} Einträge für ${results.total} Produkte`);
     return results;
-  },
-
-  _buildProductOverview(product, shopUrl, catName, categories) {
-    const url = this.buildProductUrl(shopUrl, product.path);
-    const variantList = (product.variants || []).map(v => {
-      const price = v.price ? `${v.price} ${product.currency}` : '?';
-      const link  = `${url}?variant=${v.id}`;
-      return `- ${v.name}: ${price} → ${link}`;
-    }).join('\n');
-
-    return [
-      `Produkt-Übersicht: ${product.name}`,
-      catName ? `Kategorie: ${catName}` : '',
-      `Shop-Link: ${url}`,
-      '',
-      'Alle verfügbaren Optionen:',
-      variantList,
-      '',
-      `Wenn ein Kunde eine Option aus "${product.name}" kaufen möchte, gib ihm den passenden Direktlink.`
-    ].filter(Boolean).join('\n');
   },
 
   async testConnection(apiKey, shopId) {

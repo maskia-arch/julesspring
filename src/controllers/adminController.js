@@ -48,28 +48,18 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
-  // FIX: select('*') statt expliziter Spalten → robust gegen fehlende Migrations
   async getChats(req, res, next) {
     try {
-      const { data, error } = await supabase
-        .from('chats')
-        .select('*')
-        .order('updated_at', { ascending: false })
-        .limit(100);
+      const { data, error } = await supabase.from('chats').select('*').order('updated_at', { ascending: false }).limit(100);
       if (error) throw error;
-
-      // Normalize: Felder die in alten Schemas fehlen könnten → Fallback
-      const normalized = (data||[]).map(c => ({
+      res.json((data||[]).map(c => ({
         ...c,
         is_manual_mode:    c.is_manual_mode    ?? false,
         last_message:      c.last_message      ?? null,
         last_message_role: c.last_message_role ?? 'user',
-        message_count:     c.message_count     ?? 0,
         first_name:        c.first_name        ?? c.metadata?.first_name ?? null,
         username:          c.username          ?? c.metadata?.username   ?? null,
-      }));
-
-      res.json(normalized);
+      })));
     } catch (e) { next(e); }
   },
 
@@ -81,19 +71,14 @@ const adminController = {
         supabase.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending: true }).limit(200)
       ]);
       if (error) throw error;
-      res.json({
-        is_manual:  chat?.is_manual_mode ?? false,
-        chat_info:  chat || {},
-        messages:   msgs || []
-      });
+      res.json({ is_manual: chat?.is_manual_mode ?? false, chat_info: chat || {}, messages: msgs || [] });
     } catch (e) { next(e); }
   },
 
   async updateChatStatus(req, res, next) {
     try {
-      const { chatId } = req.params;
       const { is_manual_mode } = req.body;
-      const { data, error } = await supabase.from('chats').update({ is_manual_mode, updated_at: new Date() }).eq('id', chatId).select();
+      const { data, error } = await supabase.from('chats').update({ is_manual_mode, updated_at: new Date() }).eq('id', req.params.chatId).select();
       if (error) throw error;
       res.json(data[0]);
     } catch (e) { next(e); }
@@ -104,9 +89,8 @@ const adminController = {
       const { chatId, content } = req.body;
       if (!chatId || !content) return res.status(400).json({ error: 'Fehlende Felder' });
       const { data: chat } = await supabase.from('chats').select('platform').eq('id', chatId).single();
-      await supabase.from('messages').insert([{ chat_id: chatId, role: 'assistant', content, is_manual: true }]);
-      // last_message aktualisieren (ignoriert Fehler falls Spalte fehlt)
-      await supabase.from('chats').update({ last_message: content.substring(0,120), last_message_role: 'assistant', updated_at: new Date() }).eq('id', chatId).catch(() => {});
+      supabase.from('messages').insert([{ chat_id: chatId, role: 'assistant', content, is_manual: true }]).catch(() => {});
+      supabase.from('chats').update({ last_message: content.substring(0,120), last_message_role: 'assistant', updated_at: new Date() }).eq('id', chatId).catch(() => {});
       if (chat?.platform === 'telegram') await telegramService.sendMessage(chatId, content);
       res.json({ success: true });
     } catch (e) { next(e); }
@@ -120,11 +104,41 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
+  // FIX: Resilientes upsert – nur bekannte/existierende Felder updaten
   async updateSettings(req, res, next) {
     try {
-      const { data, error } = await supabase.from('settings').upsert({ id: 1, ...req.body, updated_at: new Date() }).select();
-      if (error) throw error;
-      res.json(data[0]);
+      const body = req.body;
+
+      // Basis-Felder die immer existieren sollten
+      const base = {
+        id: 1,
+        updated_at: new Date()
+      };
+
+      // Alle Felder versuchen – bei Fehler Fallback auf Basis
+      const full = { ...base, ...body };
+
+      let { data, error } = await supabase.from('settings').upsert(full).select();
+
+      if (error) {
+        // Fallback: Nur sichere Felder updaten
+        console.warn('[Settings] Upsert Fehler (versuche Fallback):', error.message);
+        const safe = {
+          id: 1,
+          system_prompt:       body.system_prompt       ?? undefined,
+          negative_prompt:     body.negative_prompt     ?? undefined,
+          welcome_message:     body.welcome_message     ?? undefined,
+          manual_msg_template: body.manual_msg_template ?? undefined,
+          updated_at:          new Date()
+        };
+        // undefined-Felder entfernen
+        Object.keys(safe).forEach(k => safe[k] === undefined && delete safe[k]);
+        const fallback = await supabase.from('settings').upsert(safe).select();
+        if (fallback.error) throw fallback.error;
+        data = fallback.data;
+      }
+
+      res.json(data?.[0] || {});
     } catch (e) { next(e); }
   },
 
@@ -168,15 +182,10 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
-  // Knowledge Categories - mit Fallback falls Tabelle nicht existiert
   async getKnowledgeCategories(req, res, next) {
     try {
       const { data, error } = await supabase.from('knowledge_categories').select('*').order('name');
-      if (error) {
-        // Tabelle existiert noch nicht → leeres Array zurückgeben
-        console.warn('[Categories] Tabelle nicht gefunden (schema4.sql ausführen):', error.message);
-        return res.json([]);
-      }
+      if (error) { console.warn('[Cat] Tabelle fehlt → schema6.sql ausführen'); return res.json([]); }
       res.json(data || []);
     } catch (e) { res.json([]); }
   },
@@ -200,28 +209,16 @@ const adminController = {
   async getKnowledgeEntries(req, res, next) {
     try {
       const { category_id } = req.query;
-      let q = supabase.from('knowledge_base')
-        .select('id, title, content, source, category_id, created_at')
+      let q = supabase.from('knowledge_base').select('id, title, content, source, category_id, created_at')
         .order('created_at', { ascending: false }).limit(200);
       if (category_id) q = q.eq('category_id', category_id);
       const { data, error } = await q;
       if (error) throw error;
-      
-      // Kategorien separat laden (fail-safe)
-      let categories = [];
-      try {
-        const { data: cats } = await supabase.from('knowledge_categories').select('id, name, color, icon');
-        categories = cats || [];
-      } catch {}
-
+      let cats = [];
+      try { const { data: c } = await supabase.from('knowledge_categories').select('id, name, color, icon'); cats = c||[]; } catch {}
       const catMap = {};
-      categories.forEach(c => { catMap[c.id] = c; });
-
-      res.json((data||[]).map(e => ({
-        ...e,
-        content_preview: (e.content||'').substring(0, 200),
-        knowledge_categories: e.category_id ? catMap[e.category_id] || null : null
-      })));
+      cats.forEach(c => { catMap[c.id] = c; });
+      res.json((data||[]).map(e => ({ ...e, content_preview: (e.content||'').substring(0,200), knowledge_categories: e.category_id ? catMap[e.category_id]||null : null })));
     } catch (e) { next(e); }
   },
   async deleteKnowledgeEntry(req, res, next) {
@@ -231,16 +228,15 @@ const adminController = {
       res.json({ success: true });
     } catch (e) { next(e); }
   },
-
   async addManualKnowledge(req, res, next) {
     try {
       const { title, content, category_id } = req.body;
       if (!content) return res.status(400).json({ error: 'Inhalt fehlt' });
       const fullContent = title ? `### ${title}\n${content}` : content;
       const embedding   = await deepseekService.generateEmbedding(fullContent);
-      const insertData  = { content: fullContent, title: title||null, embedding, source: 'manual_entry' };
-      if (category_id) insertData.category_id = parseInt(category_id);
-      const { data, error } = await supabase.from('knowledge_base').insert([insertData]).select();
+      const ins = { content: fullContent, title: title||null, embedding, source: 'manual_entry' };
+      if (category_id) ins.category_id = parseInt(category_id);
+      const { data, error } = await supabase.from('knowledge_base').insert([ins]).select();
       if (error) throw error;
       res.json({ success: true, data: data[0] });
     } catch (e) { next(e); }
@@ -254,7 +250,6 @@ const adminController = {
       res.json({ links });
     } catch (e) { res.status(500).json({ error: e.message }); }
   },
-
   async startScraping(req, res, next) {
     try {
       const { urls, category_id } = req.body;
@@ -280,11 +275,9 @@ const adminController = {
     try {
       const { apiKey, shopId } = req.body;
       if (!apiKey || !shopId) return res.status(400).json({ error: 'API Key und Shop ID erforderlich' });
-      const r = await sellauthService.testConnection(apiKey, shopId);
-      res.json(r);
+      res.json(await sellauthService.testConnection(apiKey, shopId));
     } catch (e) { next(e); }
   },
-
   async syncSellauth(req, res, next) {
     try {
       let { apiKey, shopId, shopUrl } = req.body || {};
@@ -294,14 +287,13 @@ const adminController = {
         shopId  = shopId  || s?.sellauth_shop_id  || '';
         shopUrl = shopUrl || s?.sellauth_shop_url || '';
       }
-      if (!apiKey)  return res.status(400).json({ error: 'Kein Sellauth API Key konfiguriert.' });
-      if (!shopId)  return res.status(400).json({ error: 'Keine Shop ID konfiguriert.' });
-      if (!shopUrl) return res.status(400).json({ error: 'Keine Shop URL konfiguriert.' });
+      if (!apiKey)  return res.status(400).json({ error: 'Kein Sellauth API Key. Bitte unter Settings → Sellauth eintragen.' });
+      if (!shopId)  return res.status(400).json({ error: 'Keine Shop ID. Bitte unter Settings → Sellauth eintragen.' });
+      if (!shopUrl) return res.status(400).json({ error: 'Keine Shop URL. Bitte unter Settings → Sellauth eintragen.' });
       const results = await sellauthService.syncToKnowledgeBase(apiKey, shopId, shopUrl);
       res.json({ success: true, message: `${results.saved} Einträge für ${results.total} Produkte importiert.`, details: results });
     } catch (e) { res.status(500).json({ error: e.message }); }
   },
-
   async previewSellauthProducts(req, res, next) {
     try {
       const { data: s } = await supabase.from('settings').select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single();
