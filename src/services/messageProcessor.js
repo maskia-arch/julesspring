@@ -87,10 +87,10 @@ const messageProcessor = {
 
     this._updateChatPreview(chat.id, aiResult.text, 'assistant');
 
-    // 9. Learning Queue bei leerem Kontext ODER [UNKLAR]
-    const noContext = context.length === 0;
-    const unclear   = aiResult.text.includes('[UNKLAR]');
-    if (noContext || unclear) {
+    // 9. Learning Queue NUR bei explizitem [UNKLAR] in der KI-Antwort
+    //    NICHT bei leerem Kontext — der deckt auch Small Talk, Spam etc. ab
+    const unclear = aiResult.text.includes('[UNKLAR]');
+    if (unclear) {
       void (async () => {
         try {
           await supabase.from('learning_queue').insert([{
@@ -100,7 +100,7 @@ const messageProcessor = {
           }]);
         } catch (_) {}
       })();
-      logger.info(`[MP] Learning Queue: "${text.substring(0,50)}" (noCtx=${noContext}, unklar=${unclear})`);
+      logger.info(`[MP] Learning Queue: "${text.substring(0,50)}"`);
     }
 
     return aiResult.text;
