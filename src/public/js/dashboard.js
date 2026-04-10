@@ -650,6 +650,16 @@ function relTime(iso) {
     return new Date(iso).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' });
 }
 
+async function rejectLearning(id) {
+    if (!confirm('Anfrage ablehnen und löschen?\nDie Wissenslücke bleibt bestehen.')) return;
+    try {
+        var result = await api.request('/learning/' + id, 'DELETE');
+        showToast('🗑 Anfrage abgelehnt');
+        loadLearningQueue();
+        updateStats();
+    } catch(e) { alert('Fehler beim Löschen: ' + e.message); }
+}
+
 function showToast(msg) {
     var t = document.getElementById('_toast');
     if (!t) {
