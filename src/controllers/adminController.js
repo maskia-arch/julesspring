@@ -89,8 +89,9 @@ const adminController = {
       const { chatId, content } = req.body;
       if (!chatId || !content) return res.status(400).json({ error: 'Fehlende Felder' });
       const { data: chat } = await supabase.from('chats').select('platform').eq('id', chatId).single();
-      supabase.from('messages').insert([{ chat_id: chatId, role: 'assistant', content, is_manual: true }]).catch(() => {});
-      supabase.from('chats').update({ last_message: content.substring(0,120), last_message_role: 'assistant', updated_at: new Date() }).eq('id', chatId).catch(() => {});
+      // FIX: void async IIFE statt .catch() (Supabase v2 hat kein .catch())
+      void (async () => { try { await supabase.from('messages').insert([{ chat_id: chatId, role: 'assistant', content, is_manual: true }]); } catch (_) {} })();
+      void (async () => { try { await supabase.from('chats').update({ last_message: content.substring(0,120), last_message_role: 'assistant', updated_at: new Date() }).eq('id', chatId); } catch (_) {} })();
       if (chat?.platform === 'telegram') await telegramService.sendMessage(chatId, content);
       res.json({ success: true });
     } catch (e) { next(e); }

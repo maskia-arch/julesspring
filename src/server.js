@@ -64,9 +64,9 @@ async function autoRegisterWebhook() {
     if (result.ok) {
       logger.info(`[Webhook] ✅ Auto-registriert: ${appUrl}/api/webhooks/telegram`);
       // Persistent in DB speichern
-      await supabase.from('settings')
-        .upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() })
-        .catch(() => {});
+      try {
+        await supabase.from('settings').upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() });
+      } catch (_) {}
     } else {
       logger.warn(`[Webhook] Auto-Registrierung fehlgeschlagen: ${result.description}`);
     }
