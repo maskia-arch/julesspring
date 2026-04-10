@@ -104,44 +104,55 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
-  // FIX: Resilientes upsert – nur bekannte/existierende Felder updaten
   async updateSettings(req, res, next) {
     try {
       const body = req.body;
-
-      // Basis-Felder die immer existieren sollten
-      const base = {
-        id: 1,
-        updated_at: new Date()
-      };
-
-      // Alle Felder versuchen – bei Fehler Fallback auf Basis
-      const full = { ...base, ...body };
-
+      const full = { id: 1, ...body, updated_at: new Date() };
       let { data, error } = await supabase.from('settings').upsert(full).select();
-
       if (error) {
-        // Fallback: Nur sichere Felder updaten
-        console.warn('[Settings] Upsert Fehler (versuche Fallback):', error.message);
-        const safe = {
-          id: 1,
-          system_prompt:       body.system_prompt       ?? undefined,
-          negative_prompt:     body.negative_prompt     ?? undefined,
-          welcome_message:     body.welcome_message     ?? undefined,
-          manual_msg_template: body.manual_msg_template ?? undefined,
-          updated_at:          new Date()
-        };
-        // undefined-Felder entfernen
-        Object.keys(safe).forEach(k => safe[k] === undefined && delete safe[k]);
-        const fallback = await supabase.from('settings').upsert(safe).select();
-        if (fallback.error) throw fallback.error;
-        data = fallback.data;
+        console.warn('[Settings] Upsert Fehler (Fallback):', error.message);
+        // Fallback: nur sichere Felder
+        const safe = { id: 1, updated_at: new Date() };
+        const safeFields = ['system_prompt','negative_prompt','welcome_message','manual_msg_template',
+          'sellauth_api_key','sellauth_shop_id','sellauth_shop_url',
+          'ai_model','ai_max_tokens','ai_temperature','rag_threshold','rag_match_count','webhook_url'];
+        safeFields.forEach(f => { if (body[f] !== undefined) safe[f] = body[f]; });
+        const r2 = await supabase.from('settings').upsert(safe).select();
+        if (r2.error) throw r2.error;
+        data = r2.data;
       }
-
       res.json(data?.[0] || {});
     } catch (e) { next(e); }
   },
 
+  // ── Telegram Webhook ──────────────────────────────────────────────────────
+  // FIX: Webhook-URL wird in settings.webhook_url gespeichert
+  async setupWebhook(req, res, next) {
+    try {
+      const { appUrl } = req.body;
+      if (!appUrl) return res.status(400).json({ error: 'appUrl fehlt' });
+
+      const result = await telegramService.setWebhook(appUrl);
+
+      if (result.ok) {
+        // URL persistent in DB speichern
+        await supabase.from('settings')
+          .upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() })
+          .catch(e => console.warn('[Webhook] DB-Speicherung fehlgeschlagen:', e.message));
+      }
+
+      res.json({ success: result.ok, description: result.description || '' });
+    } catch (e) { next(e); }
+  },
+
+  async getWebhookInfo(req, res, next) {
+    try {
+      const info = await telegramService.getWebhookInfo();
+      res.json(info.result || info);
+    } catch (e) { next(e); }
+  },
+
+  // ── Blacklist ──────────────────────────────────────────────────────────────
   async getBlacklist(req, res, next) {
     try {
       const { data, error } = await supabase.from('blacklist').select('*').order('created_at', { ascending: false });
@@ -166,6 +177,7 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
+  // ── Learning ───────────────────────────────────────────────────────────────
   async getLearningQueue(req, res, next) {
     try {
       const { data, error } = await supabase.from('learning_queue').select('*').eq('status', 'pending').order('created_at', { ascending: false });
@@ -182,10 +194,11 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
+  // ── Knowledge Categories ──────────────────────────────────────────────────
   async getKnowledgeCategories(req, res, next) {
     try {
       const { data, error } = await supabase.from('knowledge_categories').select('*').order('name');
-      if (error) { console.warn('[Cat] Tabelle fehlt → schema6.sql ausführen'); return res.json([]); }
+      if (error) { return res.json([]); }
       res.json(data || []);
     } catch (e) { res.json([]); }
   },
@@ -206,6 +219,7 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
+  // ── Knowledge Entries ─────────────────────────────────────────────────────
   async getKnowledgeEntries(req, res, next) {
     try {
       const { category_id } = req.query;
@@ -242,12 +256,12 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
+  // ── Scraper ───────────────────────────────────────────────────────────────
   async discoverLinks(req, res, next) {
     try {
       const { url } = req.body;
       if (!url) return res.status(400).json({ error: 'URL fehlt' });
-      const links = await scraperService.discoverLinks(url);
-      res.json({ links });
+      res.json({ links: await scraperService.discoverLinks(url) });
     } catch (e) { res.status(500).json({ error: e.message }); }
   },
   async startScraping(req, res, next) {
@@ -271,6 +285,7 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
+  // ── Sellauth ──────────────────────────────────────────────────────────────
   async testSellauthConnection(req, res, next) {
     try {
       const { apiKey, shopId } = req.body;
@@ -287,11 +302,11 @@ const adminController = {
         shopId  = shopId  || s?.sellauth_shop_id  || '';
         shopUrl = shopUrl || s?.sellauth_shop_url || '';
       }
-      if (!apiKey)  return res.status(400).json({ error: 'Kein Sellauth API Key. Bitte unter Settings → Sellauth eintragen.' });
-      if (!shopId)  return res.status(400).json({ error: 'Keine Shop ID. Bitte unter Settings → Sellauth eintragen.' });
-      if (!shopUrl) return res.status(400).json({ error: 'Keine Shop URL. Bitte unter Settings → Sellauth eintragen.' });
+      if (!apiKey)  return res.status(400).json({ error: 'Kein API Key. Settings → Sellauth.' });
+      if (!shopId)  return res.status(400).json({ error: 'Keine Shop ID. Settings → Sellauth.' });
+      if (!shopUrl) return res.status(400).json({ error: 'Keine Shop URL. Settings → Sellauth.' });
       const results = await sellauthService.syncToKnowledgeBase(apiKey, shopId, shopUrl);
-      res.json({ success: true, message: `${results.saved} Einträge für ${results.total} Produkte importiert.`, details: results });
+      res.json({ success: true, message: `${results.saved} Einträge für ${results.total} Produkte.`, details: results });
     } catch (e) { res.status(500).json({ error: e.message }); }
   },
   async previewSellauthProducts(req, res, next) {
@@ -311,25 +326,10 @@ const adminController = {
     } catch (e) { res.status(500).json({ error: e.message }); }
   },
 
-  async setupWebhook(req, res, next) {
-    try {
-      const { appUrl } = req.body;
-      if (!appUrl) return res.status(400).json({ error: 'appUrl fehlt' });
-      const result = await telegramService.setWebhook(appUrl);
-      res.json({ success: result.ok, description: result.description });
-    } catch (e) { next(e); }
-  },
-  async getWebhookInfo(req, res, next) {
-    try {
-      const info = await telegramService.getWebhookInfo();
-      res.json(info.result || info);
-    } catch (e) { next(e); }
-  },
   async savePushSubscription(req, res, next) {
     try {
       const { subscription } = req.body;
-      const { error } = await supabase.from('admin_subscriptions').upsert([{ subscription_data: subscription }], { onConflict: 'subscription_data' });
-      if (error) throw error;
+      await supabase.from('admin_subscriptions').upsert([{ subscription_data: subscription }], { onConflict: 'subscription_data' });
       res.json({ success: true });
     } catch (e) { next(e); }
   }

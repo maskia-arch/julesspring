@@ -288,13 +288,22 @@
                     <h3 class="card-title">✈️ Telegram Webhook</h3>
                     <div class="form-group">
                         <label>App-URL (Render.com)</label>
-                        <input type="text" id="webhook-app-url" placeholder="https://dein-bot.onrender.com">
+                        <input type="text" id="webhook-app-url" placeholder="https://dein-bot.onrender.com" autocomplete="off">
+                        <p class="hint">Wird gespeichert und beim Serverstart automatisch neu gesetzt.</p>
                     </div>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                        <button onclick="setTelegramWebhook()" class="btn btn-primary">✅ Setzen</button>
-                        <button onclick="checkWebhookStatus()" class="btn btn-secondary">📊 Status</button>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                        <button onclick="setTelegramWebhook()" class="btn btn-success">✅ Setzen &amp; Speichern</button>
+                        <button onclick="checkWebhookStatus()" class="btn btn-secondary">📊 Status prüfen</button>
                     </div>
-                    <div id="webhook-result" style="margin-top:10px;font-size:0.85rem;"></div>
+                    <div id="webhook-result" style="font-size:0.85rem;line-height:1.5;"></div>
+                    <div style="margin-top:14px;padding:12px;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;">
+                        <p style="font-size:0.8rem;color:#60a5fa;font-weight:600;margin-bottom:6px;">💡 Render.com Setup</p>
+                        <p style="font-size:0.78rem;color:#94a3b8;line-height:1.5;">
+                            Setze <code style="background:#1e2a3a;padding:1px 5px;border-radius:3px;">APP_URL</code> in Render.com → Environment Variables auf deine URL.<br>
+                            Dann wird der Webhook bei jedem Serverstart automatisch neu registriert.<br>
+                            Das 502-Problem tritt nur beim ersten Cold-Start auf — danach läuft der Bot stabil.
+                        </p>
+                    </div>
                 </div>
             </div>
         </section>
@@ -355,26 +364,7 @@ async function handleLogin() {
 
 function handleLogout() { localStorage.removeItem('admin_token'); window.location.reload(); }
 
-async function setTelegramWebhook() {
-    var appUrl = document.getElementById('webhook-app-url').value.trim();
-    if (!appUrl) return alert('App-URL eingeben');
-    var res = document.getElementById('webhook-result');
-    res.textContent = 'Setze…';
-    try {
-        var d = await api.request('/telegram/webhook', 'POST', { appUrl: appUrl });
-        res.innerHTML = d.success ? '<span style="color:#22c55e;">✅ Webhook gesetzt!</span>' : '<span style="color:#ef4444;">❌ ' + (d.description||'Fehler') + '</span>';
-    } catch(e) { res.innerHTML = '<span style="color:#ef4444;">❌ ' + e.message + '</span>'; }
-}
-
-async function checkWebhookStatus() {
-    var res = document.getElementById('webhook-result');
-    res.textContent = 'Prüfe…';
-    try {
-        var d = await api.request('/telegram/webhook');
-        res.innerHTML = d.url ? '<span style="color:#22c55e;">✅ ' + d.url + '</span>' : '<span style="color:#f59e0b;">⚠️ Nicht gesetzt</span>';
-        if (d.last_error_message) res.innerHTML += '<br><span style="color:#ef4444;">' + d.last_error_message + '</span>';
-    } catch(e) { res.innerHTML = '<span style="color:#ef4444;">❌ ' + e.message + '</span>'; }
-}
+// setTelegramWebhook and checkWebhookStatus defined in dashboard.js
 
 if (localStorage.getItem('admin_token')) {
     document.getElementById('login-overlay').style.display = 'none';
