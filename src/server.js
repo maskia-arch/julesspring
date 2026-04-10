@@ -62,10 +62,11 @@ async function autoRegisterWebhook() {
     const result = await telegramService.setWebhook(appUrl);
     if (result.ok) {
       logger.info(`[Webhook] ✅ Auto-registriert: ${appUrl}/api/webhooks/telegram`);
-      // Persistent in DB speichern
-      await supabase.from('settings')
-        .upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() })
-        .catch(() => {});
+      // Persistent in DB speichern (kein .catch() — Supabase v2 unterstützt das nicht)
+      try {
+        await supabase.from('settings')
+          .upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() });
+      } catch (_) {}
     } else {
       logger.warn(`[Webhook] Auto-Registrierung fehlgeschlagen: ${result.description}`);
     }
@@ -89,7 +90,13 @@ function startKeepAlive() {
       const req    = client.get(url.href, { timeout: 8000 }, (res) => {
         logger.info(`[KeepAlive] ${res.statusCode}`);
       });
-      req.on('error', (e) => logger.warn(`[KeepAlive] ${e.message}`));
+      req.on('error', (e) => {
+        // ETIMEDOUT und ECONNRESET sind bei Render normal – nicht loggen
+        if (!['ETIMEDOUT','ECONNRESET','ENOTFOUND'].includes(e.code)) {
+          logger.warn(`[KeepAlive] ${e.message}`);
+        }
+      });
+      req.setTimeout(8000, () => { req.destroy(); });
       req.end();
     } catch (e) {
       logger.warn(`[KeepAlive] ${e.message}`);
