@@ -195,6 +195,16 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
+  // Lernaufgabe ablehnen (löschen) ohne in die Wissensdatenbank aufzunehmen
+  async deleteLearning(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { error } = await supabase.from('learning_queue').delete().eq('id', id);
+      if (error) throw error;
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
   // ── Knowledge Categories ──────────────────────────────────────────────────
   async getKnowledgeCategories(req, res, next) {
     try {

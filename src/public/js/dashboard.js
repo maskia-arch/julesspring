@@ -257,11 +257,18 @@ async function loadLearningQueue() {
             return;
         }
         el.innerHTML = queue.map(function(item) {
-            return '<div class="card">' +
-                '<p style="font-size:0.75rem;color:#888;margin-bottom:4px;">Kundenfrage:</p>' +
-                '<p style="font-weight:700;margin-bottom:10px;">"' + esc(item.unanswered_question) + '"</p>' +
-                '<textarea id="learn-' + item.id + '" rows="3" placeholder="Deine Antwort → wird in Wissensdatenbank gespeichert…" style="width:100%;margin-bottom:8px;"></textarea>' +
-                '<button onclick="resolveLearning(\'' + item.id + '\')" class="btn btn-success" style="width:100%;">✅ Wissen speichern & KI trainieren</button>' +
+            var date = new Date(item.created_at).toLocaleString('de-DE', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+        return '<div class="card">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">' +
+                    '<p style="font-size:0.75rem;color:#888;margin:0;">Kundenfrage:</p>' +
+                    '<span style="font-size:0.7rem;color:#555;">' + date + '</span>' +
+                '</div>' +
+                '<p style="font-weight:700;margin-bottom:10px;line-height:1.4;">"' + esc(item.unanswered_question) + '"</p>' +
+                '<textarea id="learn-' + item.id + '" rows="3" placeholder="Antwort eingeben → wird in Wissensdatenbank gespeichert…" style="width:100%;margin-bottom:8px;"></textarea>' +
+                '<div style="display:flex;gap:8px;">' +
+                    '<button onclick="resolveLearning(\'' + item.id + '\')" class="btn btn-success" style="flex:1;">✅ Wissen speichern</button>' +
+                    '<button onclick="rejectLearning(\'' + item.id + '\')" class="btn btn-danger" style="padding:11px 14px;" title="Ablehnen — Wissenslücke bleibt bestehen">✕</button>' +
+                '</div>' +
             '</div>';
         }).join('');
     } catch(e) {
@@ -517,7 +524,6 @@ async function loadSettings() {
         sv('sellauth-api-key',    s.sellauth_api_key);
         sv('sellauth-shop-id',    s.sellauth_shop_id);
         sv('sellauth-shop-url',   s.sellauth_shop_url);
-        sv('webhook-app-url',     s.webhook_url);
 
         // Modell-Einstellungen
         var model = document.getElementById('ai-model');
@@ -549,7 +555,6 @@ async function saveSettings() {
         sellauth_api_key:    gv('sellauth-api-key'),
         sellauth_shop_id:    gv('sellauth-shop-id'),
         sellauth_shop_url:   gv('sellauth-shop-url'),
-        webhook_url:         gv('webhook-app-url'),
         ai_model:            gv('ai-model'),
         ai_max_tokens:       parseInt(gv('ai-max-tokens'))    || 1024,
         ai_temperature:      parseFloat(gv('ai-temperature')) || 0.5,
@@ -646,47 +651,4 @@ function showToast(msg) {
     t.style.opacity    = '1';
     clearTimeout(t._t);
     t._t = setTimeout(function() { t.style.opacity = '0'; }, 3500);
-}
-
-// ── Telegram Webhook (v1.1.5 - persistent) ───────────────────────────────────
-async function setTelegramWebhook() {
-    var appUrl = (document.getElementById('webhook-app-url')?.value||'').trim();
-    if (!appUrl) return alert('Bitte App-URL eingeben (z.B. https://dein-bot.onrender.com)');
-    var resEl = document.getElementById('webhook-result');
-    resEl.innerHTML = '<span style="color:#888;">⏳ Webhook wird gesetzt…</span>';
-    try {
-        var d = await api.request('/telegram/webhook', 'POST', { appUrl: appUrl });
-        if (d && d.success) {
-            resEl.innerHTML = '<span style="color:#22c55e;">✅ Webhook gesetzt und gespeichert!</span>';
-            showToast('✅ Webhook aktiv!');
-            // Reload settings so the saved URL shows on next load
-            loadSettings();
-        } else {
-            var desc = (d && d.description) ? d.description : 'Unbekannter Fehler';
-            resEl.innerHTML = '<span style="color:#ef4444;">❌ ' + esc(desc) + '</span>';
-        }
-    } catch(e) {
-        resEl.innerHTML = '<span style="color:#ef4444;">❌ ' + esc(e.message) + '</span>';
-    }
-}
-
-async function checkWebhookStatus() {
-    var resEl = document.getElementById('webhook-result');
-    resEl.innerHTML = '<span style="color:#888;">⏳ Prüfe…</span>';
-    try {
-        var d = await api.request('/telegram/webhook');
-        if (d && d.url) {
-            resEl.innerHTML = '<span style="color:#22c55e;">✅ Aktiv: ' + esc(d.url) + '</span>';
-            if (d.last_error_message) {
-                resEl.innerHTML += '<br><span style="color:#f59e0b;">⚠️ Letzter Fehler: ' + esc(d.last_error_message) + '</span>';
-                if (d.last_error_message.includes('502')) {
-                    resEl.innerHTML += '<br><span style="color:#94a3b8;font-size:0.8rem;">💡 502 = Server war kurz offline (Render Cold-Start). Nach dem nächsten Deploy automatisch behoben.</span>';
-                }
-            }
-        } else {
-            resEl.innerHTML = '<span style="color:#f59e0b;">⚠️ Kein aktiver Webhook gesetzt.</span>';
-        }
-    } catch(e) {
-        resEl.innerHTML = '<span style="color:#ef4444;">❌ ' + esc(e.message) + '</span>';
-    }
 }

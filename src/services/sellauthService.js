@@ -62,14 +62,17 @@ const sellauthService = {
   // Format für Variante: Link führt immer zur Produktseite
   formatVariantKnowledge(product, variant, productUrl, categoryName) {
     const price = variant.price ? `${variant.price} ${product.currency || 'EUR'}` : null;
-    const stock = variant.stock !== null ? variant.stock : null;
-    const inStock = stock === null || stock > 0;
+    // Sellauth: stock = null oder -1 → unbegrenzt vorrätig, 0 → ausverkauft
+    const stock = variant.stock;
+    const isUnlimited = stock === null || stock === -1;
+    const inStock = isUnlimited || stock > 0;
+    const stockDisplay = isUnlimited ? 'Unbegrenzt vorrätig' : stock > 0 ? `${stock} auf Lager` : 'Ausverkauft';
 
     const lines = [
       `Produkt: ${product.name}`,
       `Option/Variante: ${variant.name}`,
       price ? `Preis: ${price}` : '',
-      inStock ? 'Status: Verfügbar' : 'Status: Ausverkauft',
+      `Status: ${stockDisplay}`,
       `Kauflink: ${productUrl}`,
       categoryName ? `Kategorie: ${categoryName}` : '',
     ];
@@ -109,8 +112,8 @@ const sellauthService = {
   formatOverviewKnowledge(product, productUrl, categoryName) {
     const variantLines = (product.variants || []).map(v => {
       const price = v.price ? `${v.price} ${product.currency || 'EUR'}` : '?';
-      const stock = v.stock !== null && v.stock <= 0 ? ' (ausverkauft)' : '';
-      return `  • ${v.name}: ${price}${stock}`;
+      const stockNote = (v.stock === 0) ? ' (ausverkauft)' : (v.stock === null || v.stock === -1) ? ' (unbegrenzt)' : '';
+      return `  • ${v.name}: ${price}${stockNote}`;
     }).join('\n');
 
     return [

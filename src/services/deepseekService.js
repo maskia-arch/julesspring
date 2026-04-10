@@ -108,9 +108,14 @@ PFLICHTREGELN FÜR DIE NUTZUNG DES WISSENS:
 
     const fallbackInstruction = `
 
-WENN DU DIE ANTWORT NICHT KENNST:
-Antworte mit: "[UNKLAR] Entschuldigung, das muss ich intern klären."
-NIEMALS raten oder Informationen erfinden.`;
+PFLICHTREGELN FÜR UNSICHERHEIT:
+1. Wenn du eine Frage anhand des obigen Kontexts NICHT vollständig beantworten kannst (z.B. unbekannte Details wie Geschwindigkeit, Drosselung, Gültigkeit, Kompatibilität):
+   → Antworte ZWINGEND mit dem Präfix: [UNKLAR]
+   → Beispiel: "[UNKLAR] Diese spezifische Information liegt mir aktuell nicht vor."
+2. NIEMALS raten, schätzen oder Informationen erfinden.
+3. NIEMALS "Ausverkauft" oder negative Verfügbarkeit kommunizieren wenn du dir nicht 100% sicher bist.
+4. Wenn Bestand = -1 oder nicht angegeben: Produkt ist verfügbar.
+5. Jede [UNKLAR]-Antwort löst automatisch eine Rückfrage an den Admin aus.`;
 
     return basePrompt + contextSection + negSection + fallbackInstruction;
   },

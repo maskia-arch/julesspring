@@ -23,6 +23,7 @@ router.post('/manual-message',          ctrl.sendManualMessage);
 // Learning Center
 router.get('/learning',          ctrl.getLearningQueue);
 router.post('/learning/resolve', ctrl.resolveLearning);
+router.delete('/learning/:id',   ctrl.deleteLearning);   // Ablehnen / Löschen
 
 // ─── Wissensdatenbank ────────────────────────────────────────────────────────
 // Kategorien
