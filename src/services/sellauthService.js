@@ -54,9 +54,9 @@ const sellauthService = {
     } catch { return []; }
   },
 
-  // FIX: Nur product.path – kein ?variant=ID
+  // FIX: /product/ Prefix — Sellauth URL-Format: {shopUrl}/product/{path}
   buildProductUrl(shopUrl, productPath) {
-    return `${shopUrl.replace(/\/$/, '')}/${productPath}`;
+    return `${shopUrl.replace(/\/$/, '')}/product/${productPath}`;
   },
 
   // Format für Variante: Link führt immer zur Produktseite
