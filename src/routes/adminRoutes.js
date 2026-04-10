@@ -42,7 +42,8 @@ router.post('/scrape',              ctrl.startScraping);
 
 // ─── Sellauth Integration ────────────────────────────────────────────────────
 router.post('/sellauth/test',     ctrl.testSellauthConnection);
-router.post('/sellauth/sync',     ctrl.syncSellauth);
+router.post('/sellauth/sync',         ctrl.syncSellauth);
+router.get('/sellauth/sync-status/:jobId', ctrl.getSyncStatus);
 router.get('/sellauth/preview',   ctrl.previewSellauthProducts);
 
 // Legacy-Route (Kompatibilität)

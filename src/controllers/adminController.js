@@ -1,7 +1,8 @@
 const supabase        = require('../config/supabase');
 const deepseekService = require('../services/deepseekService');
 const scraperService  = require('../services/scraperService');
-const sellauthService = require('../services/sellauthService');
+const sellauthService  = require('../services/sellauthService');
+const syncJobManager   = require('../services/syncJobManager');
 const telegramService = require('../services/telegramService');
 const { getVersion }  = require('../utils/versionLoader');
 const jwt = require('jsonwebtoken');
@@ -304,6 +305,7 @@ const adminController = {
       res.json(await sellauthService.testConnection(apiKey, shopId));
     } catch (e) { next(e); }
   },
+  // Sync startet als Hintergrund-Job, gibt sofort jobId zurück
   async syncSellauth(req, res, next) {
     try {
       let { apiKey, shopId, shopUrl } = req.body || {};
@@ -316,9 +318,30 @@ const adminController = {
       if (!apiKey)  return res.status(400).json({ error: 'Kein API Key. Settings → Sellauth.' });
       if (!shopId)  return res.status(400).json({ error: 'Keine Shop ID. Settings → Sellauth.' });
       if (!shopUrl) return res.status(400).json({ error: 'Keine Shop URL. Settings → Sellauth.' });
-      const results = await sellauthService.syncToKnowledgeBase(apiKey, shopId, shopUrl);
-      res.json({ success: true, message: `${results.saved} Einträge für ${results.total} Produkte.`, details: results });
+
+      // Job anlegen + sofort antworten
+      const jobId = syncJobManager.createJob();
+      res.json({ success: true, jobId, message: 'Sync gestartet' });
+
+      // Im Hintergrund weiterlaufen – unabhängig vom Browser
+      setImmediate(async () => {
+        try {
+          const results = await sellauthService.syncToKnowledgeBase(apiKey, shopId, shopUrl, jobId);
+          syncJobManager.finishJob(jobId, results);
+        } catch (err) {
+          syncJobManager.failJob(jobId, err.message);
+        }
+      });
     } catch (e) { res.status(500).json({ error: e.message }); }
+  },
+
+  // Sync-Status abfragen
+  async getSyncStatus(req, res, next) {
+    try {
+      const job = syncJobManager.getJob(req.params.jobId);
+      if (!job) return res.status(404).json({ error: 'Job nicht gefunden oder abgelaufen' });
+      res.json(job);
+    } catch (e) { next(e); }
   },
   async previewSellauthProducts(req, res, next) {
     try {

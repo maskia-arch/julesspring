@@ -660,6 +660,94 @@ async function rejectLearning(id) {
     } catch(e) { alert('Fehler beim Löschen: ' + e.message); }
 }
 
+// ── Sellauth Sync mit Hintergrund-Job ────────────────────────────────────────
+var _syncJobId      = null;
+var _syncPollTimer  = null;
+
+async function syncSellauth() {
+    var btn = document.getElementById('btn-sync-sellauth');
+    btn.disabled = true;
+
+    // Fortschrittsanzeige einblenden
+    _showSyncProgress(0, 'Starte Sync...');
+
+    try {
+        var r = await api.request('/sellauth/sync', 'POST');
+        if (!r || !r.jobId) {
+            _hideSyncProgress();
+            btn.disabled = false;
+            alert('Fehler beim Starten des Syncs');
+            return;
+        }
+
+        _syncJobId = r.jobId;
+        showToast('⏳ Sync läuft im Hintergrund...');
+        // Polling starten — läuft auch wenn Tab gewechselt wird
+        _startSyncPolling();
+    } catch(e) {
+        _hideSyncProgress();
+        btn.disabled = false;
+        alert('Fehler: ' + e.message);
+    }
+}
+
+function _startSyncPolling() {
+    if (_syncPollTimer) clearInterval(_syncPollTimer);
+    _syncPollTimer = setInterval(async function() {
+        if (!_syncJobId) { clearInterval(_syncPollTimer); return; }
+        try {
+            var job = await api.request('/sellauth/sync-status/' + _syncJobId);
+            if (!job) return; // Netzwerkfehler - weiter versuchen
+
+            _showSyncProgress(job.progress, job.step);
+
+            if (job.status === 'done') {
+                clearInterval(_syncPollTimer);
+                _syncJobId = null;
+                _hideSyncProgress();
+                var r = job.result || {};
+                var msg = (r.saved || 0) + ' Produkte';
+                if (r.blogPosts)   msg += ', ' + r.blogPosts + ' Blog-Posts';
+                if (r.categories)  msg += ', ' + r.categories + ' Kategorien';
+                showToast('✅ Sync fertig: ' + msg + ' importiert');
+                updateStats();
+                document.getElementById('btn-sync-sellauth').disabled = false;
+            } else if (job.status === 'error') {
+                clearInterval(_syncPollTimer);
+                _syncJobId = null;
+                _hideSyncProgress();
+                alert('Sync Fehler: ' + job.step);
+                document.getElementById('btn-sync-sellauth').disabled = false;
+            }
+        } catch(e) { /* Netzwerkfehler ignorieren */ }
+    }, 2000); // Alle 2 Sekunden pollen
+}
+
+function _showSyncProgress(pct, step) {
+    var box = document.getElementById('_sync-progress');
+    if (!box) {
+        box = document.createElement('div');
+        box.id = '_sync-progress';
+        box.style.cssText = 'position:fixed;bottom:70px;right:20px;background:#1a2a3a;border:1px solid #2563eb;border-radius:12px;padding:14px 18px;z-index:9998;min-width:280px;box-shadow:0 8px 24px rgba(0,0,0,0.5);';
+        box.innerHTML = '<div style="font-size:0.8rem;color:#93c5fd;font-weight:700;margin-bottom:8px;">🔄 Sellauth Sync läuft</div>' +
+            '<div style="background:#0d1929;border-radius:6px;height:8px;overflow:hidden;margin-bottom:6px;">' +
+                '<div id="_sync-bar" style="height:100%;background:linear-gradient(90deg,#2563eb,#4ade80);border-radius:6px;transition:width 0.5s;width:0%;"></div>' +
+            '</div>' +
+            '<div id="_sync-step" style="font-size:0.75rem;color:#94a3b8;"></div>';
+        document.body.appendChild(box);
+    }
+    box.style.display = 'block';
+    var bar  = document.getElementById('_sync-bar');
+    var step_el = document.getElementById('_sync-step');
+    if (bar)     bar.style.width = (pct || 0) + '%';
+    if (step_el) step_el.textContent = step || '';
+}
+
+function _hideSyncProgress() {
+    var box = document.getElementById('_sync-progress');
+    if (box) box.style.display = 'none';
+}
+
 function showToast(msg) {
     var t = document.getElementById('_toast');
     if (!t) {
