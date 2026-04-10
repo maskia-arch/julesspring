@@ -23,6 +23,7 @@ function initDashboard() {
 async function updateStats() {
     try {
         var d = await api.getStats();
+        if (!d || !d.stats) return; // Server nicht erreichbar - still bleiben
         var sv = function(id, v) { var el = document.getElementById(id); if (el) el.textContent = v; };
         sv('s-chats',    d.stats.totalChats);
         sv('s-manual',   d.stats.activeManual);
@@ -43,10 +44,14 @@ async function loadChats() {
     var el = document.getElementById('chat-list');
     if (!el) return;
     try {
-        _allChats = await api.getChats() || [];
+        var chats = await api.getChats();
+        if (chats === null) return; // Netzwerkfehler - Liste nicht leeren
+        _allChats = chats || [];
         renderChatList(_allChats);
     } catch(e) {
-        el.innerHTML = '<p style="padding:1rem;color:#666;font-size:0.85rem;">Fehler beim Laden: ' + esc(e.message) + '</p>';
+        if (el && el.children.length === 0) {
+            el.innerHTML = '<p style="padding:1rem;color:#666;font-size:0.85rem;">Lade Chats...</p>';
+        }
     }
 }
 
@@ -192,6 +197,7 @@ async function refreshMessages() {
     if (!_currentChat) return;
     try {
         var data = await api.getChatMessages(_currentChat);
+        if (!data) return; // Server nicht erreichbar - Nachrichten nicht leeren
         var area = document.getElementById('msg-' + _currentChat);
         if (!area) return;
         var atBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
@@ -251,7 +257,9 @@ async function loadLearningQueue() {
     var el = document.getElementById('learning-list');
     if (!el) return;
     try {
-        var queue = await api.getLearningQueue() || [];
+        var queue = await api.getLearningQueue();
+        if (queue === null) return; // Netzwerkfehler - nicht leeren
+        queue = queue || [];
         if (!queue.length) {
             el.innerHTML = '<p style="color:#555;font-size:0.875rem;">Keine offenen Fragen. 🎉</p>';
             return;
@@ -506,7 +514,10 @@ async function syncSellauth() {
     btn.textContent = '⏳ Synchronisiere…'; btn.disabled = true;
     try {
         var r = await api.request('/sellauth/sync', 'POST');
-        showToast('✅ ' + r.message);
+        if (!r) { showToast('❌ Kein Ergebnis - Server prüfen'); return; }
+        var msg = r.message || '';
+        if (r.details && r.details.deleted) msg += ' (' + r.details.deleted + ' alte Einträge bereinigt)';
+        showToast('✅ ' + msg);
         updateStats();
     } catch(e) { alert('Fehler: ' + e.message); }
     finally { btn.textContent = '🔄 Jetzt synchronisieren'; btn.disabled = false; }
@@ -516,7 +527,8 @@ async function syncSellauth() {
 async function loadSettings() {
     try {
         var s  = await api.getSettings();
-        var sv = function(id, val) { var el = document.getElementById(id); if (el) el.value = val != null ? val : ''; };
+        if (!s) return; // Kein Überschreiben wenn Server nicht antwortet
+        var sv = function(id, val) { var el = document.getElementById(id); if (el && (val != null)) el.value = val; };
         sv('system-prompt',       s.system_prompt);
         sv('negative-prompt',     s.negative_prompt);
         sv('welcome-message',     s.welcome_message);
@@ -572,7 +584,9 @@ async function loadBlacklist() {
     var tbody = document.getElementById('blacklist-body');
     if (!tbody) return;
     try {
-        var list = await api.getBlacklist() || [];
+        var list = await api.getBlacklist();
+        if (list === null) return;
+        list = list || [];
         if (!list.length) {
             tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:1rem;color:#555;">Blacklist ist leer</td></tr>';
             return;

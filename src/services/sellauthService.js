@@ -1,9 +1,10 @@
 /**
- * sellauthService.js v1.1.4
+ * sellauthService.js v1.1.9
  *
- * Fix: Produktlinks verwenden nur {shopUrl}/{product.path}
- * Sellauth hat KEIN ?variant=ID URL-Parameter.
- * Varianten werden auf der Produktseite ausgewählt.
+ * Fixes:
+ * - Breite Bereinigung: löscht ALLE alten Sellauth-Einträge unabhängig vom source-Namen
+ * - URL: {shopUrl}/product/{path} ✅
+ * - Stock: -1 und null = unbegrenzt vorrätig ✅
  */
 
 const axios   = require('axios');
@@ -17,13 +18,8 @@ const sellauthService = {
 
   _client(apiKey) {
     return axios.create({
-      baseURL: SELLAUTH_API,
-      timeout: 20000,
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'Accept': 'application/json'
-      }
+      baseURL: SELLAUTH_API, timeout: 20000,
+      headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' }
     });
   },
 
@@ -54,48 +50,58 @@ const sellauthService = {
     } catch { return []; }
   },
 
-  // FIX: /product/ Prefix — Sellauth URL-Format: {shopUrl}/product/{path}
+  // ── URL: {shopUrl}/product/{path} ─────────────────────────────────────────
   buildProductUrl(shopUrl, productPath) {
     return `${shopUrl.replace(/\/$/, '')}/product/${productPath}`;
   },
 
-  // Format für Variante: Link führt immer zur Produktseite
+  // ── Stock Logik: -1 und null = unbegrenzt ─────────────────────────────────
+  _stockInfo(stockValue) {
+    if (stockValue === null || stockValue === -1) {
+      return { inStock: true, display: 'Unbegrenzt vorrätig' };
+    }
+    if (stockValue > 0) {
+      return { inStock: true, display: `${stockValue} auf Lager` };
+    }
+    return { inStock: false, display: 'Ausverkauft' };
+  },
+
+  // ── Format: eine Variante ─────────────────────────────────────────────────
   formatVariantKnowledge(product, variant, productUrl, categoryName) {
     const price = variant.price ? `${variant.price} ${product.currency || 'EUR'}` : null;
-    // Sellauth: stock = null oder -1 → unbegrenzt vorrätig, 0 → ausverkauft
-    const stock = variant.stock;
-    const isUnlimited = stock === null || stock === -1;
-    const inStock = isUnlimited || stock > 0;
-    const stockDisplay = isUnlimited ? 'Unbegrenzt vorrätig' : stock > 0 ? `${stock} auf Lager` : 'Ausverkauft';
+    const { inStock, display: stockDisplay } = this._stockInfo(variant.stock);
 
     const lines = [
       `Produkt: ${product.name}`,
       `Option/Variante: ${variant.name}`,
       price ? `Preis: ${price}` : '',
-      `Status: ${stockDisplay}`,
+      `Verfügbarkeit: ${stockDisplay}`,
       `Kauflink: ${productUrl}`,
       categoryName ? `Kategorie: ${categoryName}` : '',
     ];
 
-    // Produktbeschreibung (einmal, nicht pro Variante redundant)
     if (product.description) {
       const clean = product.description.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
       if (clean.length > 10) lines.push(`Info: ${clean.substring(0, 500)}`);
     }
 
     lines.push('');
-    lines.push(`Wenn ein Kunde "${variant.name}" oder "${product.name}" sucht: Link → ${productUrl}`);
-    if (price) lines.push(`Empfehlung: "${variant.name}" für ${price} – Kauflink: ${productUrl}`);
+    lines.push(`Empfehlung für Kunden: "${variant.name}" von "${product.name}"`);
+    if (price) lines.push(`Preis: ${price}`);
+    lines.push(`→ Kauflink: ${productUrl}`);
 
     return lines.filter(l => l !== undefined && l !== null && l !== '').join('\n');
   },
 
-  // Format für Produkte ohne Varianten
+  // ── Format: Einzelprodukt ─────────────────────────────────────────────────
   formatSingleProductKnowledge(product, productUrl, categoryName) {
     const price = product.price ? `${product.price} ${product.currency || 'EUR'}` : null;
+    const { display: stockDisplay } = this._stockInfo(product.stock_count);
+
     const lines = [
       `Produkt: ${product.name}`,
       price ? `Preis: ${price}` : '',
+      `Verfügbarkeit: ${stockDisplay}`,
       `Kauflink: ${productUrl}`,
       categoryName ? `Kategorie: ${categoryName}` : '',
     ];
@@ -104,32 +110,33 @@ const sellauthService = {
       if (clean.length > 10) lines.push(`Info: ${clean.substring(0, 500)}`);
     }
     lines.push('');
-    lines.push(`Wenn ein Kunde dieses Produkt sucht: Link → ${productUrl}`);
+    lines.push(`→ Kauflink: ${productUrl}`);
     return lines.filter(Boolean).join('\n');
   },
 
-  // Übersichts-Eintrag für Variant-Produkt (alle Optionen auf einen Blick)
+  // ── Format: Übersicht aller Varianten ────────────────────────────────────
   formatOverviewKnowledge(product, productUrl, categoryName) {
     const variantLines = (product.variants || []).map(v => {
       const price = v.price ? `${v.price} ${product.currency || 'EUR'}` : '?';
-      const stockNote = (v.stock === 0) ? ' (ausverkauft)' : (v.stock === null || v.stock === -1) ? ' (unbegrenzt)' : '';
-      return `  • ${v.name}: ${price}${stockNote}`;
+      const { display: stockNote } = this._stockInfo(v.stock);
+      return `  • ${v.name}: ${price} (${stockNote})`;
     }).join('\n');
 
     return [
       `Produkt-Übersicht: ${product.name}`,
       categoryName ? `Kategorie: ${categoryName}` : '',
-      `Kauflink (alle Optionen auf dieser Seite): ${productUrl}`,
+      `Kauflink (Variante auf der Seite wählen): ${productUrl}`,
       '',
-      `Verfügbare Optionen:`,
+      'Verfügbare Optionen:',
       variantLines,
       '',
-      `Kunden können auf der Seite ${productUrl} die gewünschte Option auswählen und direkt kaufen.`
+      `Kunden können auf ${productUrl} die gewünschte Option auswählen und kaufen.`
     ].filter(Boolean).join('\n');
   },
 
+  // ── Hauptfunktion: Sync ──────────────────────────────────────────────────
   async syncToKnowledgeBase(apiKey, shopId, shopUrl) {
-    const results = { total: 0, saved: 0, skipped: 0, errors: [] };
+    const results = { total: 0, saved: 0, skipped: 0, errors: [], deleted: 0 };
 
     const [products, categories] = await Promise.all([
       this.getAllProducts(apiKey, shopId),
@@ -137,18 +144,31 @@ const sellauthService = {
     ]);
 
     results.total = products.length;
-    logger.info(`[Sellauth] ${products.length} Produkte geladen`);
+    logger.info(`[Sellauth] ${products.length} Produkte von API geladen`);
 
-    // Sellauth-Import Kategorie-ID holen
+    // ── BEREINIGUNG: ALLE alten Sellauth-Einträge löschen ───────────────────
+    // Löscht alle Einträge die jemals von Sellauth importiert wurden,
+    // unabhängig vom exakten source-Namen (alte Versionen nutzten verschiedene Namen)
+    const cleanupSources = ['sellauth_sync', 'sellauth', 'sellauth_import'];
+    for (const src of cleanupSources) {
+      const { count, error } = await supabase.from('knowledge_base')
+        .delete()
+        .eq('source', src)
+        .select('*', { count: 'exact', head: true });
+      if (!error && count) {
+        results.deleted += count;
+        logger.info(`[Sellauth] Bereinigt: ${count} alte Einträge (source="${src}")`);
+      }
+    }
+
+    // Kategorie-ID für Sellauth-Import
     let categoryId = null;
     try {
       const { data: kbCat } = await supabase.from('knowledge_categories').select('id').eq('name', 'Sellauth Import').single();
       categoryId = kbCat?.id || null;
     } catch {}
 
-    // Alte Einträge löschen
-    await supabase.from('knowledge_base').delete().eq('source', 'sellauth_sync');
-
+    // ── Produkte verarbeiten ───────────────────────────────────────────────
     for (const product of products) {
       if (product.visibility === 'hidden') { results.skipped++; continue; }
 
@@ -156,42 +176,42 @@ const sellauthService = {
       const catName    = cat?.name || null;
       const productUrl = this.buildProductUrl(shopUrl, product.path);
 
+      logger.info(`[Sellauth] Verarbeite: ${product.name} → ${productUrl}`);
+
       try {
         if (product.type === 'variant' && product.variants?.length) {
-
-          // 1. Pro Variante ein Eintrag
+          // Je Variante ein eigener Eintrag
           for (const variant of product.variants) {
             const content   = this.formatVariantKnowledge(product, variant, productUrl, catName);
             const embedding = await deepseekService.generateEmbedding(content);
-            const title     = `${product.name} – ${variant.name}`;
-
             await supabase.from('knowledge_base').insert([{
-              content, embedding, title,
+              content, embedding,
+              title:       `${product.name} – ${variant.name}`,
               source:      'sellauth_sync',
               category_id: categoryId,
               metadata: {
-                product_id:   product.id,
-                variant_id:   variant.id,
-                product_url:  productUrl,
-                price:        variant.price,
-                currency:     product.currency,
-                stock:        variant.stock,
-                type:         'variant'
+                product_id:  product.id,
+                variant_id:  variant.id,
+                product_url: productUrl,
+                price:       variant.price,
+                currency:    product.currency,
+                stock:       variant.stock,
+                type:        'variant'
               }
             }]);
             results.saved++;
             await new Promise(r => setTimeout(r, 200));
           }
 
-          // 2. Übersichts-Eintrag mit allen Varianten
+          // Übersichts-Eintrag
           const overview  = this.formatOverviewKnowledge(product, productUrl, catName);
           const embOver   = await deepseekService.generateEmbedding(overview);
           await supabase.from('knowledge_base').insert([{
             content: overview, embedding: embOver,
-            title:   `${product.name} (alle Optionen)`,
-            source:  'sellauth_sync',
+            title:       `${product.name} (alle Optionen)`,
+            source:      'sellauth_sync',
             category_id: categoryId,
-            metadata: { product_id: product.id, product_url: productUrl, type: 'overview' }
+            metadata:    { product_id: product.id, product_url: productUrl, type: 'overview' }
           }]);
           await new Promise(r => setTimeout(r, 200));
 
@@ -203,13 +223,7 @@ const sellauthService = {
             title:       product.name,
             source:      'sellauth_sync',
             category_id: categoryId,
-            metadata: {
-              product_id:  product.id,
-              product_url: productUrl,
-              price:       product.price,
-              currency:    product.currency,
-              type:        'single'
-            }
+            metadata:    { product_id: product.id, product_url: productUrl, price: product.price, currency: product.currency, type: 'single' }
           }]);
           results.saved++;
           await new Promise(r => setTimeout(r, 200));
@@ -222,7 +236,7 @@ const sellauthService = {
       }
     }
 
-    logger.info(`[Sellauth] Sync: ${results.saved} Einträge für ${results.total} Produkte`);
+    logger.info(`[Sellauth] Sync abgeschlossen: ${results.saved} Einträge, ${results.deleted} alte gelöscht`);
     return results;
   },
 
