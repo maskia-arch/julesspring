@@ -23,55 +23,79 @@ const deepseekService = {
    */
   async generateResponse(userMessage, history = [], contextDocs = [], chatId = null, settings = {}) {
     const model       = settings.ai_model       || 'deepseek-chat';
-    const maxTokens   = parseInt(settings.ai_max_tokens)  || 1024;
+    const maxTokens   = Math.min(parseInt(settings.ai_max_tokens) || 1024, 2048); // Max 2048 für Zuverlässigkeit
     const temperature = parseFloat(settings.ai_temperature) || 0.5;
 
-    try {
-      const systemContent = this._buildSystemPrompt(settings, contextDocs);
+    const systemContent = this._buildSystemPrompt(settings, contextDocs);
 
-      const messages = [
-        { role: 'system',    content: systemContent },
-        ...(history || []).slice(-10), // max 10 History-Einträge
-        { role: 'user',      content: userMessage }
-      ];
+    const messages = [
+      { role: 'system', content: systemContent },
+      ...(history || []).slice(-6), // max 6 History-Einträge (weniger = schneller)
+      { role: 'user',   content: userMessage }
+    ];
 
-      const response = await axios.post(
-        `${deepseek.baseUrl}/v1/chat/completions`,
-        { model, messages, temperature, max_tokens: maxTokens },
-        {
-          headers: { 'Authorization': `Bearer ${deepseek.apiKey}`, 'Content-Type': 'application/json' },
-          timeout: 40000
+    // Gesamte Nachrichtengröße prüfen (grobe Schätzung: 4 Zeichen ≈ 1 Token)
+    const totalChars = messages.reduce((s, m) => s + (m.content || '').length, 0);
+    if (totalChars > 60000) {
+      // Zu groß → nur System-Prompt + letzte 2 History + User-Nachricht
+      logger.warn(`[DeepSeek] Prompt zu groß (${totalChars} Zeichen) → kürze`);
+      messages.splice(1, messages.length - 3); // nur erste und letzte 2 behalten
+    }
+
+    // Bis zu 2 Versuche (bei Timeout oder 503 einmal wiederholen)
+    let lastError;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response = await axios.post(
+          `${deepseek.baseUrl}/v1/chat/completions`,
+          { model, messages, temperature, max_tokens: maxTokens },
+          {
+            headers: { 'Authorization': `Bearer ${deepseek.apiKey}`, 'Content-Type': 'application/json' },
+            timeout: 55000 // 55s — Render Functions haben 60s Limit
+          }
+        );
+
+        const choice = response.data.choices[0].message.content;
+        const usage  = response.data.usage || {};
+
+        // Wissenslücke → Learning Queue
+        if (choice.includes('[UNKLAR]') && chatId) {
+          void (async () => {
+            try {
+              await supabase.from('learning_queue').insert([{
+                original_chat_id: chatId, unanswered_question: userMessage, status: 'pending'
+              }]);
+            } catch (_) {}
+          })();
+          return {
+            text: 'Ich bin bei dieser Frage nicht sicher genug. Ein Mitarbeiter wurde informiert und meldet sich. 🙏',
+            promptTokens: usage.prompt_tokens || 0, completionTokens: usage.completion_tokens || 0
+          };
         }
-      );
-
-      const choice = response.data.choices[0].message.content;
-      const usage  = response.data.usage || {};
-
-      // Wissenslücke erkannt → Learning Queue
-      if (choice.includes('[UNKLAR]') && chatId) {
-        await supabase.from('learning_queue').insert([{
-          original_chat_id:    chatId,
-          unanswered_question: userMessage,
-          status:              'pending'
-        }]).catch(() => {});
 
         return {
-          text: 'Ich bin bei dieser Frage nicht sicher genug. Ich habe soeben einen Mitarbeiter informiert, der sich so schnell wie möglich meldet. 🙏',
+          text: choice,
           promptTokens:     usage.prompt_tokens     || 0,
           completionTokens: usage.completion_tokens || 0
         };
-      }
 
-      return {
-        text:             choice,
-        promptTokens:     usage.prompt_tokens     || 0,
-        completionTokens: usage.completion_tokens || 0
-      };
-    } catch (error) {
-      const msg = error.response?.data?.error?.message || error.message;
-      logger.error(`[DeepSeek] generateResponse Error (${model}): ${msg}`);
-      throw new Error(`KI-Fehler: ${msg}`);
+      } catch (error) {
+        lastError = error;
+        const status = error.response?.status;
+        const msg    = error.response?.data?.error?.message || error.message;
+
+        if (attempt === 1 && (status === 503 || status === 429 || error.code === 'ECONNABORTED')) {
+          logger.warn(`[DeepSeek] Versuch ${attempt} fehlgeschlagen (${status || error.code}), retry in 3s...`);
+          await new Promise(r => setTimeout(r, 3000));
+          continue;
+        }
+
+        logger.error(`[DeepSeek] generateResponse Fehler (${model}, Versuch ${attempt}): ${msg}`);
+        throw new Error(`KI nicht erreichbar: ${msg}`);
+      }
     }
+
+    throw new Error(`KI nicht erreichbar nach 2 Versuchen: ${lastError?.message}`);
   },
 
   // ── System-Prompt aufbauen ──────────────────────────────────────────────

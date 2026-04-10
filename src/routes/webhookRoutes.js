@@ -2,37 +2,37 @@ const express = require('express');
 const router  = express.Router();
 
 // ── Telegram Webhook ──────────────────────────────────────────────────────────
-// REGEL: res.sendStatus(200) ist die allererste synchrone Operation.
-// Alles danach läuft in setImmediate() – kein Crash kann die 200 blockieren.
 router.post('/telegram', (req, res) => {
+  // 200 sofort — Telegram wartet max. 5 Sekunden
   res.sendStatus(200);
 
   setImmediate(async () => {
-    try {
-      const { message } = req.body;
-      if (!message) return;
+    const telegramService = require('../services/telegramService');
+    const supabase        = require('../config/supabase');
+    const messageProcessor = require('../services/messageProcessor');
+    const logger          = require('../utils/logger');
 
-      const chatId = message.chat?.id?.toString();
-      const text   = message.text?.trim();
-      const from   = message.from || {};
-      if (!chatId || !text) return;
+    const { message } = req.body;
+    if (!message) return;
 
-      const telegramService  = require('../services/telegramService');
-      const supabase         = require('../config/supabase');
-      const messageProcessor = require('../services/messageProcessor');
+    const chatId = message.chat?.id?.toString();
+    const text   = message.text?.trim();
+    const from   = message.from || {};
+    if (!chatId || !text) return;
 
-      if (text === '/start') {
-        // FIX: kein .catch() auf Supabase-Query
+    // /start → Willkommensnachricht
+    if (text === '/start') {
+      try {
         let welcome = 'Willkommen! 👋 Wie kann ich dir helfen?';
-        try {
-          const { data: settings } = await supabase
-            .from('settings').select('welcome_message').single();
-          if (settings?.welcome_message) welcome = settings.welcome_message;
-        } catch (_) {}
+        const { data: s } = await supabase.from('settings').select('welcome_message').single();
+        if (s?.welcome_message) welcome = s.welcome_message;
         await telegramService.sendMessage(chatId, welcome);
-        return;
-      }
+      } catch (_) {}
+      return;
+    }
 
+    // Normale Nachricht verarbeiten
+    try {
       await messageProcessor.handle({
         platform: 'telegram',
         chatId,
@@ -44,7 +44,16 @@ router.post('/telegram', (req, res) => {
         }
       });
     } catch (err) {
-      console.error('[Webhook/Telegram]', err.message);
+      // KRITISCH: Immer eine Antwort senden, egal was schiefläuft
+      logger.error(`[Webhook] messageProcessor Fehler für ${chatId}: ${err.message}`);
+      try {
+        await telegramService.sendMessage(
+          chatId,
+          'Entschuldigung, ich konnte deine Anfrage gerade nicht verarbeiten. Bitte versuche es in einem Moment erneut. 🙏'
+        );
+      } catch (sendErr) {
+        logger.error(`[Webhook] Fallback-Nachricht konnte nicht gesendet werden: ${sendErr.message}`);
+      }
     }
   });
 });
@@ -55,16 +64,11 @@ router.post('/sellauth', (req, res) => {
   setImmediate(async () => {
     try {
       const supabase = require('../config/supabase');
-      const event    = req.body;
       await supabase.from('integration_logs').insert([{
-        source:     'sellauth',
-        event_type: event.type || 'unknown',
-        payload:    event,
-        created_at: new Date()
+        source: 'sellauth', event_type: req.body?.type || 'unknown',
+        payload: req.body, created_at: new Date()
       }]);
-    } catch (err) {
-      console.error('[Webhook/Sellauth]', err.message);
-    }
+    } catch (_) {}
   });
 });
 

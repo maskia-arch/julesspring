@@ -57,8 +57,13 @@ const messageProcessor = {
 
     logger.info(`[MP] t=${Date.now()-t0}ms RAG:${context.length} hist:${history.length}`);
 
-    // 6. KI-Antwort
-    const aiResult = await deepseekService.generateResponse(text, history, context, chat.id, settings);
+    // 6. KI-Antwort – mit Gesamt-Timeout (60s)
+    const aiResult = await Promise.race([
+      deepseekService.generateResponse(text, history, context, chat.id, settings),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('KI-Antwort Timeout nach 60s')), 60000)
+      )
+    ]);
 
     // 7. Telegram sofort senden
     if (platform === 'telegram') {
