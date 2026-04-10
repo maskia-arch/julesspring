@@ -87,10 +87,10 @@ const messageProcessor = {
 
     this._updateChatPreview(chat.id, aiResult.text, 'assistant');
 
-    // 9. Learning Queue NUR bei explizitem [UNKLAR] in der KI-Antwort
-    //    NICHT bei leerem Kontext — der deckt auch Small Talk, Spam etc. ab
-    const unclear = aiResult.text.includes('[UNKLAR]');
-    if (unclear) {
+    // 9. Learning Queue bei leerem Kontext ODER [UNKLAR]
+    const noContext = context.length === 0;
+    const unclear   = aiResult.text.includes('[UNKLAR]');
+    if (noContext || unclear) {
       void (async () => {
         try {
           await supabase.from('learning_queue').insert([{
@@ -100,7 +100,7 @@ const messageProcessor = {
           }]);
         } catch (_) {}
       })();
-      logger.info(`[MP] Learning Queue: "${text.substring(0,50)}"`);
+      logger.info(`[MP] Learning Queue: "${text.substring(0,50)}" (noCtx=${noContext}, unklar=${unclear})`);
     }
 
     return aiResult.text;
@@ -108,7 +108,10 @@ const messageProcessor = {
 
   async _searchKnowledge(query, settings) {
     try {
-      const vector    = await embeddingService.createEmbedding(query);
+      const embResult = await embeddingService.createEmbedding(query);
+      const vector    = embResult.embedding || embResult; // supports both old and new format
+      const embTokens = embResult.tokens    || 0;
+      if (embTokens) this._lastEmbeddingTokens = (this._lastEmbeddingTokens || 0) + embTokens;
       const threshold = parseFloat(settings.rag_threshold)  || 0.45;
       const count     = parseInt(settings.rag_match_count)  || 8;
 

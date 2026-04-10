@@ -20,7 +20,10 @@ const embeddingService = {
         }
       );
 
-      return response.data.data[0].embedding;
+      return {
+        embedding: response.data.data[0].embedding,
+        tokens:    response.data.usage?.total_tokens || 0
+      };
     } catch (error) {
       const msg = error.response?.data?.error?.message || error.message;
       console.error('Embedding Error:', msg);

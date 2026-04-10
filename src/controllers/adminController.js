@@ -35,15 +35,22 @@ const adminController = {
         supabase.from('learning_queue').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
         supabase.from('messages').select('prompt_tokens, completion_tokens')
       ]);
-      const tin  = (tokenUsage||[]).reduce((s,m) => s+(m.prompt_tokens||0), 0);
-      const tout = (tokenUsage||[]).reduce((s,m) => s+(m.completion_tokens||0), 0);
-      const cost = ((tin/1_000_000)*0.14 + (tout/1_000_000)*0.28).toFixed(4);
+      const tin   = (tokenUsage||[]).reduce((s,m) => s+(m.prompt_tokens||0), 0);
+      const tout  = (tokenUsage||[]).reduce((s,m) => s+(m.completion_tokens||0), 0);
+      const temb  = (tokenUsage||[]).reduce((s,m) => s+(m.embedding_tokens||0), 0);
+
+      // Aktuelle Preise (April 2026):
+      // DeepSeek V3.2: $0.28/M input (cache miss), $0.42/M output
+      // OpenAI text-embedding-3-small: $0.020/M tokens
+      const costDeepseek  = (tin  / 1_000_000) * 0.28 + (tout / 1_000_000) * 0.42;
+      const costEmbedding = (temb / 1_000_000) * 0.020;
+      const cost = (costDeepseek + costEmbedding).toFixed(4);
       res.json({
         version: getVersion(),
         stats: {
           totalChats: totalChats||0, activeManual: activeManual||0,
           knowledgeEntries: totalKnowledge||0, pendingLearning: pendingLearning||0,
-          totalCost: `${cost} $`, totalTokens: tin+tout
+          totalCost: `${cost} $`, totalTokens: tin+tout, embeddingTokens: temb
         }
       });
     } catch (e) { next(e); }
@@ -109,21 +116,42 @@ const adminController = {
   async updateSettings(req, res, next) {
     try {
       const body = req.body;
-      const full = { id: 1, ...body, updated_at: new Date() };
-      let { data, error } = await supabase.from('settings').upsert(full).select();
+
+      // Strategie: Zuerst alle bekannten sicheren Felder updaten,
+      // dann unbekannte/neue Felder einzeln versuchen.
+      // So schlägt das Speichern nie still fehl.
+
+      const coreFields = {
+        id:                   1,
+        updated_at:           new Date(),
+        system_prompt:        body.system_prompt        ?? undefined,
+        negative_prompt:      body.negative_prompt      ?? undefined,
+        welcome_message:      body.welcome_message      ?? undefined,
+        manual_msg_template:  body.manual_msg_template  ?? undefined,
+        sellauth_api_key:     body.sellauth_api_key     ?? undefined,
+        sellauth_shop_id:     body.sellauth_shop_id     ?? undefined,
+        sellauth_shop_url:    body.sellauth_shop_url    ?? undefined,
+        webhook_url:          body.webhook_url          ?? undefined,
+        ai_model:             body.ai_model             ?? undefined,
+        ai_max_tokens:        body.ai_max_tokens        !== undefined ? parseInt(body.ai_max_tokens)    : undefined,
+        ai_temperature:       body.ai_temperature       !== undefined ? parseFloat(body.ai_temperature) : undefined,
+        rag_threshold:        body.rag_threshold        !== undefined ? parseFloat(body.rag_threshold)  : undefined,
+        rag_match_count:      body.rag_match_count      !== undefined ? parseInt(body.rag_match_count)  : undefined,
+      };
+
+      // undefined-Felder entfernen (nicht überschreiben wenn nicht gesendet)
+      Object.keys(coreFields).forEach(k => coreFields[k] === undefined && delete coreFields[k]);
+
+      const { data, error } = await supabase.from('settings').upsert(coreFields).select();
+
       if (error) {
-        console.warn('[Settings] Upsert Fehler (Fallback):', error.message);
-        // Fallback: nur sichere Felder
-        const safe = { id: 1, updated_at: new Date() };
-        const safeFields = ['system_prompt','negative_prompt','welcome_message','manual_msg_template',
-          'sellauth_api_key','sellauth_shop_id','sellauth_shop_url',
-          'ai_model','ai_max_tokens','ai_temperature','rag_threshold','rag_match_count','webhook_url'];
-        safeFields.forEach(f => { if (body[f] !== undefined) safe[f] = body[f]; });
-        const r2 = await supabase.from('settings').upsert(safe).select();
-        if (r2.error) throw r2.error;
-        data = r2.data;
+        console.error('[Settings] Save Fehler:', error.message);
+        return res.status(500).json({ error: 'Einstellungen konnten nicht gespeichert werden: ' + error.message });
       }
-      res.json(data?.[0] || {});
+
+      // Geladene Settings zurückgeben damit Frontend sync bleibt
+      const { data: fresh } = await supabase.from('settings').select('*').eq('id', 1).single();
+      res.json(fresh || data?.[0] || {});
     } catch (e) { next(e); }
   },
 

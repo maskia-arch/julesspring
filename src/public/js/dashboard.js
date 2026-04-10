@@ -526,36 +526,52 @@ async function syncSellauth() {
 // ── Settings ──────────────────────────────────────────────────────────────────
 async function loadSettings() {
     try {
-        var s  = await api.getSettings();
-        if (!s) return; // Kein Überschreiben wenn Server nicht antwortet
-        var sv = function(id, val) { var el = document.getElementById(id); if (el && (val != null)) el.value = val; };
-        sv('system-prompt',       s.system_prompt);
-        sv('negative-prompt',     s.negative_prompt);
-        sv('welcome-message',     s.welcome_message);
-        sv('manual-msg-template', s.manual_msg_template);
-        sv('sellauth-api-key',    s.sellauth_api_key);
-        sv('sellauth-shop-id',    s.sellauth_shop_id);
-        sv('sellauth-shop-url',   s.sellauth_shop_url);
+        // 1. Sofort aus localStorage-Cache laden (kein Flimmern)
+        var cached = _getCachedSettings();
+        if (cached) _applySettings(cached);
 
-        // Modell-Einstellungen
-        var model = document.getElementById('ai-model');
-        if (model && s.ai_model) model.value = s.ai_model;
-
-        var setSlider = function(id, val, dispId) {
-            var el = document.getElementById(id);
-            if (el && val != null) {
-                el.value = val;
-                var disp = document.getElementById(dispId);
-                if (disp) disp.textContent = (id === 'ai-temperature' || id === 'rag-threshold')
-                    ? parseFloat(val).toFixed(2) : val;
-            }
-        };
-        setSlider('ai-max-tokens',   s.ai_max_tokens   || 1024, 'token-disp');
-        setSlider('ai-temperature',  s.ai_temperature  || 0.5,  'temp-disp');
-        setSlider('rag-threshold',   s.rag_threshold   || 0.45, 'thresh-disp');
-        setSlider('rag-match-count', s.rag_match_count || 8,    'count-disp');
-    } catch(e) { console.error('Settings Fehler:', e.message); }
+        // 2. Vom Server laden und Cache aktualisieren
+        var s = await api.getSettings();
+        if (!s) return;
+        _saveSettingsCache(s);
+        _applySettings(s);
+    } catch(e) { console.error('Settings Ladefehler:', e.message); }
 }
+
+// Settings auf UI-Elemente anwenden
+function _applySettings(s) {
+    var sv = function(id, val) { var el = document.getElementById(id); if (el && val != null) el.value = val; };
+    sv('system-prompt',       s.system_prompt);
+    sv('negative-prompt',     s.negative_prompt);
+    sv('welcome-message',     s.welcome_message);
+    sv('manual-msg-template', s.manual_msg_template);
+    sv('sellauth-api-key',    s.sellauth_api_key);
+    sv('sellauth-shop-id',    s.sellauth_shop_id);
+    sv('sellauth-shop-url',   s.sellauth_shop_url);
+    sv('webhook-app-url',     s.webhook_url);
+    sv('ai-model',            s.ai_model);
+    var setSlider = function(id, val, dispId) {
+        var el = document.getElementById(id);
+        if (el && val != null) {
+            el.value = val;
+            var disp = document.getElementById(dispId);
+            if (disp) disp.textContent = (id === 'ai-temperature' || id === 'rag-threshold') ? parseFloat(val).toFixed(2) : val;
+        }
+    };
+    setSlider('ai-max-tokens',   s.ai_max_tokens   || 1024, 'token-disp');
+    setSlider('ai-temperature',  s.ai_temperature  || 0.5,  'temp-disp');
+    setSlider('rag-threshold',   s.rag_threshold   || 0.45, 'thresh-disp');
+    setSlider('rag-match-count', s.rag_match_count || 8,    'count-disp');
+}
+
+// Settings-Cache
+function _getCachedSettings() {
+    try { var v = localStorage.getItem('_settings_cache'); return v ? JSON.parse(v) : null; } catch(_) { return null; }
+}
+function _saveSettingsCache(s) {
+    try { localStorage.setItem('_settings_cache', JSON.stringify(s)); } catch(_) {}
+}
+
 
 async function saveSettings() {
     var gv = function(id) { var el = document.getElementById(id); return el ? el.value : ''; };
@@ -746,6 +762,45 @@ function _showSyncProgress(pct, step) {
 function _hideSyncProgress() {
     var box = document.getElementById('_sync-progress');
     if (box) box.style.display = 'none';
+}
+
+async function saveSettings() {
+    var gv = function(id) { var el = document.getElementById(id); return el ? el.value : ''; };
+    var settings = {
+        system_prompt:       gv('system-prompt'),
+        negative_prompt:     gv('negative-prompt'),
+        welcome_message:     gv('welcome-message'),
+        manual_msg_template: gv('manual-msg-template'),
+        sellauth_api_key:    gv('sellauth-api-key'),
+        sellauth_shop_id:    gv('sellauth-shop-id'),
+        sellauth_shop_url:   gv('sellauth-shop-url'),
+        webhook_url:         gv('webhook-app-url'),
+        ai_model:            gv('ai-model'),
+        ai_max_tokens:       parseInt(gv('ai-max-tokens'))    || 1024,
+        ai_temperature:      parseFloat(gv('ai-temperature')) || 0.5,
+        rag_threshold:       parseFloat(gv('rag-threshold'))  || 0.45,
+        rag_match_count:     parseInt(gv('rag-match-count'))  || 8
+    };
+
+    var saveBtn = document.getElementById('save-settings') ||
+                  document.querySelector('button[onclick="saveSettings()"]');
+    var origText = saveBtn ? saveBtn.textContent : '';
+    if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '⏳ Speichert...'; }
+
+    try {
+        var saved = await api.saveSettings(settings);
+        if (saved) {
+            // Server-Antwort als neuen Cache speichern
+            _saveSettingsCache(saved);
+            _applySettings(saved);
+        }
+        showToast('✅ Einstellungen gespeichert!');
+    } catch(e) {
+        showToast('❌ Fehler: ' + e.message);
+        alert('Speichern fehlgeschlagen: ' + e.message + '\n\nBitte versuche es erneut.');
+    } finally {
+        if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = origText || '💾 Speichern'; }
+    }
 }
 
 function showToast(msg) {
