@@ -364,9 +364,25 @@ const sellauthService = {
   },
 
   // ── Invoice Lookup ─────────────────────────────────────────────────────
+  // Sellauth akzeptiert sowohl numerische ID als auch die volle unique_id
+  // Doku: "The invoice ID or unique ID" → direkt übergeben, keine Extraktion
   async getInvoice(apiKey, shopId, invoiceId) {
-    const { data } = await this._client(apiKey).get(`/shops/${shopId}/invoices/${invoiceId}`);
-    return data;
+    try {
+      const { data } = await this._client(apiKey).get(
+        `/shops/${shopId}/invoices/${encodeURIComponent(invoiceId)}`
+      );
+      return data;
+    } catch (err) {
+      // Fallback: wenn unique_id übergeben, aber numeric ID auch versuchen
+      if (invoiceId.includes('-') && err.response?.status !== 404) {
+        const numericId = invoiceId.split('-').pop().replace(/^0+/, '') || '0';
+        const { data } = await this._client(apiKey).get(
+          `/shops/${shopId}/invoices/${numericId}`
+        );
+        return data;
+      }
+      throw err;
+    }
   },
 
   // Formatiert Invoice-Daten für Kunden (keine sensiblen Felder)

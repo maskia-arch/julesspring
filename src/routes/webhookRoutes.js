@@ -65,24 +65,24 @@ router.post('/telegram', (req, res) => {
             return;
           }
 
-          // unique_id Format (z.B. 05d0bb6ed687d-0000011429923) → numerische ID extrahieren
-          const numericId = invoiceId.includes('-')
-            ? (invoiceId.split('-').pop().replace(/^0+/, '') || '0')
-            : invoiceId;
-
+          // Sellauth akzeptiert unique_id direkt — keine Extraktion nötig
           const invoice = await sellauthService.getInvoice(
-            s.sellauth_api_key, s.sellauth_shop_id, numericId
+            s.sellauth_api_key, s.sellauth_shop_id, invoiceId
           );
           const response = sellauthService.formatInvoiceForCustomer(invoice, s.sellauth_shop_url);
           await telegramService.sendMessage(chatId, response);
         } catch (err) {
           const status = err.response?.status;
+          console.error('[Order] Fehler für', invoiceId, '- Status:', status, '-', err.response?.data?.message || err.message);
           if (status === 404) {
             await telegramService.sendMessage(chatId,
-              'Bestellung ' + invoiceId + ' wurde nicht gefunden. Bitte prüfe die Bestellnummer.');
+              'Bestellung ' + invoiceId + ' wurde nicht gefunden. Bitte prüfe ob die Invoice-ID korrekt ist.');
+          } else if (status === 401 || status === 403) {
+            await telegramService.sendMessage(chatId,
+              'Bestellabfrage konnte nicht durchgeführt werden. Bitte wende dich an unseren Support.');
           } else {
             await telegramService.sendMessage(chatId,
-              'Bestellabfrage fehlgeschlagen. Bitte versuche es in einem Moment erneut.');
+              'Bestellabfrage ist momentan nicht verfügbar. Bitte versuche es in einigen Minuten erneut oder kontaktiere den Support.');
           }
         }
         return;
