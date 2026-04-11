@@ -39,7 +39,7 @@ const adminController = {
         supabase.from('chats').select('*', { count: 'exact', head: true }).eq('is_manual_mode', true),
         supabase.from('knowledge_base').select('*', { count: 'exact', head: true }),
         supabase.from('learning_queue').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-        supabase.from('messages').select('prompt_tokens, completion_tokens, embedding_tokens')
+        supabase.from('messages').select('prompt_tokens, completion_tokens')
       ]);
       const tin   = (tokenUsage||[]).reduce((s,m) => s+(m.prompt_tokens||0), 0);
       const tout  = (tokenUsage||[]).reduce((s,m) => s+(m.completion_tokens||0), 0);
@@ -48,26 +48,15 @@ const adminController = {
       // Aktuelle Preise (April 2026):
       // DeepSeek V3.2: $0.28/M input (cache miss), $0.42/M output
       // OpenAI text-embedding-3-small: $0.020/M tokens
-      // Aktuelle Preise April 2026:
-      // DeepSeek V3.2: $0.28/M input (cache miss), $0.42/M output
-      // OpenAI text-embedding-3-small: $0.020/M tokens
       const costDeepseek  = (tin  / 1_000_000) * 0.28 + (tout / 1_000_000) * 0.42;
       const costEmbedding = (temb / 1_000_000) * 0.020;
-      const totalCostNum  = costDeepseek + costEmbedding;
-      // Kleine Beträge mit 6 Stellen darstellen damit 0.000xxx nicht als 0.0000 erscheint
-      const cost = totalCostNum >= 0.01 ? totalCostNum.toFixed(4) : totalCostNum.toFixed(6);
+      const cost = (costDeepseek + costEmbedding).toFixed(4);
       res.json({
         version: getVersion(),
         stats: {
           totalChats: totalChats||0, activeManual: activeManual||0,
           knowledgeEntries: totalKnowledge||0, pendingLearning: pendingLearning||0,
-          totalCost:        `${cost} $`,
-          totalTokens:      tin + tout,
-          promptTokens:     tin,
-          completionTokens: tout,
-          embeddingTokens:  temb,
-          costDeepseek:     costDeepseek.toFixed(6),
-          costEmbedding:    costEmbedding.toFixed(6)
+          totalCost: `${cost} $`, totalTokens: tin+tout, embeddingTokens: temb
         }
       });
     } catch (e) { next(e); }
@@ -174,6 +163,49 @@ const adminController = {
 
   // ── Telegram Webhook ──────────────────────────────────────────────────────
   // FIX: Webhook-URL wird in settings.webhook_url gespeichert
+  async lookupInvoice(req, res, next) {
+    try {
+      const { invoiceId } = req.params;
+      if (!invoiceId) return res.status(400).json({ error: 'Invoice-ID fehlt' });
+
+      const { data: s } = await supabase.from('settings')
+        .select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single();
+
+      if (!s?.sellauth_api_key || !s?.sellauth_shop_id) {
+        return res.status(400).json({ error: 'Sellauth nicht konfiguriert' });
+      }
+
+      const invoice = await sellauthService.getInvoice(
+        s.sellauth_api_key, s.sellauth_shop_id, invoiceId
+      );
+
+      const products = (invoice.items || []).map(item => ({
+        product: item.product?.name || null,
+        variant: item.variant?.name || null
+      }));
+
+      const checkoutUrl = invoice.unique_id
+        ? `${(s.sellauth_shop_url || '').replace(/\/$/, '')}/checkout/${invoice.unique_id}`
+        : null;
+
+      res.json({
+        id:           invoice.id,
+        status:       invoice.status,
+        price:        invoice.price,
+        currency:     invoice.currency,
+        gateway:      invoice.gateway,
+        products,
+        completed_at: invoice.completed_at,
+        created_at:   invoice.created_at,
+        checkoutUrl
+      });
+    } catch (err) {
+      const status = err.response?.status;
+      if (status === 404) return res.status(404).json({ error: 'Bestellung nicht gefunden' });
+      res.status(500).json({ error: err.response?.data?.message || err.message });
+    }
+  },
+
   async setupWebhook(req, res, next) {
     try {
       const { appUrl } = req.body;
