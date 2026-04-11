@@ -224,6 +224,7 @@
                 <button class="tab-btn" onclick="showSettingsTab('model',this)">🔬 Modell</button>
                 <button class="tab-btn" onclick="showSettingsTab('sellauth-cfg',this)">🛒 Sellauth</button>
                 <button class="tab-btn" onclick="showSettingsTab('telegram-cfg',this)">✈️ Telegram</button>
+                <button class="tab-btn" onclick="showSettingsTab('widget-cfg',this)">🔗 Widget</button>
             </div>
 
             <div id="settings-tab-bot" class="tab-pane active">
@@ -359,6 +360,7 @@ function showSettingsTab(tab, btn) {
     var el = document.getElementById('settings-tab-' + tab);
     if (el) el.classList.add('active');
     if (btn) btn.classList.add('active');
+    if (tab === 'widget-cfg' && typeof initWidgetTab === 'function') initWidgetTab();
 }
 
 async function handleLogin() {
@@ -414,3 +416,57 @@ if (localStorage.getItem('admin_token')) {
 </script>
 </body>
 </html>
+
+            <!-- Widget Settings -->
+            <div id="settings-tab-widget-cfg" class="tab-pane">
+                <div class="card">
+                    <h3 class="card-title">🔗 Widget Einbettung</h3>
+                    <p style="font-size:0.85rem;color:#888;margin-bottom:14px;">Kopiere einen der folgenden Code-Schnipsel und füge ihn auf deiner Website vor dem &lt;/body&gt; Tag ein.</p>
+
+                    <!-- Embed Option 1 -->
+                    <div class="form-group">
+                        <label>Standard (empfohlen)</label>
+                        <div style="position:relative;">
+                            <textarea id="embed-standard" rows="3" readonly style="font-size:0.78rem;font-family:monospace;color:#93c5fd;background:#0d1929;border-color:#1e3a5f;cursor:text;" onclick="this.select()"></textarea>
+                            <button onclick="copyEmbed('embed-standard')" class="btn btn-secondary btn-sm" style="position:absolute;top:6px;right:6px;">📋 Kopieren</button>
+                        </div>
+                        <p class="hint">Lädt das Widget automatisch. Für alle Websites geeignet.</p>
+                    </div>
+
+                    <!-- Embed Option 2 -->
+                    <div class="form-group">
+                        <label>Asynchron (Performance-optimiert)</label>
+                        <div style="position:relative;">
+                            <textarea id="embed-async" rows="5" readonly style="font-size:0.78rem;font-family:monospace;color:#93c5fd;background:#0d1929;border-color:#1e3a5f;cursor:text;" onclick="this.select()"></textarea>
+                            <button onclick="copyEmbed('embed-async')" class="btn btn-secondary btn-sm" style="position:absolute;top:6px;right:6px;">📋 Kopieren</button>
+                        </div>
+                        <p class="hint">Blockiert das Laden der Seite nicht. Ideal für Shopseiten.</p>
+                    </div>
+
+                    <!-- Embed Option 3: GTM -->
+                    <div class="form-group">
+                        <label>Google Tag Manager</label>
+                        <div style="position:relative;">
+                            <textarea id="embed-gtm" rows="4" readonly style="font-size:0.78rem;font-family:monospace;color:#93c5fd;background:#0d1929;border-color:#1e3a5f;cursor:text;" onclick="this.select()"></textarea>
+                            <button onclick="copyEmbed('embed-gtm')" class="btn btn-secondary btn-sm" style="position:absolute;top:6px;right:6px;">📋 Kopieren</button>
+                        </div>
+                        <p class="hint">Für GTM: Neues "Custom HTML" Tag erstellen und diesen Code einfügen.</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title">⚙️ Widget Einstellungen</h3>
+                    <div class="form-group">
+                        <label>Bot-Name im Widget</label>
+                        <input type="text" id="widget-bot-name" placeholder="ValueShop25 Support">
+                    </div>
+                    <div class="form-group">
+                        <label>Widget-Farbe</label>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <input type="color" id="widget-color" value="#0a4f8c" style="width:48px;height:40px;padding:2px;background:#1a1a1a;border:1px solid #444;border-radius:6px;cursor:pointer;">
+                            <span id="widget-color-val" style="color:#94a3b8;font-size:0.85rem;font-family:monospace;">#0a4f8c</span>
+                        </div>
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
+                </div>
+            </div>

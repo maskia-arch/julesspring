@@ -1119,6 +1119,72 @@ async function banIpFromLookup(ip) {
     } catch(e) { alert('Fehler: ' + e.message); }
 }
 
+
+// ── Widget Settings & Embed Codes ────────────────────────────────────────────
+
+var _widgetBaseUrl = window.location.origin; // auto-detect from dashboard
+
+function initWidgetTab() {
+    var base = _widgetBaseUrl;
+    var scriptUrl = base + '/widget.js';
+
+    // Standard embed
+    var standard = '<script src="' + scriptUrl + '"><\/script>';
+    var el = document.getElementById('embed-standard');
+    if (el) el.value = standard;
+
+    // Async embed
+    var async_code = [
+        '<script>',
+        '  (function() {',
+        '    var s = document.createElement("script");',
+        '    s.src = "' + scriptUrl + '";',
+        '    s.async = true;',
+        '    document.head.appendChild(s);',
+        '  })();',
+        '<\/script>'
+    ].join('\n');
+    var el2 = document.getElementById('embed-async');
+    if (el2) el2.value = async_code;
+
+    // GTM embed
+    var gtm_code = [
+        '<script>',
+        '  var s = document.createElement("script");',
+        '  s.src = "' + scriptUrl + '";',
+        '  document.head.appendChild(s);',
+        '<\/script>'
+    ].join('\n');
+    var el3 = document.getElementById('embed-gtm');
+    if (el3) el3.value = gtm_code;
+
+    // Color picker preview
+    var colorInput = document.getElementById('widget-color');
+    var colorVal   = document.getElementById('widget-color-val');
+    if (colorInput) {
+        colorInput.addEventListener('input', function() {
+            if (colorVal) colorVal.textContent = this.value;
+        });
+    }
+}
+
+function copyEmbed(elementId) {
+    var el = document.getElementById(elementId);
+    if (!el) return;
+    el.select();
+    try {
+        document.execCommand('copy');
+        showToast('✅ Code kopiert!');
+    } catch(e) {
+        // Fallback
+        navigator.clipboard.writeText(el.value).then(function() {
+            showToast('✅ Code kopiert!');
+        }).catch(function() {
+            showToast('Bitte manuell kopieren (Strg+C)');
+        });
+    }
+}
+
 function showToast(msg) {
     var t = document.getElementById('_toast');
     if (!t) {
