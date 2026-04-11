@@ -197,17 +197,6 @@
                 </table>
             </div>
         
-            <!-- IP Lookup Tool -->
-            <div class="card" style="margin-top:16px;border-color:#1e3a5f;">
-                <h3 class="card-title">🔍 IP-Analyse & Bann</h3>
-                <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">IP-Adresse eingeben um alle Aktivitäten, Besuche und den Chat-Verlauf eines Besuchers zu sehen.</p>
-                <div class="input-row" style="margin-bottom:10px;">
-                    <input type="text" id="ip-lookup-input" placeholder="z.B. 192.168.1.1" style="flex:1;">
-                    <button onclick="lookupIp()" class="btn btn-primary">🔍 Suchen</button>
-                </div>
-                <div id="ip-lookup-result"></div>
-            </div>
-
             <!-- Geflaggte Chats -->
             <div class="card" style="margin-top:16px;border-color:#431407;">
                 <h3 class="card-title">🚩 Geflaggte Chats (Auto-Erkennung)</h3>
@@ -324,13 +313,57 @@
                     <div id="webhook-result" style="margin-top:10px;font-size:0.85rem;"></div>
                 </div>
             </div>
+
+            <div id="settings-tab-widget-cfg" class="tab-pane">
+                <div class="card">
+                    <h3 class="card-title">🔗 Widget Einbettung</h3>
+                    <p class="hint" style="margin-bottom:14px;">Kopiere einen Code-Schnipsel und füge ihn vor dem &lt;/body&gt; Tag ein.</p>
+
+                    <div class="form-group">
+                        <label>Standard (empfohlen)</label>
+                        <textarea id="embed-standard" rows="3" readonly onclick="this.select()" style="font-size:0.75rem;font-family:monospace;color:#93c5fd;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;resize:none;width:100%;"></textarea>
+                        <button onclick="copyEmbed('embed-standard')" class="btn btn-secondary btn-sm btn-full" style="margin-top:6px;">📋 Kopieren</button>
+                        <p class="hint">Für alle Websites. Vor &lt;/body&gt; einfügen.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Asynchron (Performance)</label>
+                        <textarea id="embed-async" rows="7" readonly onclick="this.select()" style="font-size:0.75rem;font-family:monospace;color:#93c5fd;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;resize:none;width:100%;"></textarea>
+                        <button onclick="copyEmbed('embed-async')" class="btn btn-secondary btn-sm btn-full" style="margin-top:6px;">📋 Kopieren</button>
+                        <p class="hint">Lädt nicht-blockierend. Ideal für Shops.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Google Tag Manager</label>
+                        <textarea id="embed-gtm" rows="6" readonly onclick="this.select()" style="font-size:0.75rem;font-family:monospace;color:#93c5fd;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;resize:none;width:100%;"></textarea>
+                        <button onclick="copyEmbed('embed-gtm')" class="btn btn-secondary btn-sm btn-full" style="margin-top:6px;">📋 Kopieren</button>
+                        <p class="hint">GTM: Custom HTML Tag erstellen.</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title">⚙️ Widget Einstellungen</h3>
+                    <div class="form-group">
+                        <label>Bot-Name</label>
+                        <input type="text" id="widget-bot-name" placeholder="ValueShop25 Support">
+                    </div>
+                    <div class="form-group">
+                        <label>Primärfarbe</label>
+                        <div style="display:flex;gap:10px;align-items:center;">
+                            <input type="color" id="widget-color" value="#0a4f8c" oninput="document.getElementById('widget-color-val').textContent=this.value" style="width:48px;height:40px;padding:2px;background:#1a1a1a;border:1px solid #444;border-radius:6px;cursor:pointer;">
+                            <span id="widget-color-val" style="color:#94a3b8;font-size:0.875rem;font-family:monospace;">#0a4f8c</span>
+                        </div>
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
+                </div>
+            </div>
         </section>
 
     </div>
 </div>
 
-<script src="js/api.js?v=130"></script>
-<script src="js/dashboard.js?v=130"></script>
+<script src="js/api.js?v=132"></script>
+<script src="js/dashboard.js?v=132"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });
@@ -416,48 +449,3 @@ if (localStorage.getItem('admin_token')) {
 </script>
 </body>
 </html>
-
-            <!-- Widget Settings -->
-            <div id="settings-tab-widget-cfg" class="tab-pane">
-                <div class="card">
-                    <h3 class="card-title">🔗 Widget Einbettung</h3>
-                    <p style="font-size:0.85rem;color:#888;margin-bottom:14px;">Kopiere einen der folgenden Code-Schnipsel und füge ihn auf deiner Website vor dem &lt;/body&gt; Tag ein.</p>
-
-                    <div class="form-group">
-                        <label>Standard (empfohlen)</label>
-                        <textarea id="embed-standard" rows="3" readonly style="font-size:0.75rem;font-family:monospace;color:#93c5fd;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;resize:none;" onclick="this.select()"></textarea>
-                        <button onclick="copyEmbed('embed-standard')" class="btn btn-secondary btn-sm btn-full" style="margin-top:6px;">📋 Code kopieren</button>
-                        <p class="hint">Für alle Websites. Vor dem &lt;/body&gt; Tag einfügen.</p>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Asynchron (Performance-optimiert)</label>
-                        <textarea id="embed-async" rows="6" readonly style="font-size:0.75rem;font-family:monospace;color:#93c5fd;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;resize:none;" onclick="this.select()"></textarea>
-                        <button onclick="copyEmbed('embed-async')" class="btn btn-secondary btn-sm btn-full" style="margin-top:6px;">📋 Code kopieren</button>
-                        <p class="hint">Lädt die Seite nicht blockierend. Ideal für Shopseiten.</p>
-                    </div>
-
-                    <div class="form-group">
-                        <label>Google Tag Manager</label>
-                        <textarea id="embed-gtm" rows="5" readonly style="font-size:0.75rem;font-family:monospace;color:#93c5fd;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;resize:none;" onclick="this.select()"></textarea>
-                        <button onclick="copyEmbed('embed-gtm')" class="btn btn-secondary btn-sm btn-full" style="margin-top:6px;">📋 Code kopieren</button>
-                        <p class="hint">GTM: Neues "Custom HTML" Tag erstellen und einfügen.</p>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <h3 class="card-title">⚙️ Widget Einstellungen</h3>
-                    <div class="form-group">
-                        <label>Bot-Name</label>
-                        <input type="text" id="widget-bot-name" placeholder="ValueShop25 Support">
-                    </div>
-                    <div class="form-group">
-                        <label>Primärfarbe</label>
-                        <div style="display:flex;gap:10px;align-items:center;">
-                            <input type="color" id="widget-color" value="#0a4f8c" style="width:48px;height:40px;padding:2px;background:#1a1a1a;border:1px solid #444;border-radius:6px;cursor:pointer;" oninput="document.getElementById('widget-color-val').textContent=this.value">
-                            <span id="widget-color-val" style="color:#94a3b8;font-size:0.875rem;font-family:monospace;">#0a4f8c</span>
-                        </div>
-                    </div>
-                    <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
-                </div>
-            </div>
