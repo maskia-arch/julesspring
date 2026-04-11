@@ -34,6 +34,7 @@
         <button onclick="hardRefresh()" title="Daten neu laden" style="background:none;border:1px solid #2e2e2e;color:#94a3b8;padding:5px 9px;border-radius:7px;cursor:pointer;font-size:0.85rem;white-space:nowrap;margin-right:4px;" id="refresh-btn">↺</button>
         <div class="nav-links">
             <button class="nav-btn" onclick="showSection('chats')"     id="nav-chats">💬 Chats <span id="learning-badge" class="badge" style="display:none;">0</span></button>
+            <button class="nav-btn" onclick="showSection('traffic')"   id="nav-traffic">📊 Traffic</button>
             <button class="nav-btn" onclick="showSection('learning')"  id="nav-learning">🧠 Lernen</button>
             <button class="nav-btn" onclick="showSection('knowledge')" id="nav-knowledge">📚 Wissen</button>
             <button class="nav-btn" onclick="showSection('sellauth')"  id="nav-sellauth">🛒 Sellauth</button>
@@ -75,6 +76,32 @@
         </section>
 
         <!-- ══ LEARNING ═══════════════════════════════════════════════════ -->
+        <!-- ══ TRAFFIC ══════════════════════════════════════════════════════════════ -->
+        <section id="traffic-section" class="app-section">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                <h2 class="section-title" style="margin:0;">📊 Website Traffic</h2>
+                <div style="display:flex;gap:6px;">
+                    <button onclick="loadTraffic('week')" id="traffic-btn-week" class="btn btn-primary btn-sm">7 Tage</button>
+                    <button onclick="loadTraffic('month')" id="traffic-btn-month" class="btn btn-secondary btn-sm">30 Tage</button>
+                </div>
+            </div>
+
+            <!-- Totals -->
+            <div class="stats-grid" id="traffic-totals" style="margin-bottom:16px;">
+                <div class="stat-card"><div class="stat-label">BESUCHER</div><div class="stat-value" id="t-visitors">–</div></div>
+                <div class="stat-card"><div class="stat-label">SEITENAUFRUFE</div><div class="stat-value" id="t-pageviews">–</div></div>
+                <div class="stat-card"><div class="stat-label">WIDGET CHATS</div><div class="stat-value" id="t-wchats">–</div></div>
+                <div class="stat-card"><div class="stat-label">TELEGRAM CHATS</div><div class="stat-value" id="t-tchats">–</div></div>
+            </div>
+
+            <!-- Chart -->
+            <div class="card">
+                <h3 class="card-title" id="traffic-chart-title">Besucher & Chats – 7 Tage</h3>
+                <canvas id="traffic-chart" height="200" style="width:100%;"></canvas>
+                <div id="traffic-legend" style="display:flex;gap:16px;margin-top:10px;font-size:0.78rem;color:#94a3b8;flex-wrap:wrap;"></div>
+            </div>
+        </section>
+
         <section id="learning-section" class="app-section">
             <h2 class="section-title">🧠 Learning Center</h2>
             <p class="section-desc">Fragen die die KI nicht beantworten konnte. Deine Antworten fließen direkt in die Wissensdatenbank — auch bei leerem Wissenskontext wird hier automatisch ein Eintrag erstellt.</p>
@@ -362,8 +389,8 @@
     </div>
 </div>
 
-<script src="js/api.js?v=132"></script>
-<script src="js/dashboard.js?v=132"></script>
+<script src="js/api.js?v=133"></script>
+<script src="js/dashboard.js?v=133"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });

@@ -59,12 +59,20 @@ router.get('/blacklist',       ctrl.getBlacklist);
 router.post('/blacklist',      ctrl.banUser);
 router.delete('/blacklist/:id',ctrl.removeBan);
 
-// ─── Visitor / IP Management ─────────────────────────────────────────────────
+// Push
+router.post('/push-subscription',    ctrl.savePushSubscription);
+router.get('/push/vapid-key',        ctrl.getVapidPublicKey);
+router.post('/push/test',            ctrl.sendTestPush);
+
+// Traffic
+router.get('/traffic',               ctrl.getTrafficStats);
+
+// Visitor / IP
 router.get('/visitors',              ctrl.getVisitorList);
 router.get('/visitors/ip/:ip',       ctrl.lookupVisitorIp);
 router.post('/visitors/ip/:ip/ban',  ctrl.banVisitorIp);
 
-// Push
-router.post('/push-subscription', ctrl.savePushSubscription);
+// Invoice
+router.get('/sellauth/invoice/:invoiceId', ctrl.lookupInvoice);
 
 module.exports = router;

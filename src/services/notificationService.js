@@ -87,7 +87,14 @@ const notificationService = {
 
     if (!subs.length) return;
 
-    const json    = JSON.stringify(payload);
+    // silent: true → kein Sound/Vibration im Web Push (über Tag geregelt)
+    const sendPayload = { ...payload };
+    if (payload.silent) {
+      sendPayload.silent = true;
+      delete sendPayload.vibrate;
+    }
+
+    const json    = JSON.stringify(sendPayload);
     const expired = [];
 
     await Promise.allSettled(subs.map(async (row) => {

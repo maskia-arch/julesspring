@@ -1067,6 +1067,7 @@ async function hardRefresh() {
             if (id === 'learning')  _safeRun(loadLearningQueue);
             if (id === 'knowledge') { _safeRun(loadKbCategories); _safeRun(loadKbEntries); }
             if (id === 'security')  { _safeRun(loadFlaggedChats); _safeRun(loadBlacklist); }
+    if (id === 'traffic')   { _safeRun(function() { return loadTraffic('week'); }); }
             if (id === 'settings')  _safeRun(loadSettings);
         }
         showToast('✅ Daten aktualisiert');
@@ -1183,6 +1184,125 @@ function copyEmbed(elementId) {
             showToast('Bitte manuell kopieren (Strg+C)');
         });
     }
+}
+
+
+// ── Traffic Dashboard ─────────────────────────────────────────────────────────
+var _trafficChart = null;
+var _trafficRange = 'week';
+
+async function loadTraffic(range) {
+    range = range || _trafficRange;
+    _trafficRange = range;
+
+    // Toggle button styles
+    var wb = document.getElementById('traffic-btn-week');
+    var mb = document.getElementById('traffic-btn-month');
+    if (wb) { wb.className = range === 'week' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'; }
+    if (mb) { mb.className = range === 'month' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'; }
+
+    var title = document.getElementById('traffic-chart-title');
+    if (title) title.textContent = 'Besucher & Chats – ' + (range === 'week' ? '7 Tage' : '30 Tage');
+
+    try {
+        var data = await api.request('/traffic?range=' + range);
+        if (!data) return;
+
+        // Update totals
+        var sv = function(id,v) { var e=document.getElementById(id); if(e) e.textContent=v; };
+        sv('t-visitors',  data.totals?.visitors  || 0);
+        sv('t-pageviews', data.totals?.pageviews  || 0);
+        sv('t-wchats',    data.totals?.widgetChats || 0);
+        sv('t-tchats',    data.totals?.telegramChats || 0);
+
+        // Chart
+        var days     = data.days || [];
+        var labels   = days.map(function(d) {
+            var dt = new Date(d.date);
+            return dt.toLocaleDateString('de-DE', { weekday:'short', day:'numeric', month:'numeric' });
+        });
+        var visitors  = days.map(function(d) { return d.visitors; });
+        var chats     = days.map(function(d) { return d.chats; });
+        var pageviews = days.map(function(d) { return d.pageviews; });
+
+        drawTrafficChart(labels, visitors, chats, pageviews);
+    } catch(e) {
+        console.warn('[Traffic]', e.message);
+    }
+}
+
+function drawTrafficChart(labels, visitors, chats, pageviews) {
+    var canvas = document.getElementById('traffic-chart');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+
+    // Destroy old chart
+    if (_trafficChart) { _trafficChart.destroy(); _trafficChart = null; }
+
+    // Simple canvas chart (no external lib needed)
+    var allVals = visitors.concat(chats).concat(pageviews);
+    var maxVal  = Math.max.apply(null, allVals) || 1;
+    var W = canvas.offsetWidth || 340;
+    var H = 200;
+    canvas.width  = W;
+    canvas.height = H;
+
+    var pad = { t:10, r:10, b:30, l:30 };
+    var cW  = W - pad.l - pad.r;
+    var cH  = H - pad.t - pad.b;
+    var n   = labels.length;
+    var step = n > 1 ? cW / (n - 1) : cW;
+
+    ctx.clearRect(0, 0, W, H);
+
+    // Grid lines
+    ctx.strokeStyle = '#1e2d3d'; ctx.lineWidth = 1;
+    for (var g = 0; g <= 4; g++) {
+        var y = pad.t + cH - (g / 4) * cH;
+        ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cW, y); ctx.stroke();
+        ctx.fillStyle = '#4a5568'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+        ctx.fillText(Math.round((g / 4) * maxVal), pad.l - 4, y + 4);
+    }
+
+    // X labels (every nth)
+    var skip = n > 14 ? 3 : (n > 7 ? 2 : 1);
+    ctx.fillStyle = '#4a5568'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
+    for (var i = 0; i < n; i++) {
+        if (i % skip === 0) {
+            var x = pad.l + i * step;
+            ctx.fillText(labels[i], x, H - 4);
+        }
+    }
+
+    // Draw a line series
+    function drawLine(data, color) {
+        ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        for (var k = 0; k < data.length; k++) {
+            var px = pad.l + k * step;
+            var py = pad.t + cH - (data[k] / maxVal) * cH;
+            if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        // Dots
+        ctx.fillStyle = color;
+        for (var k2 = 0; k2 < data.length; k2++) {
+            var px2 = pad.l + k2 * step;
+            var py2 = pad.t + cH - (data[k2] / maxVal) * cH;
+            ctx.beginPath(); ctx.arc(px2, py2, 3, 0, Math.PI*2); ctx.fill();
+        }
+    }
+
+    drawLine(pageviews, '#3b82f6');
+    drawLine(visitors,  '#10b981');
+    drawLine(chats,     '#f59e0b');
+
+    // Legend
+    var legend = document.getElementById('traffic-legend');
+    if (legend) legend.innerHTML =
+        '<span style="color:#3b82f6">● Seitenaufrufe</span>' +
+        '<span style="color:#10b981">● Besucher</span>' +
+        '<span style="color:#f59e0b">● Chats</span>';
 }
 
 function showToast(msg) {

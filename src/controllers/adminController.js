@@ -168,43 +168,122 @@ const adminController = {
     try {
       const { invoiceId } = req.params;
       if (!invoiceId) return res.status(400).json({ error: 'Invoice-ID fehlt' });
-
-      const { data: s } = await supabase.from('settings')
-        .select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single();
-
-      if (!s?.sellauth_api_key || !s?.sellauth_shop_id) {
-        return res.status(400).json({ error: 'Sellauth nicht konfiguriert' });
-      }
-
-      const invoice = await sellauthService.getInvoice(
-        s.sellauth_api_key, s.sellauth_shop_id, invoiceId
-      );
-
-      const products = (invoice.items || []).map(item => ({
-        product: item.product?.name || null,
-        variant: item.variant?.name || null
-      }));
-
-      const checkoutUrl = invoice.unique_id
-        ? `${(s.sellauth_shop_url || '').replace(/\/$/, '')}/checkout/${invoice.unique_id}`
-        : null;
-
-      res.json({
-        id:           invoice.id,
-        status:       invoice.status,
-        price:        invoice.price,
-        currency:     invoice.currency,
-        gateway:      invoice.gateway,
-        products,
-        completed_at: invoice.completed_at,
-        created_at:   invoice.created_at,
-        checkoutUrl
-      });
+      const { data: s } = await supabase.from('settings').select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single();
+      if (!s?.sellauth_api_key) return res.status(400).json({ error: 'Sellauth nicht konfiguriert' });
+      const sellauthService = require('../services/sellauthService');
+      const invoice = await sellauthService.getInvoice(s.sellauth_api_key, s.sellauth_shop_id, invoiceId);
+      const products = (invoice.items || []).map(i => ({ product: i.product?.name, variant: i.variant?.name }));
+      const checkoutUrl = invoice.unique_id ? `${(s.sellauth_shop_url||'').replace(/\/$/, '')}/checkout/${invoice.unique_id}` : null;
+      res.json({ id: invoice.id, status: invoice.status, price: invoice.price, currency: invoice.currency, gateway: invoice.gateway, products, completed_at: invoice.completed_at, created_at: invoice.created_at, checkoutUrl });
     } catch (err) {
-      const status = err.response?.status;
-      if (status === 404) return res.status(404).json({ error: 'Bestellung nicht gefunden' });
+      const st = err.response?.status;
+      if (st === 404) return res.status(404).json({ error: 'Bestellung nicht gefunden' });
       res.status(500).json({ error: err.response?.data?.message || err.message });
     }
+  },
+
+  async getTrafficStats(req, res, next) {
+    try {
+      const { range = 'week' } = req.query;
+      const days = range === 'month' ? 30 : 7;
+      const since = new Date(Date.now() - days * 86400000).toISOString();
+
+      const [visitorsRes, chatsRes, activitiesRes] = await Promise.all([
+        supabase.from('widget_visitors').select('first_seen, page_count').gte('first_seen', since).catch(() => ({ data: [] })),
+        supabase.from('chats').select('created_at, platform').gte('created_at', since).catch(() => ({ data: [] })),
+        supabase.from('visitor_activities').select('created_at').gte('created_at', since).catch(() => ({ data: [] }))
+      ]);
+
+      const visitors   = visitorsRes.data   || [];
+      const chats      = chatsRes.data       || [];
+      const activities = activitiesRes.data  || [];
+
+      // Group by day
+      const byDay = {};
+      for (let d = 0; d < days; d++) {
+        const dt = new Date(Date.now() - (days - 1 - d) * 86400000);
+        const key = dt.toISOString().slice(0, 10);
+        byDay[key] = { date: key, visitors: 0, chats: 0, pageviews: 0 };
+      }
+
+      visitors.forEach(v => {
+        const key = v.first_seen?.slice(0, 10);
+        if (byDay[key]) byDay[key].visitors++;
+      });
+      chats.forEach(c => {
+        const key = c.created_at?.slice(0, 10);
+        if (byDay[key]) byDay[key].chats++;
+      });
+      activities.forEach(a => {
+        const key = a.created_at?.slice(0, 10);
+        if (byDay[key]) byDay[key].pageviews++;
+      });
+
+      res.json({
+        range,
+        days: Object.values(byDay),
+        totals: {
+          visitors:  visitors.length,
+          chats:     chats.length,
+          pageviews: activities.length,
+          widgetChats: chats.filter(c => c.platform === 'web_widget').length,
+          telegramChats: chats.filter(c => c.platform === 'telegram').length
+        }
+      });
+    } catch (e) { next(e); }
+  },
+
+  async lookupVisitorIp(req, res, next) {
+    try {
+      const { ip } = req.params;
+      if (!ip) return res.status(400).json({ error: 'IP fehlt' });
+      const data = await visitorService.lookupIp(decodeURIComponent(ip));
+      res.json(data);
+    } catch (e) { next(e); }
+  },
+
+  async banVisitorIp(req, res, next) {
+    try {
+      const { ip } = req.params;
+      const { reason } = req.body;
+      if (!ip) return res.status(400).json({ error: 'IP fehlt' });
+      const result = await visitorService.banIp(decodeURIComponent(ip), reason);
+      res.json(result);
+    } catch (e) { next(e); }
+  },
+
+  async getVisitorList(req, res, next) {
+    try {
+      const { data } = await supabase.from('widget_visitors')
+        .select('chat_id, ip, country, first_seen, last_seen, page_count, is_banned, ban_reason, user_agent')
+        .order('last_seen', { ascending: false }).limit(100);
+      res.json(data || []);
+    } catch (e) { next(e); }
+  },
+
+  async getVapidPublicKey(req, res, next) {
+    const key = process.env.VAPID_PUBLIC_KEY;
+    if (!key) return res.status(500).json({ error: 'VAPID_PUBLIC_KEY nicht konfiguriert' });
+    res.json({ publicKey: key });
+  },
+
+  async sendTestPush(req, res, next) {
+    try {
+      const notificationService = require('../services/notificationService');
+      await notificationService.sendTestNotification();
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  async savePushSubscription(req, res, next) {
+    try {
+      const { subscription } = req.body;
+      if (!subscription?.endpoint) return res.status(400).json({ error: 'Ungültige Subscription' });
+      const subData = typeof subscription === 'string' ? subscription : JSON.stringify(subscription);
+      await supabase.from('admin_subscriptions').delete().filter('subscription_data->endpoint', 'eq', subscription.endpoint).catch(() => {});
+      await supabase.from('admin_subscriptions').insert([{ subscription_data: subData }]);
+      res.json({ success: true });
+    } catch (e) { next(e); }
   },
 
   async setupWebhook(req, res, next) {
@@ -505,38 +584,6 @@ const adminController = {
       }]);
 
       res.json({ success: true });
-    } catch (e) { next(e); }
-  },
-
-  // ── IP Lookup & Visitor Management ────────────────────────────────────────
-  async lookupVisitorIp(req, res, next) {
-    try {
-      const { ip } = req.params;
-      if (!ip) return res.status(400).json({ error: 'IP fehlt' });
-      const data = await visitorService.lookupIp(decodeURIComponent(ip));
-      res.json(data);
-    } catch (e) { next(e); }
-  },
-
-  async banVisitorIp(req, res, next) {
-    try {
-      const { ip } = req.params;
-      const { reason } = req.body;
-      if (!ip) return res.status(400).json({ error: 'IP fehlt' });
-      const result = await visitorService.banIp(decodeURIComponent(ip), reason);
-      res.json(result);
-    } catch (e) { next(e); }
-  },
-
-  async getVisitorList(req, res, next) {
-    try {
-      const { data, error } = await supabase
-        .from('widget_visitors')
-        .select('chat_id, ip, country, first_seen, last_seen, page_count, is_banned, ban_reason, user_agent')
-        .order('last_seen', { ascending: false })
-        .limit(100);
-      if (error) throw error;
-      res.json(data || []);
     } catch (e) { next(e); }
   },
 

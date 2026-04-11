@@ -43,11 +43,27 @@ router.post('/init', async (req, res) => {
 
     const { chatId, visitor, isNew } = await visitorService.getOrCreateVisitor(ip, userAgent, fingerprint);
 
-    // Seitenbesuch loggen
-    if (pageUrl || pageTitle) {
-      const activity = pageTitle ? `Besucht: ${pageTitle}` : `Besucht: ${pageUrl}`;
+    // Seitenbesuch loggen + lautlose Push-Benachrichtigung
+    const smartTitle = pageTitle || (pageUrl ? pageUrl : 'Website');
+    const activity   = `Besucht: ${smartTitle}`;
+    if (smartTitle) {
       await visitorService.logActivity(chatId, activity, pageUrl, pageTitle);
     }
+
+    // Silent Push an Admin (lautlos = kein Sound, kein Banner) bei JEDEM Besuch
+    void (async () => {
+      try {
+        const notifService = require('../services/notificationService');
+        await notifService._push({
+          title:  isNew ? `👁 Neuer Besucher: ${smartTitle}` : `📍 ${smartTitle}`,
+          body:   isNew ? 'Jemand besucht deine Website' : 'Bekannter Besucher',
+          icon:   '/icon-192.png',
+          tag:    `visit-${chatId}`,   // Gleicher Tag = ersetzt vorherige lautlose Notification
+          url:    '/admin',
+          silent: true                 // Kein Sound, kein Vibration
+        });
+      } catch (_) {}
+    })();
 
     // Welcome-Nachricht aus Settings
     let welcome = 'Hallo! 👋 Wie kann ich dir helfen?';
