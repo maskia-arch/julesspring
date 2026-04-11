@@ -694,8 +694,8 @@ async function loadFlaggedChats() {
                     '<div style="font-weight:600;font-size:0.875rem;">' + esc(name) + ' ' + mutedBadge + '</div>' +
                     '<div style="font-size:0.75rem;color:#888;">🚩 ' + c.flag_count + ' Flags' + (c.mute_reason ? ' · ' + esc(c.mute_reason) : '') + '</div>' +
                 '</div>' +
-                (c.auto_muted ? '<button onclick="unmuteChat('' + esc(c.id) + '')" class="btn btn-secondary btn-sm">Stummschaltung aufheben</button>' : '') +
-                '<button onclick="unflagChat('' + esc(c.id) + '')" class="btn btn-danger btn-sm">Flags löschen</button>' +
+                (c.auto_muted ? '<button onclick="unmuteChat(\'' + esc(c.id) + '\')" class="btn btn-secondary btn-sm">Stummschaltung aufheben</button>' : '') +
+                '<button onclick="unflagChat(\'' + esc(c.id) + '\')" class="btn btn-danger btn-sm">Flags löschen</button>' +
             '</div>';
         }).join('');
     } catch(e) { el.innerHTML = '<p style="color:#ef4444;font-size:0.85rem;">Fehler: ' + esc(e.message) + '</p>'; }
@@ -959,8 +959,7 @@ async function subscribePush() {
         // VAPID Public Key vom Server laden
         var keyData = await api.request('/push/vapid-key');
         if (!keyData?.publicKey) {
-            alert('VAPID_PUBLIC_KEY fehlt in den Server-Einstellungen.
-Bitte in Render.com Environment Variables setzen.');
+            alert('VAPID_PUBLIC_KEY fehlt in den Server-Einstellungen. Bitte in Render.com Environment Variables setzen.');
             return;
         }
 
