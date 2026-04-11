@@ -116,6 +116,10 @@ async function updateStats() {
         sv('s-knowledge',d.stats.knowledgeEntries);
         sv('s-cost',     d.stats.totalCost);
         sv('s-tokens',   (d.stats.totalTokens||0).toLocaleString() + ' Token');
+        var costEl = document.getElementById('s-cost');
+        if (costEl && d.stats.costDeepseek) {
+            costEl.title = 'DeepSeek: $' + d.stats.costDeepseek + '\nEmbedding: $' + (d.stats.costEmbedding || '0.000000');
+        }
         sv('version-tag','v' + d.version);
         var badge = document.getElementById('learning-badge');
         if (badge) {
