@@ -116,7 +116,7 @@ async function updateStats() {
             badge.textContent = d.stats.pendingLearning;
             badge.style.display = d.stats.pendingLearning > 0 ? 'inline-block' : 'none';
         }
-    } catch(e) { console.error('Stats Fehler:', e.message); }
+    } catch(e) { throw e; } // rethrow → Loading-Gate kann Fehler erkennen
 }
 
 // ── Chat List ─────────────────────────────────────────────────────────────────
@@ -129,9 +129,7 @@ async function loadChats() {
         _allChats = chats || [];
         renderChatList(_allChats);
     } catch(e) {
-        if (el && el.children.length === 0) {
-            el.innerHTML = '<p style="padding:1rem;color:#666;font-size:0.85rem;">Lade Chats...</p>';
-        }
+        throw e; // rethrow → Loading-Gate erkennt Fehler
     }
 }
 
@@ -1048,6 +1046,31 @@ function _urlBase64ToUint8Array(base64String) {
     return outputArray;
 }
 
+
+
+// ── Manueller Hard-Refresh ────────────────────────────────────────────────────
+async function hardRefresh() {
+    var btn = document.getElementById('refresh-btn');
+    if (btn) { btn.textContent = '⏳'; btn.disabled = true; }
+    api.invalidate(); // Gesamten Cache leeren
+    try {
+        await Promise.all([updateStats(), loadChats()]);
+        // Aktive Sektion auch aktualisieren
+        var active = document.querySelector('.app-section[style*="block"], .app-section[style*="flex"]');
+        if (active) {
+            var id = active.id.replace('-section','');
+            if (id === 'learning')  _safeRun(loadLearningQueue);
+            if (id === 'knowledge') { _safeRun(loadKbCategories); _safeRun(loadKbEntries); }
+            if (id === 'security')  { _safeRun(loadFlaggedChats); _safeRun(loadBlacklist); }
+            if (id === 'settings')  _safeRun(loadSettings);
+        }
+        showToast('✅ Daten aktualisiert');
+    } catch(e) {
+        showToast('❌ Refresh fehlgeschlagen: ' + e.message);
+    } finally {
+        if (btn) { btn.textContent = '↺'; btn.disabled = false; }
+    }
+}
 
 function showToast(msg) {
     var t = document.getElementById('_toast');

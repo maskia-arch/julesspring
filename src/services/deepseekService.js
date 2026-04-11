@@ -108,19 +108,30 @@ PFLICHTREGELN FÜR DIE NUTZUNG DES WISSENS:
 
     const fallbackInstruction = `
 
-FORMATIERUNGSREGELN (Telegram-kompatibel):
-- Verwende KEINE Markdown-Header (###, ##, #) – diese werden als Sonderzeichen angezeigt
-- Verwende *Fettschrift* für Produktnamen und Preise
-- Verwende einfache Aufzählungen mit - oder Zahlen
-- Links als normalen Text ausgeben: https://... (nicht als [text](url))
-- Kurz und klar formulieren, keine unnötigen Sektionen
+AUSGABE-FORMAT (STRIKT EINHALTEN):
+Du antwortest immer in reinem Plain-Text ohne jegliche Formatierungszeichen.
 
-PFLICHTREGELN FÜR UNSICHERHEIT:
-1. Wenn eine Frage nicht aus dem obigen Kontext beantwortet werden kann:
-   → Antworte mit dem Präfix [UNKLAR] und einer kurzen Erklärung
+VERBOTEN (erscheinen als Zeichensalat in Telegram):
+- Kein **fett** oder __fett__ (kein **, kein __)
+- Kein *kursiv* oder _kursiv_ (kein *, kein _)
+- Keine ###-Header oder ##-Header oder #-Header
+- Kein \`code\` und kein \`\`\`codeblock\`\`\`
+- Keine [Links](url) – stattdessen direkte URLs: https://...
+- Kein ~~durchgestrichen~~
+
+ERLAUBT:
+- Einfache Listen mit - oder Zahlen: 1. 2. 3.
+- Absätze mit Leerzeilen
+- Direkte URLs
+
+BEISPIEL KORREKTE ANTWORT:
+"Der Tarif kostet 9.99 EUR pro Monat und beinhaltet 10 GB Daten.
+Kauflink: https://valueshop25.com/product/..."
+
+UNSICHERHEITS-REGELN:
+1. Wenn die Antwort nicht aus dem Kontext hervorgeht: Präfix [UNKLAR] verwenden
 2. NIEMALS raten, erfinden oder spekulieren
-3. NIEMALS "Ausverkauft" schreiben wenn kein expliziter Hinweis im Kontext vorhanden
-4. Status = "Verfügbar" ist der Standard wenn nichts anderes angegeben`;
+3. NIEMALS "Ausverkauft" ohne expliziten Hinweis im Kontext`;
 
     return basePrompt + contextSection + negSection + fallbackInstruction;
   },
