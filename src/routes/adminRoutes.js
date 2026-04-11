@@ -23,14 +23,7 @@ router.post('/manual-message',          ctrl.sendManualMessage);
 // Learning Center
 router.get('/learning',          ctrl.getLearningQueue);
 router.post('/learning/resolve', ctrl.resolveLearning);
-router.delete('/learning/:id',   ctrl.deleteLearning);
-
-// ─── Abuse / Flagging ────────────────────────────────────────────────────────
-router.get('/flags',              ctrl.getFlags);
-router.get('/flags/chats',        ctrl.getFlaggedChats);
-router.post('/flags',             ctrl.flagChat);
-router.delete('/flags/:chatId',   ctrl.unflagChat);
-router.post('/flags/:chatId/unmute', ctrl.unmuteChat);
+router.delete('/learning/:id',   ctrl.deleteLearning);   // Ablehnen / Löschen
 
 // ─── Wissensdatenbank ────────────────────────────────────────────────────────
 // Kategorien
@@ -50,6 +43,7 @@ router.post('/scrape',              ctrl.startScraping);
 // ─── Sellauth Integration ────────────────────────────────────────────────────
 router.post('/sellauth/test',     ctrl.testSellauthConnection);
 router.post('/sellauth/sync',         ctrl.syncSellauth);
+router.get('/sellauth/invoice/:invoiceId', ctrl.lookupInvoice);
 router.get('/sellauth/sync-status/:jobId', ctrl.getSyncStatus);
 router.get('/sellauth/preview',   ctrl.previewSellauthProducts);
 
@@ -66,9 +60,6 @@ router.post('/blacklist',      ctrl.banUser);
 router.delete('/blacklist/:id',ctrl.removeBan);
 
 // Push
-router.post('/push-subscription',    ctrl.savePushSubscription);
-router.get('/push/vapid-key',          ctrl.getVapidPublicKey);
-router.post('/push/test',              ctrl.sendTestPush);
-router.post('/push/settings',          ctrl.updateNotificationSettings);
+router.post('/push-subscription', ctrl.savePushSubscription);
 
 module.exports = router;
