@@ -423,48 +423,39 @@ if (localStorage.getItem('admin_token')) {
                     <h3 class="card-title">🔗 Widget Einbettung</h3>
                     <p style="font-size:0.85rem;color:#888;margin-bottom:14px;">Kopiere einen der folgenden Code-Schnipsel und füge ihn auf deiner Website vor dem &lt;/body&gt; Tag ein.</p>
 
-                    <!-- Embed Option 1 -->
                     <div class="form-group">
                         <label>Standard (empfohlen)</label>
-                        <div style="position:relative;">
-                            <textarea id="embed-standard" rows="3" readonly style="font-size:0.78rem;font-family:monospace;color:#93c5fd;background:#0d1929;border-color:#1e3a5f;cursor:text;" onclick="this.select()"></textarea>
-                            <button onclick="copyEmbed('embed-standard')" class="btn btn-secondary btn-sm" style="position:absolute;top:6px;right:6px;">📋 Kopieren</button>
-                        </div>
-                        <p class="hint">Lädt das Widget automatisch. Für alle Websites geeignet.</p>
+                        <textarea id="embed-standard" rows="3" readonly style="font-size:0.75rem;font-family:monospace;color:#93c5fd;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;resize:none;" onclick="this.select()"></textarea>
+                        <button onclick="copyEmbed('embed-standard')" class="btn btn-secondary btn-sm btn-full" style="margin-top:6px;">📋 Code kopieren</button>
+                        <p class="hint">Für alle Websites. Vor dem &lt;/body&gt; Tag einfügen.</p>
                     </div>
 
-                    <!-- Embed Option 2 -->
                     <div class="form-group">
                         <label>Asynchron (Performance-optimiert)</label>
-                        <div style="position:relative;">
-                            <textarea id="embed-async" rows="5" readonly style="font-size:0.78rem;font-family:monospace;color:#93c5fd;background:#0d1929;border-color:#1e3a5f;cursor:text;" onclick="this.select()"></textarea>
-                            <button onclick="copyEmbed('embed-async')" class="btn btn-secondary btn-sm" style="position:absolute;top:6px;right:6px;">📋 Kopieren</button>
-                        </div>
-                        <p class="hint">Blockiert das Laden der Seite nicht. Ideal für Shopseiten.</p>
+                        <textarea id="embed-async" rows="6" readonly style="font-size:0.75rem;font-family:monospace;color:#93c5fd;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;resize:none;" onclick="this.select()"></textarea>
+                        <button onclick="copyEmbed('embed-async')" class="btn btn-secondary btn-sm btn-full" style="margin-top:6px;">📋 Code kopieren</button>
+                        <p class="hint">Lädt die Seite nicht blockierend. Ideal für Shopseiten.</p>
                     </div>
 
-                    <!-- Embed Option 3: GTM -->
                     <div class="form-group">
                         <label>Google Tag Manager</label>
-                        <div style="position:relative;">
-                            <textarea id="embed-gtm" rows="4" readonly style="font-size:0.78rem;font-family:monospace;color:#93c5fd;background:#0d1929;border-color:#1e3a5f;cursor:text;" onclick="this.select()"></textarea>
-                            <button onclick="copyEmbed('embed-gtm')" class="btn btn-secondary btn-sm" style="position:absolute;top:6px;right:6px;">📋 Kopieren</button>
-                        </div>
-                        <p class="hint">Für GTM: Neues "Custom HTML" Tag erstellen und diesen Code einfügen.</p>
+                        <textarea id="embed-gtm" rows="5" readonly style="font-size:0.75rem;font-family:monospace;color:#93c5fd;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;resize:none;" onclick="this.select()"></textarea>
+                        <button onclick="copyEmbed('embed-gtm')" class="btn btn-secondary btn-sm btn-full" style="margin-top:6px;">📋 Code kopieren</button>
+                        <p class="hint">GTM: Neues "Custom HTML" Tag erstellen und einfügen.</p>
                     </div>
                 </div>
 
                 <div class="card">
                     <h3 class="card-title">⚙️ Widget Einstellungen</h3>
                     <div class="form-group">
-                        <label>Bot-Name im Widget</label>
+                        <label>Bot-Name</label>
                         <input type="text" id="widget-bot-name" placeholder="ValueShop25 Support">
                     </div>
                     <div class="form-group">
-                        <label>Widget-Farbe</label>
-                        <div style="display:flex;gap:8px;align-items:center;">
-                            <input type="color" id="widget-color" value="#0a4f8c" style="width:48px;height:40px;padding:2px;background:#1a1a1a;border:1px solid #444;border-radius:6px;cursor:pointer;">
-                            <span id="widget-color-val" style="color:#94a3b8;font-size:0.85rem;font-family:monospace;">#0a4f8c</span>
+                        <label>Primärfarbe</label>
+                        <div style="display:flex;gap:10px;align-items:center;">
+                            <input type="color" id="widget-color" value="#0a4f8c" style="width:48px;height:40px;padding:2px;background:#1a1a1a;border:1px solid #444;border-radius:6px;cursor:pointer;" oninput="document.getElementById('widget-color-val').textContent=this.value">
+                            <span id="widget-color-val" style="color:#94a3b8;font-size:0.875rem;font-family:monospace;">#0a4f8c</span>
                         </div>
                     </div>
                     <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>

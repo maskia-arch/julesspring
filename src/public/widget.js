@@ -78,6 +78,9 @@
     @keyframes vs25-pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
     .vs25-close-btn { background: none; border: none; color: rgba(255,255,255,0.7); cursor: pointer; padding: 4px; border-radius: 6px; font-size: 1.1rem; line-height: 1; }
     .vs25-close-btn:hover { color: white; background: rgba(255,255,255,0.15); }
+    .vs25-handover-btn { background: none; border: 1px solid rgba(255,255,255,0.25); color: rgba(255,255,255,0.8); cursor: pointer; padding: 4px 8px; border-radius: 6px; font-size: 0.8rem; line-height: 1; margin-right: 4px; transition: all 0.15s; }
+    .vs25-handover-btn:hover { background: rgba(255,255,255,0.15); color: white; }
+    .vs25-handover-btn.active { background: #dc2626; border-color: #dc2626; color: white; }
 
     /* FAQ Bar */
     .vs25-faq-bar {
@@ -181,7 +184,8 @@
             <div class="vs25-header-name">ValueShop25 Support</div>
             <div class="vs25-header-status"><span class="vs25-dot"></span> Online</div>
           </div>
-          <button class="vs25-close-btn" id="vs25-close" aria-label="Schließen">✕</button>
+          <button class="vs25-handover-btn" id="vs25-handover" title="Mitarbeiter anfordern" aria-label="Mitarbeiter anfordern">👤</button>
+        <button class="vs25-close-btn" id="vs25-close" aria-label="Schließen">✕</button>
         </div>
         <div class="vs25-faq-bar" id="vs25-faq-bar"></div>
         <div class="vs25-messages" id="vs25-messages"></div>
@@ -198,6 +202,7 @@
     // Events
     document.getElementById('vs25-bubble').addEventListener('click', toggleChat);
     document.getElementById('vs25-close').addEventListener('click', closeChat);
+    document.getElementById('vs25-handover').addEventListener('click', requestHandover);
     document.getElementById('vs25-send').addEventListener('click', sendMessage);
     document.getElementById('vs25-input').addEventListener('keydown', function(e) {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
@@ -367,6 +372,29 @@
     var el = this || document.getElementById('vs25-input');
     el.style.height = 'auto';
     el.style.height = Math.min(el.scrollHeight, 100) + 'px';
+  }
+
+  var _handoverActive = false;
+
+  function requestHandover() {
+    if (!chatId) return;
+    _handoverActive = !_handoverActive;
+    var btn = document.getElementById('vs25-handover');
+    if (btn) btn.classList.toggle('active', _handoverActive);
+
+    fetch(API + '/api/widget/handover', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Chat-ID': chatId },
+      body: JSON.stringify({ chatId, request: _handoverActive })
+    }).catch(function() {});
+
+    if (_handoverActive) {
+      addMessage('bot', 'Ein Mitarbeiter wurde benachrichtigt und meldet sich so bald wie möglich. Die KI ist jetzt pausiert.');
+      if (btn) btn.title = 'KI wieder aktivieren';
+    } else {
+      addMessage('bot', 'KI-Support wurde wieder aktiviert.');
+      if (btn) btn.title = 'Mitarbeiter anfordern';
+    }
   }
 
   function toggleChat() { isOpen ? closeChat() : openChat(); }

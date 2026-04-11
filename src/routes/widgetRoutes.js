@@ -81,6 +81,39 @@ router.post('/message', async (req, res) => {
     const banCheck = await visitorService.isBanned(ip, chatId);
     if (banCheck.banned) return res.json({ banned: true, reply: 'Zugang gesperrt.' });
 
+    // Human-Handover: Kunde möchte echten Mitarbeiter
+    const HANDOVER_PATTERNS = [
+      /ich\s+m[öo]chte?\s+(mit\s+)?(einen?\s+)?(echten?\s+)?mitarbeiter/i,
+      /menschlichen?\s+(mitarbeiter|support|hilfe)/i,
+      /kein\s+(bot|ki|chatbot|automatik)/i,
+      /echte[rn]?\s+person/i,
+      /menschliche[rn]?\s+(hilfe|beratung|support)/i,
+      /mensch.*sprechen/i,
+      /sprechen.*mensch/i,
+      /human\s+(agent|support|help)/i,
+      /speak\s+(to|with)\s+(a\s+)?(human|person|agent)/i,
+      /connect\s+me\s+with/i,
+    ];
+
+    if (HANDOVER_PATTERNS.some(p => p.test(text))) {
+      // KI abschalten für diesen Chat
+      await supabase.from('chats').upsert({
+        id: chatId, platform: 'web_widget', is_manual_mode: true, updated_at: new Date()
+      }).catch(() => {});
+
+      // Admin Push senden
+      const notifService = require('../services/notificationService');
+      await notifService.sendNewMessageNotification({
+        chatId, text: '🙋 Kunde möchte echten Mitarbeiter sprechen: ' + text.substring(0, 60),
+        firstName: 'Widget-Besucher', platform: 'web_widget', isFirstMessage: false
+      }).catch(() => {});
+
+      return res.json({
+        reply: 'Kein Problem! Ein Mitarbeiter wurde benachrichtigt und meldet sich so schnell wie möglich bei dir. Die KI ist jetzt deaktiviert für diesen Chat.',
+        handover: true
+      });
+    }
+
     // Bestellstatus-Abfrage direkt im Widget
     const UNIQUE_ID_RE = /[a-f0-9]{8,}-[0-9]{10,}/i;
     const ID_PATTERN   = '([a-f0-9]+-[0-9]+|[0-9]+)';
@@ -200,7 +233,40 @@ router.get('/faq', async (req, res) => {
   }
 });
 
-// ── 6. Config ─────────────────────────────────────────────────────────────────
+// ── 6. Human Handover (manuell per Schalter) ────────────────────────────────
+router.post('/handover', async (req, res) => {
+  try {
+    const chatId  = req.headers['x-chat-id'] || req.body.chatId;
+    const request = req.body.request !== false; // true = handover anfordern, false = zurücksetzen
+    if (!chatId) return res.status(400).json({ error: 'chatId fehlt' });
+
+    await supabase.from('chats').upsert({
+      id: chatId, platform: 'web_widget',
+      is_manual_mode: request, updated_at: new Date()
+    });
+
+    if (request) {
+      // Push an Admin
+      const notifService = require('../services/notificationService');
+      await notifService.sendNewMessageNotification({
+        chatId,
+        text: '🙋 Widget-Besucher möchte mit Mitarbeiter sprechen',
+        firstName: 'Widget-Besucher', platform: 'web_widget', isFirstMessage: false
+      }).catch(() => {});
+
+      await supabase.from('messages').insert([{
+        chat_id: chatId, role: 'assistant',
+        content: 'Ein Mitarbeiter wurde benachrichtigt und meldet sich bald. Die KI ist jetzt deaktiviert.'
+      }]).catch(() => {});
+    }
+
+    res.json({ success: true, manualMode: request });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── 7. Config ─────────────────────────────────────────────────────────────────
 router.get('/config', async (req, res) => {
   try {
     const { data: s } = await supabase.from('settings').select('welcome_message').single();
