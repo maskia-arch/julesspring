@@ -6,13 +6,19 @@ var _allKbCats    = [];
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', function() {
-    if (localStorage.getItem('admin_token')) initDashboard();
+    // Fallback: falls auto-login im HTML den initDashboard nicht aufgerufen hat
+    if (localStorage.getItem('admin_token') && !_dashboardInitialized) {
+        initDashboard();
+    }
 // Intervals managed by initDashboard
 });
 
 // Dashboard-Loader mit Loading-Gate
 // App wird erst angezeigt wenn Stats + Chats erfolgreich geladen
+var _dashboardInitialized = false;
 async function initDashboard() {
+    if (_dashboardInitialized) return; // Nur einmal ausführen
+    _dashboardInitialized = true;
     _showLoadingGate(true);
 
     // Kritische Daten laden (Stats + Chats müssen klappen)
