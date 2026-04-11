@@ -5,6 +5,7 @@ const sellauthService  = require('../services/sellauthService');
 const syncJobManager   = require('../services/syncJobManager');
 const telegramService = require('../services/telegramService');
 const { getVersion }      = require('../utils/versionLoader');
+const visitorService      = require('../services/visitorService');
 const notificationService = require('../services/notificationService');
 // abuseDetector wird lazy geladen - verhindert Crash wenn schema10.sql noch nicht ausgeführt
 function getAbuseDetector() {
@@ -504,6 +505,38 @@ const adminController = {
       }]);
 
       res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  // ── IP Lookup & Visitor Management ────────────────────────────────────────
+  async lookupVisitorIp(req, res, next) {
+    try {
+      const { ip } = req.params;
+      if (!ip) return res.status(400).json({ error: 'IP fehlt' });
+      const data = await visitorService.lookupIp(decodeURIComponent(ip));
+      res.json(data);
+    } catch (e) { next(e); }
+  },
+
+  async banVisitorIp(req, res, next) {
+    try {
+      const { ip } = req.params;
+      const { reason } = req.body;
+      if (!ip) return res.status(400).json({ error: 'IP fehlt' });
+      const result = await visitorService.banIp(decodeURIComponent(ip), reason);
+      res.json(result);
+    } catch (e) { next(e); }
+  },
+
+  async getVisitorList(req, res, next) {
+    try {
+      const { data, error } = await supabase
+        .from('widget_visitors')
+        .select('chat_id, ip, country, first_seen, last_seen, page_count, is_banned, ban_reason, user_agent')
+        .order('last_seen', { ascending: false })
+        .limit(100);
+      if (error) throw error;
+      res.json(data || []);
     } catch (e) { next(e); }
   },
 

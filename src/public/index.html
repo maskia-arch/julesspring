@@ -197,6 +197,17 @@
                 </table>
             </div>
         
+            <!-- IP Lookup Tool -->
+            <div class="card" style="margin-top:16px;border-color:#1e3a5f;">
+                <h3 class="card-title">🔍 IP-Analyse & Bann</h3>
+                <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">IP-Adresse eingeben um alle Aktivitäten, Besuche und den Chat-Verlauf eines Besuchers zu sehen.</p>
+                <div class="input-row" style="margin-bottom:10px;">
+                    <input type="text" id="ip-lookup-input" placeholder="z.B. 192.168.1.1" style="flex:1;">
+                    <button onclick="lookupIp()" class="btn btn-primary">🔍 Suchen</button>
+                </div>
+                <div id="ip-lookup-result"></div>
+            </div>
+
             <!-- Geflaggte Chats -->
             <div class="card" style="margin-top:16px;border-color:#431407;">
                 <h3 class="card-title">🚩 Geflaggte Chats (Auto-Erkennung)</h3>
@@ -317,8 +328,8 @@
     </div>
 </div>
 
-<script src="js/api.js?v=123"></script>
-<script src="js/dashboard.js?v=123"></script>
+<script src="js/api.js?v=130"></script>
+<script src="js/dashboard.js?v=130"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });

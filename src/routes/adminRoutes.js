@@ -59,6 +59,11 @@ router.get('/blacklist',       ctrl.getBlacklist);
 router.post('/blacklist',      ctrl.banUser);
 router.delete('/blacklist/:id',ctrl.removeBan);
 
+// ─── Visitor / IP Management ─────────────────────────────────────────────────
+router.get('/visitors',              ctrl.getVisitorList);
+router.get('/visitors/ip/:ip',       ctrl.lookupVisitorIp);
+router.post('/visitors/ip/:ip/ban',  ctrl.banVisitorIp);
+
 // Push
 router.post('/push-subscription', ctrl.savePushSubscription);
 

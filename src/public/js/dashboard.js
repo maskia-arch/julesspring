@@ -116,10 +116,6 @@ async function updateStats() {
         sv('s-knowledge',d.stats.knowledgeEntries);
         sv('s-cost',     d.stats.totalCost);
         sv('s-tokens',   (d.stats.totalTokens||0).toLocaleString() + ' Token');
-        var costEl = document.getElementById('s-cost');
-        if (costEl && d.stats.costDeepseek) {
-            costEl.title = 'DeepSeek: $' + d.stats.costDeepseek + '\nEmbedding: $' + (d.stats.costEmbedding || '0.000000');
-        }
         sv('version-tag','v' + d.version);
         var badge = document.getElementById('learning-badge');
         if (badge) {
@@ -1079,6 +1075,48 @@ async function hardRefresh() {
     } finally {
         if (btn) { btn.textContent = '↺'; btn.disabled = false; }
     }
+}
+
+
+async function lookupIp() {
+    var ip = (document.getElementById('ip-lookup-input')?.value || '').trim();
+    if (!ip) return alert('IP-Adresse eingeben');
+    var result = document.getElementById('ip-lookup-result');
+    if (result) result.innerHTML = '<p style="color:#888;padding:8px;">Suche...</p>';
+    try {
+        var data = await api.request('/visitors/ip/' + encodeURIComponent(ip));
+        if (!data) { result.innerHTML = '<p style="color:#666;">Kein Ergebnis</p>'; return; }
+        var banBtn = data.isBanned
+            ? '<span style="color:#4ade80;font-size:0.85rem;">Bereits gebannt</span>'
+            : '<button onclick="banIpFromLookup(\'' + esc(ip) + '\')" class="btn btn-danger btn-sm">Bannen</button>';
+        result.innerHTML = '<div class="card" style="margin-top:10px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">' +
+                '<span style="font-weight:700;">' + esc(ip) + '</span>' + banBtn +
+            '</div>' +
+            '<div style="font-size:0.8rem;color:#94a3b8;margin-bottom:8px;">' +
+                'Erster Besuch: ' + (data.summary.firstSeen ? new Date(data.summary.firstSeen).toLocaleString('de-DE') : '-') + '<br>' +
+                'Letzter Besuch: ' + (data.summary.lastSeen ? new Date(data.summary.lastSeen).toLocaleString('de-DE') : '-') + '<br>' +
+                'Seiten besucht: ' + (data.summary.pageCount || 0) + '<br>' +
+                'Chat-ID: ' + esc(data.chatId || '-') +
+            '</div>' +
+            (data.activities?.length ? '<div style="font-size:0.8rem;font-weight:600;margin-bottom:4px;">Aktivitäten:</div>' +
+                '<div style="max-height:150px;overflow-y:auto;font-size:0.75rem;color:#94a3b8;">' +
+                data.activities.map(function(a) {
+                    return '<div style="padding:2px 0;">' + new Date(a.created_at).toLocaleString('de-DE') + ' - ' + esc(a.activity) + '</div>';
+                }).join('') + '</div>' : '') +
+            '</div>';
+    } catch(e) { if (result) result.innerHTML = '<p style="color:#ef4444;">' + esc(e.message) + '</p>'; }
+}
+
+async function banIpFromLookup(ip) {
+    var reason = prompt('Bann-Grund:') || 'IP-Bann';
+    if (reason === null) return;
+    try {
+        await api.request('/visitors/ip/' + encodeURIComponent(ip) + '/ban', 'POST', { reason });
+        showToast('Gebannt: ' + ip);
+        lookupIp();
+        loadBlacklist();
+    } catch(e) { alert('Fehler: ' + e.message); }
 }
 
 function showToast(msg) {

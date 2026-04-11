@@ -14,6 +14,14 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
+// widget.js mit Cache-Control Headers ausliefern
+app.get('/widget.js', (req, res) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.setHeader('Content-Type', 'application/javascript');
+  res.sendFile(path.join(__dirname, 'public', 'widget.js'));
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/api/admin',    adminRoutes);
@@ -62,11 +70,10 @@ async function autoRegisterWebhook() {
     const result = await telegramService.setWebhook(appUrl);
     if (result.ok) {
       logger.info(`[Webhook] ✅ Auto-registriert: ${appUrl}/api/webhooks/telegram`);
-      // Persistent in DB speichern (kein .catch() — Supabase v2 unterstützt das nicht)
-      try {
-        await supabase.from('settings')
-          .upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() });
-      } catch (_) {}
+      // Persistent in DB speichern
+      await supabase.from('settings')
+        .upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() })
+        .catch(() => {});
     } else {
       logger.warn(`[Webhook] Auto-Registrierung fehlgeschlagen: ${result.description}`);
     }
@@ -90,13 +97,7 @@ function startKeepAlive() {
       const req    = client.get(url.href, { timeout: 8000 }, (res) => {
         logger.info(`[KeepAlive] ${res.statusCode}`);
       });
-      req.on('error', (e) => {
-        // ETIMEDOUT und ECONNRESET sind bei Render normal – nicht loggen
-        if (!['ETIMEDOUT','ECONNRESET','ENOTFOUND'].includes(e.code)) {
-          logger.warn(`[KeepAlive] ${e.message}`);
-        }
-      });
-      req.setTimeout(8000, () => { req.destroy(); });
+      req.on('error', (e) => logger.warn(`[KeepAlive] ${e.message}`));
       req.end();
     } catch (e) {
       logger.warn(`[KeepAlive] ${e.message}`);
