@@ -94,6 +94,25 @@
                 <div class="stat-card"><div class="stat-label">TELEGRAM CHATS</div><div class="stat-value" id="t-tchats">–</div></div>
             </div>
 
+            <!-- Live Besucher -->
+            <div class="card" style="border-color:#1e3a5f;margin-bottom:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                    <h3 class="card-title" style="margin:0;">🟢 Live Besucher</h3>
+                    <span id="live-count" style="background:#1e3a5f;color:#60a5fa;padding:3px 10px;border-radius:12px;font-size:0.8rem;font-weight:700;">0 online</span>
+                </div>
+                <div id="live-visitors-list" style="max-height:200px;overflow-y:auto;">
+                    <p style="color:#555;font-size:0.85rem;">Lädt...</p>
+                </div>
+            </div>
+
+            <!-- Aktivitäts-Feed -->
+            <div class="card" style="margin-bottom:12px;">
+                <h3 class="card-title">📋 Letzte Aktivitäten</h3>
+                <div id="activity-feed" style="max-height:180px;overflow-y:auto;font-size:0.8rem;color:#94a3b8;">
+                    <p style="color:#555;">Lädt...</p>
+                </div>
+            </div>
+
             <!-- Chart -->
             <div class="card">
                 <h3 class="card-title" id="traffic-chart-title">Besucher & Chats – 7 Tage</h3>
@@ -381,6 +400,11 @@
                             <span id="widget-color-val" style="color:#94a3b8;font-size:0.875rem;font-family:monospace;">#0a4f8c</span>
                         </div>
                     </div>
+                    <div class="form-group">
+                        <label>„Powered by" Text</label>
+                        <input type="text" id="widget-powered-by" placeholder="Powered by ValueShop25 AI">
+                        <p class="hint">Wird im Widget unten angezeigt. Leer lassen = ausgeblendet.</p>
+                    </div>
                     <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
                 </div>
             </div>
@@ -389,8 +413,8 @@
     </div>
 </div>
 
-<script src="js/api.js?v=133"></script>
-<script src="js/dashboard.js?v=133"></script>
+<script src="js/api.js?v=1342"></script>
+<script src="js/dashboard.js?v=1342"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });

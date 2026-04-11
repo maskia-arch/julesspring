@@ -25,6 +25,52 @@ router.use((req, res, next) => {
   next();
 });
 
+// ── 0. Beacon: Passives Tracking (wird bei Seitenaufruf automatisch aufgerufen)
+router.post('/beacon', async (req, res) => {
+  res.sendStatus(200); // Sofort antworten, kein Warten
+  setImmediate(async () => {
+    try {
+      const ip          = visitorService._getClientIp(req);
+      const userAgent   = req.headers['user-agent'] || '';
+      const fingerprint = req.body.fingerprint || null;
+      const pageUrl     = req.body.pageUrl     || '';
+      const pageTitle   = req.body.pageTitle   || getSmartTitle(pageUrl, req.body.pageTitle);
+      const existingId  = req.body.chatId      || null;
+
+      // Ban-Check
+      const { chatId: tempId } = await visitorService.getOrCreateVisitor(ip, userAgent, fingerprint);
+      const banCheck = await visitorService.isBanned(ip, tempId);
+      if (banCheck.banned) return;
+
+      const { chatId } = await visitorService.getOrCreateVisitor(ip, userAgent, fingerprint);
+
+      // Nur lautlose Push, kein DB-Log (keep it light)
+      const notifService = require('../services/notificationService');
+      const smart = pageTitle || 'Seite';
+      await notifService._push({
+        title: '👁 ' + smart,
+        body:  'Besucher auf deiner Website',
+        icon:  '/icon-192.png',
+        tag:   'beacon-' + chatId.substring(0, 8),
+        url:   '/admin',
+        silent: true
+      }).catch(() => {});
+    } catch (_) {}
+  });
+});
+
+function getSmartTitle(url, titleFromBrowser) {
+  if (titleFromBrowser) return titleFromBrowser.split(/\s[–|-]\s/)[0].trim().substring(0, 50);
+  if (!url) return 'Seite';
+  try {
+    var path = new URL(url).pathname;
+    var m = path.match(/\/product\/([^/?#]+)/);
+    if (m) return m[1].replace(/-/g,' ').replace(/\w/g,function(c){return c.toUpperCase();});
+    if (path === '/' || path === '') return 'Startseite';
+    return path.replace(/^\//, '').replace(/[-\/]/g, ' ');
+  } catch { return 'Seite'; }
+}
+
 // ── 1. Init: Besucher registrieren, ChatID zurückgeben ────────────────────────
 router.post('/init', async (req, res) => {
   try {
@@ -285,12 +331,13 @@ router.post('/handover', async (req, res) => {
 // ── 7. Config ─────────────────────────────────────────────────────────────────
 router.get('/config', async (req, res) => {
   try {
-    const { data: s } = await supabase.from('settings').select('welcome_message').single();
+    const { data: s } = await supabase.from('settings').select('welcome_message, widget_powered_by').single();
     res.json({
       enabled:        true,
       botName:        'ValueShop25 Support',
       welcomeMessage: s?.welcome_message || 'Hallo! 👋 Wie kann ich dir helfen?',
-      version:        '1.3'
+      poweredBy:      s?.widget_powered_by !== undefined ? s.widget_powered_by : 'Powered by ValueShop25 AI',
+      version:        '1.3.4'
     });
   } catch {
     res.json({ enabled: true, botName: 'Support', welcomeMessage: 'Hallo! 👋' });

@@ -86,7 +86,20 @@ const adminController = {
         supabase.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending: true }).limit(200)
       ]);
       if (error) throw error;
-      res.json({ is_manual: chat?.is_manual_mode ?? false, chat_info: chat || {}, messages: msgs || [] });
+      // Collapse consecutive 📍 visit messages to show only the last
+      const allMsgs = msgs || [];
+      const filtered = [];
+      let lastVisitIdx = -1;
+      for (let i = 0; i < allMsgs.length; i++) {
+        const m = allMsgs[i];
+        if (m.role === 'system' && (m.content || '').startsWith('📍')) {
+          if (lastVisitIdx >= 0) filtered[lastVisitIdx] = null;
+          filtered.push(m); lastVisitIdx = filtered.length - 1;
+        } else {
+          lastVisitIdx = -1; filtered.push(m);
+        }
+      }
+      res.json({ is_manual: chat?.is_manual_mode ?? false, chat_info: chat || {}, messages: filtered.filter(Boolean) });
     } catch (e) { next(e); }
   },
 
@@ -180,6 +193,48 @@ const adminController = {
       if (st === 404) return res.status(404).json({ error: 'Bestellung nicht gefunden' });
       res.status(500).json({ error: err.response?.data?.message || err.message });
     }
+  },
+
+  async getLiveVisitors(req, res, next) {
+    try {
+      // Besucher der letzten 5 Minuten = "live"
+      const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { data: visitors } = await supabase
+        .from('widget_visitors')
+        .select('chat_id, ip, last_seen, page_count, user_agent')
+        .gte('last_seen', since)
+        .order('last_seen', { ascending: false })
+        .limit(50)
+        .catch(() => ({ data: [] }));
+
+      // Letzte Aktivitäten für diese Besucher
+      const chatIds = (visitors || []).map(v => v.chat_id);
+      let activities = [];
+      if (chatIds.length) {
+        const { data: acts } = await supabase
+          .from('visitor_activities')
+          .select('chat_id, activity, page_url, created_at')
+          .in('chat_id', chatIds)
+          .order('created_at', { ascending: false })
+          .limit(100)
+          .catch(() => ({ data: [] }));
+        activities = acts || [];
+      }
+
+      // Attach last activity to each visitor
+      const result = (visitors || []).map(v => {
+        const lastAct = activities.find(a => a.chat_id === v.chat_id);
+        return {
+          chatId:       v.chat_id,
+          lastSeen:     v.last_seen,
+          pageCount:    v.page_count,
+          currentPage:  lastAct?.activity?.replace('Besucht: ', '') || '?',
+          userAgent:    v.user_agent
+        };
+      });
+
+      res.json({ live: result.length, visitors: result });
+    } catch (e) { next(e); }
   },
 
   async getTrafficStats(req, res, next) {
