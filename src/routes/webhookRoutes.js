@@ -34,10 +34,24 @@ router.post('/telegram', (req, res) => {
       }
 
       // /order <ID> oder "Bestellung 12345" – direkte Sellauth-Abfrage, keine KI-Kosten
-      // Erkennt: /order 971 | /order 05d0bb6ed687d-0000011429923 | Bestellung 971 | invoice 12345
+      // Erkennt Invoice-IDs überall im Text:
+      // /order <ID>  |  "wo ist meine Bestellung <ID>"  |  "Status <ID>"
+      // Unique-ID Format: abc123-0000011429923  |  Plain: 12345
+      const UNIQUE_ID_RE = /[a-f0-9]{8,}-[0-9]{10,}/i;  // unique_id Format
+      const PLAIN_ID_RE  = /\b(\d{5,})\b/;             // plain numeric ≥5 Stellen
+
+      // Expliziter /order Befehl
       const ID_PATTERN = '([a-f0-9]+-[0-9]+|[0-9]+)';
-      const orderMatch = text.match(new RegExp('^\\/order\\s+' + ID_PATTERN, 'i')) ||
-                         text.match(new RegExp('^(?:bestellung|invoice|order|rechnung)[:\\s#]+' + ID_PATTERN, 'i'));
+      const explicitOrder = text.match(new RegExp('^\\/order\\s+' + ID_PATTERN, 'i')) ||
+                            text.match(new RegExp('^(?:bestellung|invoice|order|rechnung)[:\\s#]+' + ID_PATTERN, 'i'));
+
+      // Implizit: Bestellungskontext + Invoice-ID irgendwo im Text
+      const hasOrderContext = /(?:bestellung|bestell|order|invoice|rechnung|esim|status|wo ist|lieferung|kauft?e?|bezahlt?)/i.test(text);
+      const uniqueIdInText  = text.match(UNIQUE_ID_RE);
+      const plainIdInText   = hasOrderContext && text.match(PLAIN_ID_RE);
+      const implicitOrder   = uniqueIdInText || plainIdInText;
+
+      const orderMatch = explicitOrder || (implicitOrder ? [null, implicitOrder[0]] : null);
       if (orderMatch) {
         const sellauthService = require('../services/sellauthService');
         const invoiceId = orderMatch[1];
