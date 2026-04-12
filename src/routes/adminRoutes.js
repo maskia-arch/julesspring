@@ -67,6 +67,7 @@ router.post('/push/test',            ctrl.sendTestPush);
 // Traffic
 router.get('/traffic',               ctrl.getTrafficStats);
 router.get('/traffic/live',          ctrl.getLiveVisitors);
+router.get('/traffic/sessions',      ctrl.getSessions);
 
 // Visitor / IP
 router.get('/visitors',              ctrl.getVisitorList);

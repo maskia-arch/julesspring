@@ -195,6 +195,19 @@ const adminController = {
     }
   },
 
+  async getSessions(req, res, next) {
+    try {
+      const { limit = 50 } = req.query;
+      const { data, error } = await supabase
+        .from('visitor_sessions')
+        .select('id, chat_id, started_at, last_seen, page_count, entry_page, last_page, is_active, had_chat')
+        .order('started_at', { ascending: false })
+        .limit(parseInt(limit));
+      if (error) throw error;
+      res.json(data || []);
+    } catch (e) { next(e); }
+  },
+
   async getLiveVisitors(req, res, next) {
     try {
       // Besucher der letzten 5 Minuten = "live"
@@ -238,6 +251,55 @@ const adminController = {
   },
 
   async getTrafficStats(req, res, next) {
+    try {
+      const { range = 'week' } = req.query;
+      const days = range === '24h' ? 1 : (range === 'month' ? 30 : 7);
+      const since = new Date(Date.now() - days * 86400000).toISOString();
+
+      // Sessions direkt zählen (korrektere Quelle als widget_visitors)
+      const [sessionsRes, chatsRes, activitiesRes] = await Promise.all([
+        supabase.from('visitor_sessions').select('started_at, had_chat').gte('started_at', since).catch(() => ({ data: [] })),
+        supabase.from('chats').select('created_at, platform').gte('created_at', since).catch(() => ({ data: [] })),
+        supabase.from('visitor_activities').select('created_at').gte('created_at', since).catch(() => ({ data: [] }))
+      ]);
+
+      const sessions   = sessionsRes.data   || [];
+      const chats      = chatsRes.data       || [];
+      const activities = activitiesRes.data  || [];
+
+      // Gruppierung anpassen je nach Range
+      const fmt = range === '24h'
+        ? (dt) => new Date(dt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '00' }) // Stunden
+        : (dt) => new Date(dt).toISOString().slice(0, 10); // Tage
+
+      const buckets = {};
+      for (let d = 0; d < (range === '24h' ? 24 : days); d++) {
+        const dt = new Date(Date.now() - (range === '24h' ? (23-d)*3600000 : (days-1-d)*86400000));
+        const key = fmt(dt.toISOString());
+        buckets[key] = { label: key, sessions: 0, chats: 0, pageviews: 0 };
+      }
+
+      sessions.forEach(s  => { const k = fmt(s.started_at);  if (buckets[k]) buckets[k].sessions++; });
+      chats.forEach(c     => { const k = fmt(c.created_at);  if (buckets[k]) buckets[k].chats++;    });
+      activities.forEach(a=> { const k = fmt(a.created_at);  if (buckets[k]) buckets[k].pageviews++;});
+
+      res.json({
+        range,
+        days: Object.values(buckets),
+        totals: {
+          sessions:      sessions.length,
+          chats:         chats.length,
+          pageviews:     activities.length,
+          widgetChats:   chats.filter(c => c.platform === 'web_widget').length,
+          telegramChats: chats.filter(c => c.platform === 'telegram').length,
+          withChat:      sessions.filter(s => s.had_chat).length
+        }
+      });
+    } catch (e) { next(e); }
+  },
+
+  // Entfernte Methode (ersetzt durch oben):
+  async _oldGetTrafficStats(req, res, next) {
     try {
       const { range = 'week' } = req.query;
       const days = range === 'month' ? 30 : 7;

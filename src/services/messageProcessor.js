@@ -46,7 +46,10 @@ const messageProcessor = {
     // 3. Nutzer-Nachricht speichern (fire & forget)
     void (async () => {
       try {
-        await supabase.from('messages').insert([{ chat_id: chat.id, role: 'user', content: text }]);
+        await supabase.from('messages').insert([{
+          chat_id: chat.id, role: 'user', content: text,
+          sent_during_manual: chat.is_manual_mode || false
+        }]);
       } catch (e) { logger.warn('[MP] msg insert:', e.message); }
     })();
 
@@ -77,9 +80,10 @@ const messageProcessor = {
 
     const [context, allHistory, chatData] = await Promise.all([
       this._searchKnowledge(text, settings),
-      supabase.from('messages').select('role, content')
+      supabase.from('messages').select('role, content, sent_during_manual')
         .eq('chat_id', chat.id)
         .neq('role', 'system')
+        .eq('sent_during_manual', false)   // Manual-Mode Nachrichten ausschließen
         .order('created_at', { ascending: false })
         .limit(Math.max(maxHistory + summaryInterval, 20))
         .then(r => (r.data || []).reverse()),
@@ -116,7 +120,8 @@ const messageProcessor = {
           chat_id: chat.id, role: 'assistant', content: aiResult.text,
           prompt_tokens:     aiResult.promptTokens     || 0,
           completion_tokens: aiResult.completionTokens || 0,
-          embedding_tokens:  this._lastEmbeddingTokens || 0
+          embedding_tokens:  this._lastEmbeddingTokens || 0,
+          sent_during_manual: false
         }]);
         this._lastEmbeddingTokens = 0;
       } catch (e) { logger.warn('[MP] ai insert:', e.message); }

@@ -1079,6 +1079,7 @@ async function hardRefresh() {
         _safeRun(function() { return loadTraffic('week'); });
         _safeRun(loadLiveVisitors);
         _safeRun(loadActivityFeed);
+        _safeRun(loadSessions);
         // Alle 15s live aktualisieren
         clearInterval(_liveInterval);
         _liveInterval = setInterval(function() {
@@ -1214,37 +1215,35 @@ async function loadTraffic(range) {
     range = range || _trafficRange;
     _trafficRange = range;
 
-    // Toggle button styles
-    var wb = document.getElementById('traffic-btn-week');
-    var mb = document.getElementById('traffic-btn-month');
-    if (wb) { wb.className = range === 'week' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'; }
-    if (mb) { mb.className = range === 'month' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'; }
+    // Button states
+    ['24h','week','month'].forEach(function(r) {
+        var btn = document.getElementById('traffic-btn-' + r);
+        if (btn) btn.className = range === r ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
+    });
 
+    var labels = { '24h': '24 Stunden', 'week': '7 Tage', 'month': '30 Tage' };
     var title = document.getElementById('traffic-chart-title');
-    if (title) title.textContent = 'Besucher & Chats – ' + (range === 'week' ? '7 Tage' : '30 Tage');
+    if (title) title.textContent = 'Sessions & Chats – ' + (labels[range] || '7 Tage');
 
     try {
-        var data = await api.request('/traffic?range=' + range);
+        var data = await fetch('/api/admin/traffic?range=' + range, {
+            headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('admin_token')||'') }
+        }).then(function(r){ return r.json(); });
         if (!data) return;
 
-        // Update totals
         var sv = function(id,v) { var e=document.getElementById(id); if(e) e.textContent=v; };
-        sv('t-visitors',  data.totals?.visitors  || 0);
-        sv('t-pageviews', data.totals?.pageviews  || 0);
-        sv('t-wchats',    data.totals?.widgetChats || 0);
+        sv('t-visitors',  data.totals?.sessions     || 0);
+        sv('t-pageviews', data.totals?.pageviews     || 0);
+        sv('t-wchats',    data.totals?.widgetChats   || 0);
         sv('t-tchats',    data.totals?.telegramChats || 0);
 
-        // Chart
         var days     = data.days || [];
-        var labels   = days.map(function(d) {
-            var dt = new Date(d.date);
-            return dt.toLocaleDateString('de-DE', { weekday:'short', day:'numeric', month:'numeric' });
-        });
-        var visitors  = days.map(function(d) { return d.visitors; });
-        var chats     = days.map(function(d) { return d.chats; });
-        var pageviews = days.map(function(d) { return d.pageviews; });
+        var lbls     = days.map(function(d) { return d.label || d.date || ''; });
+        var sessions  = days.map(function(d) { return d.sessions || 0; });
+        var chats     = days.map(function(d) { return d.chats    || 0; });
+        var pageviews = days.map(function(d) { return d.pageviews|| 0; });
 
-        drawTrafficChart(labels, visitors, chats, pageviews);
+        drawTrafficChart(lbls, sessions, chats, pageviews);
     } catch(e) {
         console.warn('[Traffic]', e.message);
     }
@@ -1398,6 +1397,39 @@ function showChatById(chatId) {
             if (item.dataset.chatId === chatId) item.click();
         });
     }, 300);
+}
+
+
+async function loadSessions() {
+    var el = document.getElementById('sessions-list');
+    if (!el) return;
+    try {
+        var data = await fetch('/api/admin/traffic/sessions?limit=30', {
+            headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('admin_token')||'') }
+        }).then(function(r){ return r.json(); });
+
+        if (!data?.length) { el.innerHTML = '<p style="color:#555;font-size:0.82rem;">Keine Sessions.</p>'; return; }
+
+        el.innerHTML = data.map(function(s) {
+            var started = new Date(s.started_at).toLocaleString('de-DE', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+            var ago = Math.round((Date.now() - new Date(s.last_seen)) / 1000);
+            var agoStr = ago < 60 ? ago+'s' : ago < 3600 ? Math.round(ago/60)+'min' : Math.round(ago/3600)+'h';
+            var statusDot = s.is_active
+                ? '<span style="width:8px;height:8px;border-radius:50%;background:#4caf50;display:inline-block;margin-right:4px;animation:vspulse 2s infinite"></span>'
+                : '<span style="width:8px;height:8px;border-radius:50%;background:#888;display:inline-block;margin-right:4px;"></span>';
+            return '<div style="padding:8px 0;border-bottom:1px solid #1a1a1a;display:flex;gap:8px;align-items:flex-start;">' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="font-size:0.82rem;font-weight:600;display:flex;align-items:center;gap:4px;">' + statusDot + esc(s.entry_page||'?') + '</div>' +
+                    '<div style="font-size:0.72rem;color:#64748b;margin-top:1px;">' +
+                        started + ' · ' + (s.page_count||0) + ' Seiten' +
+                        (s.had_chat ? ' · <span style="color:#60a5fa">💬 Chat</span>' : '') +
+                    '</div>' +
+                    (s.last_page && s.last_page !== s.entry_page ? '<div style="font-size:0.7rem;color:#555;">→ '+esc(s.last_page)+'</div>' : '') +
+                '</div>' +
+                '<div style="font-size:0.7rem;color:#555;white-space:nowrap;">' + agoStr + '</div>' +
+            '</div>';
+        }).join('');
+    } catch(e) { el.innerHTML = '<p style="color:#ef4444;font-size:0.8rem;">'+esc(e.message)+'</p>'; }
 }
 
 function showToast(msg) {

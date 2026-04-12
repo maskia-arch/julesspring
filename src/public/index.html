@@ -80,15 +80,16 @@
         <section id="traffic-section" class="app-section">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
                 <h2 class="section-title" style="margin:0;">📊 Website Traffic</h2>
-                <div style="display:flex;gap:6px;">
-                    <button onclick="loadTraffic('week')" id="traffic-btn-week" class="btn btn-primary btn-sm">7 Tage</button>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button onclick="loadTraffic('24h')"   id="traffic-btn-24h"   class="btn btn-secondary btn-sm">24h</button>
+                    <button onclick="loadTraffic('week')"  id="traffic-btn-week"  class="btn btn-primary btn-sm">7 Tage</button>
                     <button onclick="loadTraffic('month')" id="traffic-btn-month" class="btn btn-secondary btn-sm">30 Tage</button>
                 </div>
             </div>
 
             <!-- Totals -->
             <div class="stats-grid" id="traffic-totals" style="margin-bottom:16px;">
-                <div class="stat-card"><div class="stat-label">BESUCHER</div><div class="stat-value" id="t-visitors">–</div></div>
+                <div class="stat-card"><div class="stat-label">SESSIONS</div><div class="stat-value" id="t-visitors">–</div></div>
                 <div class="stat-card"><div class="stat-label">SEITENAUFRUFE</div><div class="stat-value" id="t-pageviews">–</div></div>
                 <div class="stat-card"><div class="stat-label">WIDGET CHATS</div><div class="stat-value" id="t-wchats">–</div></div>
                 <div class="stat-card"><div class="stat-label">TELEGRAM CHATS</div><div class="stat-value" id="t-tchats">–</div></div>
@@ -113,9 +114,17 @@
                 </div>
             </div>
 
+            <!-- Sessions -->
+            <div class="card" style="margin-bottom:12px;">
+                <h3 class="card-title">📋 Sessions</h3>
+                <div id="sessions-list" style="max-height:240px;overflow-y:auto;">
+                    <p style="color:#555;font-size:0.85rem;">Lädt...</p>
+                </div>
+            </div>
+
             <!-- Chart -->
             <div class="card">
-                <h3 class="card-title" id="traffic-chart-title">Besucher & Chats – 7 Tage</h3>
+                <h3 class="card-title" id="traffic-chart-title">Sessions & Chats – 7 Tage</h3>
                 <canvas id="traffic-chart" height="200" style="width:100%;"></canvas>
                 <div id="traffic-legend" style="display:flex;gap:16px;margin-top:10px;font-size:0.78rem;color:#94a3b8;flex-wrap:wrap;"></div>
             </div>
@@ -424,8 +433,8 @@
     </div>
 </div>
 
-<script src="js/api.js?v=135"></script>
-<script src="js/dashboard.js?v=135"></script>
+<script src="js/api.js?v=136"></script>
+<script src="js/dashboard.js?v=136"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });

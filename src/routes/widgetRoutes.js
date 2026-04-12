@@ -96,17 +96,30 @@ router.post('/init', async (req, res) => {
       await visitorService.logActivity(chatId, activity, pageUrl, pageTitle);
     }
 
-    // Silent Push an Admin (lautlos = kein Sound, kein Banner) bei JEDEM Besuch
+    // Session anlegen / aktualisieren
+    const sessionId = await _upsertSession(chatId, smartTitle, supabase, isNew);
+
+    // Silent Push – maximal 1x alle 5 Minuten pro Besucher (dedup via session.push_sent)
     void (async () => {
       try {
+        const { data: session } = await supabase.from('visitor_sessions')
+          .select('push_sent, started_at').eq('id', sessionId).single().catch(() => ({ data: null }));
+
+        // Push nur wenn: neue Session ODER push_sent=false ODER Session > 5min alt ohne Push
+        const needsPush = !session?.push_sent;
+        if (!needsPush) return;
+
+        await supabase.from('visitor_sessions').update({ push_sent: true }).eq('id', sessionId).catch(() => {});
+
         const notifService = require('../services/notificationService');
         await notifService._push({
-          title:  isNew ? `👁 Neuer Besucher: ${smartTitle}` : `📍 ${smartTitle}`,
-          body:   isNew ? 'Jemand besucht deine Website' : 'Bekannter Besucher',
+          title:  isNew ? `👁 Neuer Besucher` : `📍 ${smartTitle}`,
+          body:   isNew ? `Besucht: ${smartTitle}` : `Bekannter Besucher auf: ${smartTitle}`,
           icon:   '/icon-192.png',
-          tag:    `visit-${chatId}`,   // Gleicher Tag = ersetzt vorherige lautlose Notification
+          tag:    `visit-${chatId.substring(0, 10)}`,
           url:    '/admin',
-          silent: true                 // Kein Sound, kein Vibration
+          silent: true,
+          data:   { sessionId, chatId, url: '/admin' }
         });
       } catch (_) {}
     })();
@@ -138,6 +151,10 @@ router.post('/message', async (req, res) => {
     const ip        = visitorService._getClientIp(req);
 
     if (!chatId || !text) return res.status(400).json({ error: 'chatId und message erforderlich' });
+
+    // Session als aktiv mit Chat markieren
+    void supabase.from('visitor_sessions').update({ had_chat: true, last_seen: new Date() })
+      .eq('chat_id', chatId).eq('is_active', true).catch(() => {});
 
     // Ban-Check
     const banCheck = await visitorService.isBanned(ip, chatId);
@@ -342,6 +359,82 @@ router.get('/config', async (req, res) => {
   } catch {
     res.json({ enabled: true, botName: 'Support', welcomeMessage: 'Hallo! 👋' });
   }
+});
+
+// ── Hilfsfunktionen ─────────────────────────────────────────────────────────
+
+async function _upsertSession(chatId, pageTitle, supabase, isNew) {
+  try {
+    // Aktive Session suchen (letzte 30 Minuten)
+    const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    const { data: active } = await supabase
+      .from('visitor_sessions')
+      .select('id, page_count')
+      .eq('chat_id', chatId)
+      .eq('is_active', true)
+      .gte('last_seen', cutoff)
+      .order('last_seen', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (active) {
+      // Session aktualisieren
+      await supabase.from('visitor_sessions').update({
+        last_seen:  new Date(),
+        page_count: (active.page_count || 0) + 1,
+        last_page:  pageTitle
+      }).eq('id', active.id);
+      return active.id;
+    }
+
+    // Alte Sessions schließen
+    await supabase.from('visitor_sessions').update({
+      is_active: false,
+      ended_at:  new Date()
+    }).eq('chat_id', chatId).eq('is_active', true);
+
+    // Neue Session
+    const { data: created } = await supabase.from('visitor_sessions').insert([{
+      chat_id:    chatId,
+      started_at: new Date(),
+      last_seen:  new Date(),
+      entry_page: pageTitle,
+      last_page:  pageTitle,
+      is_active:  true,
+      push_sent:  false,
+      had_chat:   false
+    }]).select('id').single();
+
+    return created?.id || null;
+  } catch { return null; }
+}
+
+// ── KI-Status Endpoint (für Widget-Bubble Statusanzeige) ─────────────────────
+router.get('/status', async (req, res) => {
+  try {
+    const chatId = req.headers['x-chat-id'] || req.query.chatId;
+    if (!chatId) return res.json({ status: 'online' });
+
+    const { data: chat } = await supabase.from('chats')
+      .select('is_manual_mode, auto_muted')
+      .eq('id', chatId).maybeSingle();
+
+    if (chat?.auto_muted) return res.json({ status: 'offline' });
+    if (chat?.is_manual_mode) return res.json({ status: 'manual' });
+    return res.json({ status: 'online' });
+  } catch { res.json({ status: 'online' }); }
+});
+
+// ── Session-Details (für Dashboard) ──────────────────────────────────────────
+router.get('/sessions', async (req, res) => {
+  try {
+    const { data } = await supabase
+      .from('visitor_sessions')
+      .select('id, chat_id, started_at, last_seen, page_count, entry_page, last_page, is_active, had_chat, duration_sec')
+      .order('started_at', { ascending: false })
+      .limit(100);
+    res.json(data || []);
+  } catch { res.json([]); }
 });
 
 module.exports = router;
