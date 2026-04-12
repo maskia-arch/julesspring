@@ -71,12 +71,12 @@ var CSS=[
 '.vs25-msg.u{align-self:flex-end}',
 '.vs25-msg.b{align-self:flex-start}',
 // WhatsApp-style bubbles
-'.vs25-bub{padding:8px 12px 20px;border-radius:8px;font-size:.9rem;line-height:1.55;word-break:break-word;white-space:pre-wrap;position:relative}',
+'.vs25-bub{padding:8px 54px 8px 12px;border-radius:8px;font-size:.9rem;line-height:1.55;word-break:break-word;white-space:pre-wrap;position:relative;min-height:36px}',
 '.vs25-msg.b .vs25-bub{background:white;color:#111;border-top-left-radius:2px;box-shadow:0 1px 1px rgba(0,0,0,.1)}',
 '.vs25-msg.u .vs25-bub{background:#dcf8c6;color:#111;border-top-right-radius:2px;box-shadow:0 1px 1px rgba(0,0,0,.1)}',
 // Timestamps inside bubble (WhatsApp style)
-'.vs25-ts{position:absolute;bottom:4px;right:8px;font-size:.62rem;color:rgba(0,0,0,.4)}',
-'.vs25-msg.u .vs25-ts{color:rgba(0,0,0,.4)}',
+'.vs25-ts{position:absolute;bottom:5px;right:9px;font-size:.62rem;color:rgba(0,0,0,.4);white-space:nowrap;line-height:1}',
+'.vs25-msg.u .vs25-ts{color:rgba(0,100,0,.5)}',
 // Date separator
 '.vs25-date-sep{text-align:center;margin:8px 0;font-size:.72rem;color:rgba(0,0,0,.55)}',
 '.vs25-date-sep span{background:rgba(255,255,255,.65);padding:3px 10px;border-radius:8px}',

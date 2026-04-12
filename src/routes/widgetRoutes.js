@@ -47,14 +47,16 @@ router.post('/beacon', async (req, res) => {
       // Nur lautlose Push, kein DB-Log (keep it light)
       const notifService = require('../services/notificationService');
       const smart = pageTitle || 'Seite';
-      await notifService._push({
-        title: '👁 ' + smart,
-        body:  'Besucher auf deiner Website',
-        icon:  '/icon-192.png',
-        tag:   'beacon-' + chatId.substring(0, 8),
-        url:   '/admin',
-        silent: true
-      }).catch(() => {});
+      try {
+        await notifService._push({
+          title: '👁 ' + smart,
+          body:  'Besucher auf deiner Website',
+          icon:  '/icon-192.png',
+          tag:   'beacon-' + chatId.substring(0, 8),
+          url:   '/admin',
+          silent: true
+        });
+      } catch (_) {}
     } catch (_) {}
   });
 });
@@ -102,14 +104,18 @@ router.post('/init', async (req, res) => {
     // Silent Push – maximal 1x alle 5 Minuten pro Besucher (dedup via session.push_sent)
     void (async () => {
       try {
-        const { data: session } = await supabase.from('visitor_sessions')
-          .select('push_sent, started_at').eq('id', sessionId).single().catch(() => ({ data: null }));
+        let session = null;
+        try {
+          const { data: _s } = await supabase.from('visitor_sessions')
+            .select('push_sent, started_at').eq('id', sessionId).single();
+          session = _s;
+        } catch (_) {}
 
         // Push nur wenn: neue Session ODER push_sent=false ODER Session > 5min alt ohne Push
         const needsPush = !session?.push_sent;
         if (!needsPush) return;
 
-        await supabase.from('visitor_sessions').update({ push_sent: true }).eq('id', sessionId).catch(() => {});
+        try { await supabase.from('visitor_sessions').update({ push_sent: true }).eq('id', sessionId); } catch (_) {}
 
         const notifService = require('../services/notificationService');
         await notifService._push({
@@ -153,8 +159,7 @@ router.post('/message', async (req, res) => {
     if (!chatId || !text) return res.status(400).json({ error: 'chatId und message erforderlich' });
 
     // Session als aktiv mit Chat markieren
-    void supabase.from('visitor_sessions').update({ had_chat: true, last_seen: new Date() })
-      .eq('chat_id', chatId).eq('is_active', true).catch(() => {});
+    void (async () => { try { await supabase.from('visitor_sessions').update({ had_chat: true, last_seen: new Date() }).eq('chat_id', chatId).eq('is_active', true); } catch (_) {} })();
 
     // Ban-Check
     const banCheck = await visitorService.isBanned(ip, chatId);
@@ -176,16 +181,14 @@ router.post('/message', async (req, res) => {
 
     if (HANDOVER_PATTERNS.some(p => p.test(text))) {
       // KI abschalten für diesen Chat
-      await supabase.from('chats').upsert({
-        id: chatId, platform: 'web_widget', is_manual_mode: true, updated_at: new Date()
-      }).catch(() => {});
+      try { await supabase.from('chats').upsert({ id: chatId, platform: 'web_widget', is_manual_mode: true, updated_at: new Date() }); } catch (_) {}
 
       // Admin Push senden
       const notifService = require('../services/notificationService');
-      await notifService.sendNewMessageNotification({
+      try { await notifService.sendNewMessageNotification({
         chatId, text: '🙋 Kunde möchte echten Mitarbeiter sprechen: ' + text.substring(0, 60),
         firstName: 'Widget-Besucher', platform: 'web_widget', isFirstMessage: false
-      }).catch(() => {});
+      }); } catch (_) {}
 
       return res.json({
         reply: 'Kein Problem! Ein Mitarbeiter wurde benachrichtigt und meldet sich so schnell wie möglich bei dir. Die KI ist jetzt deaktiviert für diesen Chat.',
@@ -327,16 +330,16 @@ router.post('/handover', async (req, res) => {
     if (request) {
       // Push an Admin
       const notifService = require('../services/notificationService');
-      await notifService.sendNewMessageNotification({
+      try { await notifService.sendNewMessageNotification({
         chatId,
         text: '🙋 Widget-Besucher möchte mit Mitarbeiter sprechen',
         firstName: 'Widget-Besucher', platform: 'web_widget', isFirstMessage: false
-      }).catch(() => {});
+      }); } catch (_) {}
 
-      await supabase.from('messages').insert([{
+      try { await supabase.from('messages').insert([{
         chat_id: chatId, role: 'assistant',
         content: 'Ein Mitarbeiter wurde benachrichtigt und meldet sich bald. Die KI ist jetzt deaktiviert.'
-      }]).catch(() => {});
+      }]); } catch (_) {}
     }
 
     res.json({ success: true, manualMode: request });
