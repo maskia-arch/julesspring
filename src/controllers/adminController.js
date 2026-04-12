@@ -210,41 +210,26 @@ const adminController = {
 
   async getLiveVisitors(req, res, next) {
     try {
-      // Besucher der letzten 5 Minuten = "live"
-      const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      const { data: visitors } = await supabase
-        .from('widget_visitors')
-        .select('chat_id, ip, last_seen, page_count, user_agent')
+      // Aktive Sessions der letzten 15 Minuten = "live" (großzügigeres Fenster)
+      const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
+
+      const { data: sessions } = await supabase
+        .from('visitor_sessions')
+        .select('id, chat_id, last_seen, page_count, entry_page, last_page, had_chat, is_active')
         .gte('last_seen', since)
         .order('last_seen', { ascending: false })
-        .limit(50)
-        .catch(() => ({ data: [] }));
+        .limit(50);
 
-      // Letzte Aktivitäten für diese Besucher
-      const chatIds = (visitors || []).map(v => v.chat_id);
-      let activities = [];
-      if (chatIds.length) {
-        const { data: acts } = await supabase
-          .from('visitor_activities')
-          .select('chat_id, activity, page_url, created_at')
-          .in('chat_id', chatIds)
-          .order('created_at', { ascending: false })
-          .limit(100)
-          .catch(() => ({ data: [] }));
-        activities = acts || [];
-      }
-
-      // Attach last activity to each visitor
-      const result = (visitors || []).map(v => {
-        const lastAct = activities.find(a => a.chat_id === v.chat_id);
-        return {
-          chatId:       v.chat_id,
-          lastSeen:     v.last_seen,
-          pageCount:    v.page_count,
-          currentPage:  lastAct?.activity?.replace('Besucht: ', '') || '?',
-          userAgent:    v.user_agent
-        };
-      });
+      const result = (sessions || []).map(s => ({
+        sessionId:   s.id,
+        chatId:      s.chat_id,
+        lastSeen:    s.last_seen,
+        pageCount:   s.page_count,
+        currentPage: s.last_page || s.entry_page || '?',
+        entryPage:   s.entry_page,
+        hadChat:     s.had_chat,
+        isActive:    s.is_active
+      }));
 
       res.json({ live: result.length, visitors: result });
     } catch (e) { next(e); }

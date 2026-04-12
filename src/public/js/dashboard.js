@@ -1327,6 +1327,8 @@ function drawTrafficChart(labels, visitors, chats, pageviews) {
 // ── Live Visitors ─────────────────────────────────────────────────────────────
 var _liveInterval = null;
 
+var _selectedVisitor = null;
+
 async function loadLiveVisitors() {
     try {
         var data = await fetch('/api/admin/traffic/live', {
@@ -1334,35 +1336,101 @@ async function loadLiveVisitors() {
         }).then(function(r){ return r.json(); });
 
         var countEl = document.getElementById('live-count');
-        if (countEl) countEl.textContent = (data.live || 0) + ' online';
+        if (countEl) {
+            countEl.textContent = (data.live || 0) + ' online';
+            countEl.style.background = data.live > 0 ? '#14532d' : '#1e3a5f';
+            countEl.style.color      = data.live > 0 ? '#4ade80' : '#60a5fa';
+        }
 
         var listEl = document.getElementById('live-visitors-list');
         if (!listEl) return;
 
-        if (!data.visitors?.length) {
-            listEl.innerHTML = '<p style="color:#555;font-size:0.82rem;padding:4px;">Keine aktiven Besucher gerade.</p>';
+        if (!data.visitors || !data.visitors.length) {
+            listEl.innerHTML = '<p style="color:#555;font-size:0.82rem;padding:8px;">Keine aktiven Besucher in den letzten 15 Minuten.</p>';
             return;
         }
 
         listEl.innerHTML = data.visitors.map(function(v) {
             var ago = Math.round((Date.now() - new Date(v.lastSeen)) / 1000);
-            var agoStr = ago < 60 ? ago + 's' : Math.round(ago/60) + 'min';
-            var ua = (v.userAgent || '').toLowerCase();
-            var device = ua.includes('mobile') ? '📱' : (ua.includes('tablet') ? '📲' : '🖥️');
-            return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #1a1a1a;">' +
-                '<span style="font-size:1.1rem;">' + device + '</span>' +
+            var agoStr = ago < 60 ? ago + 's' : ago < 3600 ? Math.round(ago/60) + 'min' : Math.round(ago/3600) + 'h';
+            var isRecent = ago < 180;
+            var dotColor = isRecent ? '#4ade80' : '#f59e0b';
+            var dotAnim  = isRecent ? 'animation:vspulse 2s infinite' : '';
+            var chatBadge = v.hadChat ? '<span style="font-size:0.65rem;background:#1e3a5f;color:#60a5fa;padding:1px 5px;border-radius:4px;margin-left:4px;">💬</span>' : '';
+            var shortId = (v.chatId || '').substring(0, 14) + '…';
+            var sid = esc(v.sessionId || '');
+            var cid = v.chatId || '';
+            var cp  = v.currentPage || '?';
+            var safeClick = 'openVisitorDetail(this.getAttribute(\'data-cid\'),this.getAttribute(\'data-sid\'),this.getAttribute(\'data-cp\'))';
+            return '<div data-cid="' + esc(cid) + '" data-sid="' + esc(sid) + '" data-cp="' + esc(cp) + '" onclick="' + safeClick + '" ' +
+                'style="display:flex;align-items:center;gap:9px;padding:10px;border-radius:8px;background:#111;margin-bottom:6px;cursor:pointer;">' +
+                '<span style="width:10px;height:10px;border-radius:50%;background:' + dotColor + ';display:inline-block;flex-shrink:0;' + dotAnim + ';"></span>' +
                 '<div style="flex:1;min-width:0;">' +
-                    '<div style="font-size:0.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(v.currentPage) + '</div>' +
-                    '<div style="font-size:0.7rem;color:#555;">' + agoStr + ' ago · ' + v.pageCount + ' Seiten</div>' +
+                    '<div style="font-size:0.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + cp + chatBadge + '</div>' +
+                    '<div style="font-size:0.72rem;color:#64748b;margin-top:2px;">' + shortId + ' · ' + agoStr + ' · ' + (v.pageCount || 1) + ' Seiten</div>' +
                 '</div>' +
-                '<button onclick="showChatById(\'' + esc(v.chatId) + '\')" class="btn btn-secondary btn-sm" style="font-size:0.7rem;padding:2px 8px;">Chat</button>' +
+                '<span style="color:#64748b;font-size:0.8rem;">›</span>' +
             '</div>';
         }).join('');
     } catch(e) {
         var listEl = document.getElementById('live-visitors-list');
-        if (listEl) listEl.innerHTML = '<p style="color:#555;font-size:0.82rem;">Keine Daten.</p>';
+        if (listEl) listEl.innerHTML = '<p style="color:#ef4444;font-size:0.82rem;">' + esc(e.message) + '</p>';
     }
 }
+
+async function openVisitorDetail(chatId, sessionId, currentPage) {
+    _selectedVisitor = { chatId: chatId, sessionId: sessionId };
+    var panel = document.getElementById('visitor-detail-panel');
+    if (!panel) return;
+    panel.style.display = 'block';
+
+    var titleEl = document.getElementById('visitor-detail-title');
+    if (titleEl) titleEl.textContent = currentPage || chatId.substring(0, 20);
+    var idEl = document.getElementById('visitor-detail-id');
+    if (idEl) idEl.textContent = chatId;
+
+    var actEl = document.getElementById('visitor-detail-acts');
+    if (actEl) actEl.innerHTML = '<p style="color:#555;font-size:0.82rem;">Lädt...</p>';
+
+    try {
+        var sessions = await fetch('/api/admin/traffic/sessions?limit=100', {
+            headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('admin_token')||'') }
+        }).then(function(r){ return r.json(); }).catch(function(){ return []; });
+
+        var visitorSessions = (sessions || []).filter(function(s){ return s.chat_id === chatId; });
+
+        if (!actEl) return;
+        if (!visitorSessions.length) {
+            actEl.innerHTML = '<p style="color:#555;font-size:0.82rem;">Keine Sessions gefunden.</p>';
+            return;
+        }
+
+        actEl.innerHTML = visitorSessions.map(function(s) {
+            var dt = new Date(s.started_at).toLocaleString('de-DE', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+            var ago = Math.round((Date.now() - new Date(s.last_seen)) / 1000);
+            var agoStr = ago < 60 ? ago+'s' : ago < 3600 ? Math.round(ago/60)+'min' : Math.round(ago/3600)+'h';
+            var dot = '<span style="width:8px;height:8px;border-radius:50%;background:' + (s.is_active ? '#4ade80' : '#555') + ';display:inline-block;margin-right:5px;flex-shrink:0;"></span>';
+            return '<div style="padding:10px;background:#111;border-radius:8px;margin-bottom:6px;">' +
+                '<div style="font-size:0.85rem;font-weight:600;display:flex;align-items:center;margin-bottom:4px;">' + dot + esc(s.entry_page || '?') + '</div>' +
+                '<div style="font-size:0.75rem;color:#64748b;">' +
+                    dt + ' · ' + (s.page_count || 1) + ' Seiten' +
+                    (s.had_chat ? ' · <span style="color:#60a5fa;">💬 Chat</span>' : '') +
+                    ' · ' + agoStr + ' ago' +
+                '</div>' +
+                (s.last_page && s.last_page !== s.entry_page ? '<div style="font-size:0.72rem;color:#555;margin-top:2px;">→ ' + esc(s.last_page) + '</div>' : '') +
+            '</div>';
+        }).join('');
+    } catch(e) {
+        if (actEl) actEl.innerHTML = '<p style="color:#ef4444;font-size:0.8rem;">' + esc(e.message) + '</p>';
+    }
+}
+
+function closeVisitorDetail() {
+    var panel = document.getElementById('visitor-detail-panel');
+    if (panel) panel.style.display = 'none';
+    _selectedVisitor = null;
+}
+
 
 async function loadActivityFeed() {
     try {
