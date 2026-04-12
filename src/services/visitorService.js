@@ -13,29 +13,50 @@ const visitorService = {
   // Gibt eine persistente ChatID für diese IP zurück (oder erstellt eine neue)
   async getOrCreateVisitor(ip, userAgent, fingerprint) {
     const ipHash = this._hashIp(ip);
+    // Fingerprint als sekundärer Schlüssel – stabiler als IP (z.B. bei VPN-Wechsel)
+    const fpHash = fingerprint ? this._hashIp(fingerprint) : null;
 
     try {
-      // Bestehenden Besucher suchen (IP-Hash)
-      const { data: existing } = await supabase
-        .from('widget_visitors')
-        .select('*')
-        .eq('ip_hash', ipHash)
-        .single();
+      // 1. Erst via Fingerprint suchen (stabilster Schlüssel)
+      let existing = null;
+      if (fpHash) {
+        const { data: byFp } = await supabase
+          .from('widget_visitors')
+          .select('*')
+          .eq('fingerprint', fingerprint)
+          .order('last_seen', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (byFp) existing = byFp;
+      }
+
+      // 2. Fallback: via IP-Hash
+      if (!existing) {
+        const { data: byIp } = await supabase
+          .from('widget_visitors')
+          .select('*')
+          .eq('ip_hash', ipHash)
+          .order('last_seen', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (byIp) existing = byIp;
+      }
 
       if (existing) {
-        // Letzten Besuch aktualisieren
+        // Aktualisieren ohne page_count zu erhöhen (das macht _upsertSession)
         await supabase.from('widget_visitors').update({
-          last_seen:  new Date(),
-          page_count: (existing.page_count || 0) + 1,
-          user_agent: userAgent || existing.user_agent,
-          fingerprint: fingerprint || existing.fingerprint
+          last_seen:   new Date(),
+          user_agent:  userAgent || existing.user_agent,
+          fingerprint: fingerprint || existing.fingerprint,
+          ip_hash:     ipHash  // IP kann sich ändern, aktuell halten
         }).eq('id', existing.id);
 
         return { chatId: existing.chat_id, visitor: existing, isNew: false };
       }
 
-      // Neuen Besucher anlegen
-      const chatId = `web_${ipHash.substring(0, 12)}_${Date.now().toString(36)}`;
+      // Neuen Besucher anlegen – stabile ID basierend auf Fingerprint oder IP
+      const idBase = fpHash ? fpHash.substring(0, 10) : ipHash.substring(0, 10);
+      const chatId = 'web_' + idBase + '_' + Date.now().toString(36).slice(-4);
 
       const { data: created } = await supabase.from('widget_visitors').insert([{
         chat_id:     chatId,
@@ -49,10 +70,11 @@ const visitorService = {
 
       return { chatId, visitor: created, isNew: true };
     } catch (err) {
-      // Fallback: temporäre ChatID ohne DB-Persistenz
-      logger.warn(`[Visitor] getOrCreate Fehler: ${err.message}`);
-      const chatId = `web_tmp_${ipHash.substring(0, 8)}_${Date.now().toString(36)}`;
-      return { chatId, visitor: null, isNew: true };
+      logger.warn('[Visitor] getOrCreate Fehler: ' + err.message);
+      const idBase = fpHash || ipHash;
+      // Konsistente Fallback-ID basierend auf Fingerprint (kein Timestamp = gleiche ID bei Wiederholung)
+      const chatId = 'web_' + idBase.substring(0, 10);
+      return { chatId, visitor: null, isNew: false };
     }
   },
 

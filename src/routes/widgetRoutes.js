@@ -368,11 +368,11 @@ router.get('/config', async (req, res) => {
 
 async function _upsertSession(chatId, pageTitle, supabase, isNew) {
   try {
-    // Aktive Session suchen (letzte 30 Minuten)
-    const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
+    // Aktive Session suchen (letzte 60 Minuten) - breites Fenster verhindert Duplikate
+    const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 60 min window
     const { data: active } = await supabase
       .from('visitor_sessions')
-      .select('id, page_count')
+      .select('id, page_count, last_page')
       .eq('chat_id', chatId)
       .eq('is_active', true)
       .gte('last_seen', cutoff)
@@ -381,10 +381,10 @@ async function _upsertSession(chatId, pageTitle, supabase, isNew) {
       .maybeSingle();
 
     if (active) {
-      // Session aktualisieren
+      // Session aktualisieren – page_count nur wenn neue Seite
       await supabase.from('visitor_sessions').update({
         last_seen:  new Date(),
-        page_count: (active.page_count || 0) + 1,
+        page_count: pageTitle !== active.last_page ? (active.page_count || 0) + 1 : (active.page_count || 1),
         last_page:  pageTitle
       }).eq('id', active.id);
       return active.id;

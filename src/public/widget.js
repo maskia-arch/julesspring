@@ -71,12 +71,12 @@ var CSS=[
 '.vs25-msg.u{align-self:flex-end}',
 '.vs25-msg.b{align-self:flex-start}',
 // WhatsApp-style bubbles
-'.vs25-bub{padding:8px 54px 8px 12px;border-radius:8px;font-size:.9rem;line-height:1.55;word-break:break-word;white-space:pre-wrap;position:relative;min-height:36px}',
+'.vs25-bub{padding:8px 12px 20px;border-radius:8px;font-size:.9rem;line-height:1.55;word-break:break-word;white-space:pre-wrap;position:relative}',
 '.vs25-msg.b .vs25-bub{background:white;color:#111;border-top-left-radius:2px;box-shadow:0 1px 1px rgba(0,0,0,.1)}',
 '.vs25-msg.u .vs25-bub{background:#dcf8c6;color:#111;border-top-right-radius:2px;box-shadow:0 1px 1px rgba(0,0,0,.1)}',
 // Timestamps inside bubble (WhatsApp style)
-'.vs25-ts{position:absolute;bottom:5px;right:9px;font-size:.62rem;color:rgba(0,0,0,.4);white-space:nowrap;line-height:1}',
-'.vs25-msg.u .vs25-ts{color:rgba(0,100,0,.5)}',
+'.vs25-ts{position:absolute;bottom:4px;right:8px;font-size:.62rem;color:rgba(0,0,0,.4)}',
+'.vs25-msg.u .vs25-ts{color:rgba(0,0,0,.4)}',
 // Date separator
 '.vs25-date-sep{text-align:center;margin:8px 0;font-size:.72rem;color:rgba(0,0,0,.55)}',
 '.vs25-date-sep span{background:rgba(255,255,255,.65);padding:3px 10px;border-radius:8px}',
@@ -156,25 +156,39 @@ function build(){
 }
 
 function passiveTrack(){
-  var saved=localStorage.getItem('vs25_cid');
+  // Lightweight beacon - updates existing session, never creates new one
+  var saved=localStorage.getItem('vs25_cid')||chatId;
   fetch(API+'/api/widget/beacon',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({fingerprint:fp(),pageUrl:location.href,pageTitle:smartTitle(),chatId:saved}),keepalive:true})
-  .then(function(r){return r.json();}).then(function(d){if(d.chatId)localStorage.setItem('vs25_cid',d.chatId);}).catch(function(){});
+  .then(function(r){return r.json();}).then(function(d){
+    if(d.chatId&&!localStorage.getItem('vs25_cid')) localStorage.setItem('vs25_cid',d.chatId);
+  }).catch(function(){});
 }
 
 function startSession(){
-  var saved=localStorage.getItem('vs25_cid');
   fetch(API+'/api/widget/config').then(function(r){return r.json();}).then(function(d){
     var ft=document.getElementById('vs25-ft-text');
     if(ft){if(d.poweredBy===null||d.poweredBy===''){ft.parentElement.style.display='none';}else if(d.poweredBy){ft.textContent=d.poweredBy;}}
   }).catch(function(){});
 
+  var saved=localStorage.getItem('vs25_cid');
+
+  // RESUME: if we already know this visitor, skip full init to avoid duplicate sessions
+  if(saved){
+    chatId=saved;
+    loadHist();
+    startStatusPoll();
+    passiveTrack(); // Just update last_seen on existing session
+    return;
+  }
+
+  // NEW VISITOR: full init creates session + chatId
   fetch(API+'/api/widget/init',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({fingerprint:fp(),pageUrl:location.href,pageTitle:smartTitle(),chatId:saved})})
+    body:JSON.stringify({fingerprint:fp(),pageUrl:location.href,pageTitle:smartTitle(),chatId:null})})
   .then(function(r){return r.json();}).then(function(d){
     if(d.banned) return;
     chatId=d.chatId; localStorage.setItem('vs25_cid',chatId);
-    if(d.welcome&&d.isNew) addMsg('b',d.welcome);
+    if(d.welcome) addMsg('b',d.welcome);
     loadHist(); startStatusPoll();
   }).catch(function(){});
 }
@@ -294,7 +308,12 @@ function fp(){return btoa([navigator.userAgent,navigator.language,screen.width+'
 
 var _lastUrl=location.href;
 setInterval(function(){
-  if(location.href!==_lastUrl){_lastUrl=location.href;if(chatId) trackPage();if(!isOpen){_proDone=false;clearTimeout(_proTimer);_proTimer=setTimeout(showInv,28000);}}
+  if(location.href!==_lastUrl){
+    _lastUrl=location.href;
+    passiveTrack();        // Update session's last_page (never creates new session)
+    if(chatId) trackPage(); // Log activity
+    if(!isOpen){_proDone=false;clearTimeout(_proTimer);_proTimer=setTimeout(showInv,28000);}
+  }
 },1500);
 
 if(document.readyState==='loading') document.addEventListener('DOMContentLoaded',build); else build();
