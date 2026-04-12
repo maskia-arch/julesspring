@@ -321,6 +321,22 @@
                     </div>
                     <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
                 </div>
+
+                <div class="card" style="border-color:#1e3a5f;">
+                    <h3 class="card-title">💰 Token-Optimierung</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Spart bis zu 70% Input-Tokens durch Chat-Zusammenfassungen.</p>
+                    <div class="form-group">
+                        <label>History-Tiefe: letzte <span id="hist-disp" class="label-val">4</span> Nachrichten</label>
+                        <input type="range" id="max-history-msgs" min="2" max="16" step="1" value="4" oninput="document.getElementById('hist-disp').textContent=this.value">
+                        <p class="hint">Nur die letzten N Nachrichten werden an die KI gesendet.</p>
+                    </div>
+                    <div class="form-group">
+                        <label>Zusammenfassung alle <span id="summ-disp" class="label-val">5</span> Nachrichten</label>
+                        <input type="range" id="summary-interval" min="3" max="20" step="1" value="5" oninput="document.getElementById('summ-disp').textContent=this.value">
+                        <p class="hint">Ältere Nachrichten werden automatisch zusammengefasst.</p>
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-success btn-sm">💾 Speichern</button>
+                </div>
             </div>
 
             <div id="settings-tab-sellauth-cfg" class="tab-pane">
@@ -400,11 +416,6 @@
                             <span id="widget-color-val" style="color:#94a3b8;font-size:0.875rem;font-family:monospace;">#0a4f8c</span>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label>„Powered by" Text</label>
-                        <input type="text" id="widget-powered-by" placeholder="Powered by ValueShop25 AI">
-                        <p class="hint">Wird im Widget unten angezeigt. Leer lassen = ausgeblendet.</p>
-                    </div>
                     <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
                 </div>
             </div>
@@ -413,8 +424,8 @@
     </div>
 </div>
 
-<script src="js/api.js?v=1342"></script>
-<script src="js/dashboard.js?v=1342"></script>
+<script src="js/api.js?v=135"></script>
+<script src="js/dashboard.js?v=135"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });

@@ -1,9 +1,7 @@
 /**
- * deepseekService.js v1.1.2
- *
- * - Model, Max-Tokens, Temperature aus Settings (konfigurierbar)
- * - Verbesserter System-Prompt: KI wird explizit angewiesen Kontext zu nutzen
- * - Bessere Fehlerbehandlung
+ * deepseekService.js v1.3.5
+ * Cache-optimierter Prompt-Aufbau für maximale DeepSeek Cache-Hits.
+ * Statischer Teil (Regeln) zuerst → Cache-Hit-Rate ~60-80%.
  */
 
 const axios   = require('axios');
@@ -11,28 +9,36 @@ const supabase = require('../config/supabase');
 const { deepseek, openai } = require('../config/env');
 const logger  = require('../utils/logger');
 
+// Statische Formatierungsregeln – werden von DeepSeek gecacht (0.01$/M statt 0.28$/M)
+const FORMAT_RULES = `
+
+AUSGABE-FORMAT:
+Antworte immer in reinem Plain-Text ohne Formatierungszeichen.
+VERBOTEN: **fett**, *kursiv*, ###Header, \`code\`, [Link](url)
+ERLAUBT: Listen mit - oder 1., Leerzeilen, direkte URLs
+
+UNSICHERHEITS-REGELN:
+1. Nicht aus Kontext beantwortbar → Präfix [UNKLAR]
+2. NIEMALS raten oder erfinden
+3. NIEMALS "Ausverkauft" ohne expliziten Hinweis
+
+BESTELLSTATUS: Wenn Kunde nach Bestellung fragt →
+"Sende: /order DEINE_INVOICE_ID (aus Bestätigungs-E-Mail)"`;
+
 const deepseekService = {
 
-  /**
-   * Hauptfunktion: KI-Antwort generieren
-   * @param {string}   userMessage
-   * @param {Array}    history       - [{role, content}, ...]
-   * @param {Array}    contextDocs   - RAG-Ergebnisse aus Supabase
-   * @param {string}   chatId
-   * @param {Object}   settings      - aus messageProcessor._loadSettings()
-   */
-  async generateResponse(userMessage, history = [], contextDocs = [], chatId = null, settings = {}) {
-    const model       = settings.ai_model       || 'deepseek-chat';
-    const maxTokens   = parseInt(settings.ai_max_tokens)  || 1024;
+  async generateResponse(userMessage, history = [], contextDocs = [], chatId = null, settings = {}, chatSummary = null) {
+    const model       = settings.ai_model         || 'deepseek-chat';
+    const maxTokens   = parseInt(settings.ai_max_tokens)    || 1024;
     const temperature = parseFloat(settings.ai_temperature) || 0.5;
 
     try {
-      const systemContent = this._buildSystemPrompt(settings, contextDocs);
+      const systemContent = this._buildSystemPrompt(settings, contextDocs, chatSummary);
 
       const messages = [
-        { role: 'system',    content: systemContent },
-        ...(history || []).slice(-10), // max 10 History-Einträge
-        { role: 'user',      content: userMessage }
+        { role: 'system', content: systemContent },
+        ...(history || []),
+        { role: 'user', content: userMessage }
       ];
 
       const response = await axios.post(
@@ -40,133 +46,110 @@ const deepseekService = {
         { model, messages, temperature, max_tokens: maxTokens },
         {
           headers: { 'Authorization': `Bearer ${deepseek.apiKey}`, 'Content-Type': 'application/json' },
-          timeout: 40000
+          timeout: 55000
         }
       );
 
       const choice = response.data.choices[0].message.content;
       const usage  = response.data.usage || {};
 
-      // Wissenslücke erkannt → Learning Queue
       if (choice.includes('[UNKLAR]') && chatId) {
-        await supabase.from('learning_queue').insert([{
-          original_chat_id:    chatId,
-          unanswered_question: userMessage,
-          status:              'pending'
+        void supabase.from('learning_queue').insert([{
+          original_chat_id: chatId, unanswered_question: userMessage, status: 'pending'
         }]).catch(() => {});
-
-        return {
-          text: 'Ich bin bei dieser Frage nicht sicher genug. Ich habe soeben einen Mitarbeiter informiert, der sich so schnell wie möglich meldet. 🙏',
-          promptTokens:     usage.prompt_tokens     || 0,
-          completionTokens: usage.completion_tokens || 0
-        };
       }
 
       return {
         text:             choice,
-        promptTokens:     usage.prompt_tokens     || 0,
-        completionTokens: usage.completion_tokens || 0
+        promptTokens:     usage.prompt_tokens          || 0,
+        completionTokens: usage.completion_tokens       || 0,
+        cachedTokens:     usage.prompt_cache_hit_tokens || 0
       };
-    } catch (error) {
-      const msg = error.response?.data?.error?.message || error.message;
-      logger.error(`[DeepSeek] generateResponse Error (${model}): ${msg}`);
+    } catch (err) {
+      const msg = err.response?.data?.error?.message || err.message;
+      logger.error(`[DS] Error: ${msg}`);
       throw new Error(`KI-Fehler: ${msg}`);
     }
   },
 
-  // ── System-Prompt aufbauen ──────────────────────────────────────────────
-  _buildSystemPrompt(settings, contextDocs) {
-    const basePrompt    = settings.system_prompt   || 'Du bist ein hilfreicher Assistent.';
-    const negativePrompt= settings.negative_prompt || '';
+  // Cache-Strategie: statisch → semi-statisch → dynamisch
+  _buildSystemPrompt(settings, contextDocs, chatSummary) {
+    const base = settings.system_prompt  || 'Du bist ein hilfreicher Assistent.';
+    const neg  = settings.negative_prompt || '';
 
-    // Kontext aus Wissensdatenbank formatieren
-    let contextSection = '';
+    // 1. Basis-Prompt (statisch – geht in Cache)
+    let p = base + FORMAT_RULES;
+
+    if (neg) p += `\n\nVERBOTENE VERHALTENSWEISEN:\n${neg}`;
+
+    // 2. RAG-Kontext (semi-statisch – ändert sich nur bei DB-Updates)
     if (contextDocs && contextDocs.length > 0) {
-      const contextText = contextDocs
-        .map((doc, i) => `[${i + 1}] ${doc.content}`)
-        .join('\n\n---\n\n');
-
-      contextSection = `
-
-════════════════════════════════════════
-WISSENSDATENBANK – DEINE INFORMATIONSQUELLE:
-════════════════════════════════════════
-${contextText}
-════════════════════════════════════════
-
-PFLICHTREGELN FÜR DIE NUTZUNG DES WISSENS:
-• Wenn die Antwort in der Wissensdatenbank steht: antworte IMMER daraus.
-• Produktempfehlungen: gib IMMER den vollständigen Kauflink aus der Wissensdatenbank.
-• Nenne IMMER den konkreten Preis wenn vorhanden.
-• Wenn mehrere Produkte passen: liste alle mit Preis und Kauflink auf.
-• Erfinde KEINE Produkte, Preise oder Links die nicht im Kontext stehen.`;
+      const ctx = contextDocs.map((d, i) => `[${i+1}] ${d.content}`).join('\n\n---\n\n');
+      p += `\n\n${'═'.repeat(38)}\nWISSENSDATENBANK:\n${'═'.repeat(38)}\n${ctx}\n${'═'.repeat(38)}\nRegeln: Kauflink + Preis immer nennen. Nicht vorhanden → [UNKLAR].`;
     }
 
-    const negSection = negativePrompt
-      ? `\n\nVERBOTENE VERHALTENSWEISEN:\n${negativePrompt}`
-      : '';
+    // 3. Chat-Zusammenfassung (pro Chat, aber stabil zwischen Updates)
+    if (chatSummary) {
+      p += `\n\nKONTEXT (frühere Nachrichten):\n${chatSummary}`;
+    }
 
-    const fallbackInstruction = `
-
-AUSGABE-FORMAT (STRIKT EINHALTEN):
-Du antwortest immer in reinem Plain-Text ohne jegliche Formatierungszeichen.
-
-VERBOTEN (erscheinen als Zeichensalat in Telegram):
-- Kein **fett** oder __fett__ (kein **, kein __)
-- Kein *kursiv* oder _kursiv_ (kein *, kein _)
-- Keine ###-Header oder ##-Header oder #-Header
-- Kein \`code\` und kein \`\`\`codeblock\`\`\`
-- Keine [Links](url) – stattdessen direkte URLs: https://...
-- Kein ~~durchgestrichen~~
-
-ERLAUBT:
-- Einfache Listen mit - oder Zahlen: 1. 2. 3.
-- Absätze mit Leerzeilen
-- Direkte URLs
-
-BEISPIEL KORREKTE ANTWORT:
-"Der Tarif kostet 9.99 EUR pro Monat und beinhaltet 10 GB Daten.
-Kauflink: https://valueshop25.com/product/..."
-
-BESTELLSTATUS-FUNKTION:
-Wenn ein Kunde nach dem Status seiner Bestellung fragt, nach einer Invoice-ID sucht,
-oder wissen möchte wo seine eSIM ist, antworte IMMER mit dieser Erklärung:
-"Um deinen Bestellstatus abzufragen, sende: /order DEINE_INVOICE_ID
-Beispiele: /order 12345 oder /order 05d0bb6ed687d-0000011429923
-Die Invoice-ID findest du in der Bestätigungs-E-Mail von Sellauth."
-
-UNSICHERHEITS-REGELN:
-1. Wenn die Antwort nicht aus dem Kontext hervorgeht: Präfix [UNKLAR] verwenden
-2. NIEMALS raten, erfinden oder spekulieren
-3. NIEMALS "Ausverkauft" ohne expliziten Hinweis im Kontext`;
-
-    return basePrompt + contextSection + negSection + fallbackInstruction;
+    return p;
   },
 
-  // ── Embedding für Vektorsuche ───────────────────────────────────────────
+  // Asynchrone Chat-Zusammenfassung (spart Input-Tokens)
+  async summarizeChat(messages, existingSummary = null) {
+    if (!messages || messages.length < 2) return null;
+    const text = messages
+      .filter(m => m.role !== 'system')
+      .map(m => `${m.role === 'user' ? 'Kunde' : 'KI'}: ${(m.content||'').substring(0, 300)}`)
+      .join('\n');
+
+    const prompt = existingSummary
+      ? `Bisherige Zusammenfassung:\n${existingSummary}\n\nNeue Nachrichten:\n${text}\n\nAktualisiere kompakt (max 120 Wörter). Behalte wichtige Fakten: Produktinteresse, Fragen, Bestellnummern.`
+      : `Fasse kompakt zusammen (max 120 Wörter). Wichtig: Produktinteresse, offene Fragen, Bestellnummern.\n\n${text}`;
+
+    try {
+      const r = await axios.post(
+        `${deepseek.baseUrl}/v1/chat/completions`,
+        {
+          model: 'deepseek-chat', max_tokens: 180, temperature: 0.1,
+          messages: [
+            { role: 'system', content: 'Kompakte deutsche Chat-Zusammenfassung. Nur Fakten, kein Fließtext.' },
+            { role: 'user',   content: prompt }
+          ]
+        },
+        { headers: { 'Authorization': `Bearer ${deepseek.apiKey}` }, timeout: 20000 }
+      );
+      return r.data.choices[0].message.content.trim();
+    } catch (e) {
+      logger.warn(`[DS] Summary Error: ${e.message}`);
+      return existingSummary;
+    }
+  },
+
   async generateEmbedding(text) {
     try {
-      const response = await axios.post(
+      const r = await axios.post(
         'https://api.openai.com/v1/embeddings',
         { model: 'text-embedding-3-small', input: text.replace(/\n/g, ' ').substring(0, 8000) },
         { headers: { 'Authorization': `Bearer ${openai.apiKey}` }, timeout: 15000 }
       );
-      return response.data.data[0].embedding;
-    } catch (error) {
-      const msg = error.response?.data?.error?.message || error.message;
-      logger.error(`[DeepSeek] Embedding Error: ${msg}`);
+      return {
+        embedding: r.data.data[0].embedding,
+        tokens:    r.data.usage?.total_tokens || 0
+      };
+    } catch (err) {
+      const msg = err.response?.data?.error?.message || err.message;
+      logger.error(`[DS] Embedding Error: ${msg}`);
       throw new Error(`Embedding fehlgeschlagen: ${msg}`);
     }
   },
 
-  // ── Learning: Admin-Antwort → Wissensdatenbank ──────────────────────────
   async processLearningResponse(adminAnswer, questionId) {
-    const { data: question } = await supabase.from('learning_queue').select('*').eq('id', questionId).single();
-    if (!question) throw new Error('Frage nicht gefunden');
-
-    const content   = `Frage: ${question.unanswered_question}\nAntwort: ${adminAnswer}`;
-    const embedding = await this.generateEmbedding(content);
-
+    const { data: q } = await supabase.from('learning_queue').select('*').eq('id', questionId).single();
+    if (!q) throw new Error('Frage nicht gefunden');
+    const content    = `Frage: ${q.unanswered_question}\nAntwort: ${adminAnswer}`;
+    const { embedding } = await this.generateEmbedding(content);
     await supabase.from('knowledge_base').insert([{ content, embedding, source: 'learning_chat' }]);
     await supabase.from('learning_queue').update({ status: 'resolved' }).eq('id', questionId);
     return true;

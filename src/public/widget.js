@@ -159,14 +159,16 @@
   }
 
   function startSession(){
-    // Load widget config (powered by text etc.)
+    // Load widget config early and apply powered-by text
     fetch(API+'/api/widget/config').then(function(r){return r.json();}).then(function(d){
       var ft=document.getElementById('vs25-ft-text');
       if(ft){
-        if(d.poweredBy===''){ ft.parentElement.style.display='none'; }
-        else if(d.poweredBy){ ft.textContent=d.poweredBy; }
+        if(d.poweredBy===null||d.poweredBy===''){ ft.parentElement.style.display='none'; }
+        else{ ft.textContent=d.poweredBy; }
       }
-    }).catch(function(){});
+    }).catch(function(){
+      // Fallback: keep default text already in DOM
+    });
     var saved=localStorage.getItem('vs25_cid');
     fetch(API+'/api/widget/init',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({fingerprint:fp(),pageUrl:location.href,pageTitle:getSmartTitle(),chatId:saved})})
     .then(function(r){return r.json();}).then(function(d){

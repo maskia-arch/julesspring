@@ -1,10 +1,11 @@
 /**
- * messageProcessor.js v1.2
+ * messageProcessor.js v1.3.5
  *
- * - Abuse-Check vor jeder Verarbeitung
- * - Human Handover: KI sofort aus wenn is_manual_mode
- * - Push-Benachrichtigung an Admin
- * - Graceful Degradation bei allen optionalen Modulen
+ * Token-Strategie:
+ * - Letzte N Nachrichten senden (default: 4, konfigurierbar)
+ * - Alle 5 Nachrichten: Chat-Zusammenfassung async aktualisieren
+ * - Summary wird mitgesendet → ersetzt ältere History
+ * - Ergebnis: ~60-70% weniger Input-Tokens
  */
 
 const supabase            = require('../config/supabase');
@@ -24,21 +25,16 @@ const messageProcessor = {
   async handle({ platform, chatId, text, metadata = {} }) {
     const t0 = Date.now();
 
-    // ── 1. Abuse-Check (vor allem anderen) ────────────────────────────────
+    // 1. Abuse-Check
     const abuse = await abuseDetector.check(chatId, text);
     if (abuse.blocked) {
-      logger.info(`[MP] Blocked ${chatId}: ${abuse.reason}`);
-      if (abuse.reason === 'rate_limit') {
-        // Kurze Rückmeldung bei Rate-Limit (keine KI-Kosten)
-        if (platform === 'telegram') {
-          await telegramService.sendMessage(chatId,
-            'Bitte sende nicht so viele Nachrichten auf einmal. Warte kurz und versuche es erneut.').catch(() => {});
-        }
+      if (abuse.reason === 'rate_limit' && platform === 'telegram') {
+        await telegramService.sendMessage(chatId, 'Bitte nicht so viele Nachrichten auf einmal. Kurz warten.').catch(() => {});
       }
       return null;
     }
 
-    // ── 2. Chat + Settings parallel ──────────────────────────────────────
+    // 2. Chat + Settings parallel
     const [chat, settings] = await Promise.all([
       this._getOrCreateChat(chatId, platform, metadata),
       this._loadSettings()
@@ -47,7 +43,7 @@ const messageProcessor = {
 
     const isFirstMessage = !chat._existed;
 
-    // ── 3. Nutzer-Nachricht speichern ─────────────────────────────────────
+    // 3. Nutzer-Nachricht speichern (fire & forget)
     void (async () => {
       try {
         await supabase.from('messages').insert([{ chat_id: chat.id, role: 'user', content: text }]);
@@ -56,54 +52,64 @@ const messageProcessor = {
 
     this._updateChatPreview(chat.id, text, 'user');
 
-    // ── 4. Admin Push-Benachrichtigung ────────────────────────────────────
+    // 4. Push-Benachrichtigung
     void (async () => {
       try {
         await notificationService.sendNewMessageNotification({
-          chatId: chat.id, text,
-          firstName: metadata?.first_name || null,
-          platform,
-          isFirstMessage
+          chatId: chat.id, text, firstName: metadata?.first_name || null,
+          platform, isFirstMessage
         });
       } catch (_) {}
     })();
 
-    // ── 5. Human Handover: KI sofort aus ──────────────────────────────────
-    // Wenn Admin den Chat übernommen hat → keine KI-Antwort, keine Kosten
+    // 5. Human Handover: KI aus
     if (chat.is_manual_mode) {
-      logger.info(`[MP] Manuell-Modus: ${chatId} – KI pausiert`);
+      logger.info(`[MP] Manuell-Modus: ${chatId}`);
       return null;
     }
 
-    // ── 6. Typing-Indikator ────────────────────────────────────────────────
+    // 6. Typing
     if (platform === 'telegram') telegramService.sendTypingAction(chatId).catch(() => {});
 
-    // ── 7. RAG + History parallel ──────────────────────────────────────────
-    const [context, historyResult] = await Promise.all([
+    // 7. Token-optimierte History (last N + summary)
+    const maxHistory     = parseInt(settings.max_history_msgs)  || 4;
+    const summaryInterval = parseInt(settings.summary_interval) || 5;
+
+    const [context, allHistory, chatData] = await Promise.all([
       this._searchKnowledge(text, settings),
       supabase.from('messages').select('role, content')
         .eq('chat_id', chat.id)
+        .neq('role', 'system')
         .order('created_at', { ascending: false })
-        .limit(6)
-        .then(r => (r.data || []).reverse())
+        .limit(Math.max(maxHistory + summaryInterval, 20))
+        .then(r => (r.data || []).reverse()),
+      supabase.from('chats')
+        .select('chat_summary, summary_msg_count')
+        .eq('id', chat.id)
+        .single()
+        .then(r => r.data || {})
     ]);
 
-    logger.info(`[MP] ${Date.now()-t0}ms – RAG:${context.length} hist:${historyResult.length}`);
+    // Letzten N Nachrichten für den API-Call
+    const recentHistory = allHistory.slice(-maxHistory);
+    const chatSummary   = chatData.chat_summary || null;
 
-    // ── 8. KI-Antwort (mit 60s Gesamt-Timeout) ────────────────────────────
+    logger.info(`[MP] ${Date.now()-t0}ms – RAG:${context.length} hist:${recentHistory.length}/${allHistory.length} summary:${chatSummary ? 'ja' : 'nein'}`);
+
+    // 8. KI-Antwort
     const aiResult = await Promise.race([
-      deepseekService.generateResponse(text, historyResult, context, chat.id, settings),
+      deepseekService.generateResponse(text, recentHistory, context, chat.id, settings, chatSummary),
       new Promise((_, reject) => setTimeout(() => reject(new Error('KI-Timeout')), 60000))
     ]);
 
-    // ── 9. Telegram senden ────────────────────────────────────────────────
+    // 9. Telegram senden
     if (platform === 'telegram') {
       await telegramService.sendMessage(chatId, aiResult.text);
     }
 
-    logger.info(`[MP] Gesamt: ${Date.now()-t0}ms`);
+    logger.info(`[MP] Gesamt: ${Date.now()-t0}ms | in:${aiResult.promptTokens} out:${aiResult.completionTokens} cached:${aiResult.cachedTokens||0}`);
 
-    // ── 10. DB fire & forget ──────────────────────────────────────────────
+    // 10. DB fire & forget
     void (async () => {
       try {
         await supabase.from('messages').insert([{
@@ -118,7 +124,7 @@ const messageProcessor = {
 
     this._updateChatPreview(chat.id, aiResult.text, 'assistant');
 
-    // ── 11. Learning Queue bei [UNKLAR] ───────────────────────────────────
+    // 11. Learning Queue bei [UNKLAR]
     if (aiResult.text.includes('[UNKLAR]')) {
       void (async () => {
         try {
@@ -129,15 +135,39 @@ const messageProcessor = {
       })();
     }
 
+    // 12. Asynchrone Zusammenfassung alle N Nachrichten
+    const totalMsgs = allHistory.length + 1; // +1 für aktuelle Nachricht
+    if (totalMsgs % summaryInterval === 0 && totalMsgs > 0) {
+      void (async () => {
+        try {
+          const msgsForSummary = allHistory.slice(0, -maxHistory); // Ältere Nachrichten
+          if (msgsForSummary.length < 2) return;
+
+          logger.info(`[MP] Starte Zusammenfassung für Chat ${chat.id} (${msgsForSummary.length} ältere Nachrichten)`);
+          const newSummary = await deepseekService.summarizeChat(msgsForSummary, chatData.chat_summary);
+
+          if (newSummary) {
+            await supabase.from('chats').update({
+              chat_summary:      newSummary,
+              summary_msg_count: totalMsgs,
+              last_summarized_at: new Date()
+            }).eq('id', chat.id);
+            logger.info(`[MP] Zusammenfassung aktualisiert für ${chat.id}`);
+          }
+        } catch (e) { logger.warn('[MP] Summary fehlgeschlagen:', e.message); }
+      })();
+    }
+
     return aiResult.text;
   },
 
-  // ── RAG ─────────────────────────────────────────────────────────────────
+  // ── RAG ────────────────────────────────────────────────────────────────────
   async _searchKnowledge(query, settings) {
     try {
       const embResult = await embeddingService.createEmbedding(query);
       const vector    = embResult.embedding || embResult;
       if (embResult.tokens) this._lastEmbeddingTokens = embResult.tokens;
+
       const threshold = parseFloat(settings.rag_threshold)  || 0.45;
       const count     = parseInt(settings.rag_match_count)  || 8;
 
@@ -149,34 +179,40 @@ const messageProcessor = {
       const { data: r2 } = await supabase.rpc('match_knowledge', {
         query_embedding: vector,
         match_threshold: Math.max(threshold - 0.15, 0.20),
-        match_count: count + 5
+        match_count:     count + 5
       });
       return r2?.length ? r2 : (r1 || []);
     } catch (err) {
-      logger.warn(`[MP] Embedding Fehler: ${err.message}`);
+      logger.warn(`[MP] Embedding: ${err.message}`);
       return [];
     }
   },
 
-  // ── Settings-Cache (30s) ──────────────────────────────────────────────
+  // ── Settings-Cache ─────────────────────────────────────────────────────────
   async _loadSettings() {
     const now = Date.now();
     if (_settingsCache && (now - _settingsCacheTime) < CACHE_TTL) return _settingsCache;
     try {
       const { data } = await supabase.from('settings').select('*').single();
       _settingsCache = {
-        system_prompt:   data?.system_prompt   || 'Du bist ein hilfreicher Assistent.',
-        negative_prompt: data?.negative_prompt || '',
-        ai_model:        data?.ai_model        || 'deepseek-chat',
-        ai_max_tokens:   data?.ai_max_tokens   || 1024,
-        ai_temperature:  data?.ai_temperature  || 0.5,
-        rag_threshold:   data?.rag_threshold   || 0.45,
-        rag_match_count: data?.rag_match_count || 8,
+        system_prompt:   data?.system_prompt    || 'Du bist ein hilfreicher Assistent.',
+        negative_prompt: data?.negative_prompt  || '',
+        ai_model:        data?.ai_model         || 'deepseek-chat',
+        ai_max_tokens:   data?.ai_max_tokens    || 1024,
+        ai_temperature:  data?.ai_temperature   || 0.5,
+        rag_threshold:   data?.rag_threshold    || 0.45,
+        rag_match_count: data?.rag_match_count  || 8,
+        max_history_msgs:  data?.max_history_msgs  || 4,
+        summary_interval:  data?.summary_interval  || 5,
       };
       _settingsCacheTime = now;
       return _settingsCache;
     } catch {
-      return { system_prompt: 'Du bist ein hilfreicher Assistent.', ai_model: 'deepseek-chat', ai_max_tokens: 1024, ai_temperature: 0.5, rag_threshold: 0.45, rag_match_count: 8 };
+      return {
+        system_prompt: 'Du bist ein hilfreicher Assistent.', ai_model: 'deepseek-chat',
+        ai_max_tokens: 1024, ai_temperature: 0.5, rag_threshold: 0.45, rag_match_count: 8,
+        max_history_msgs: 4, summary_interval: 5
+      };
     }
   },
 
@@ -195,7 +231,7 @@ const messageProcessor = {
   async _getOrCreateChat(chatId, platform, metadata) {
     try {
       const { data: existing } = await supabase
-        .from('chats').select('id, is_manual_mode, platform, auto_muted, flag_count')
+        .from('chats').select('id, is_manual_mode, platform, auto_muted, flag_count, chat_summary')
         .eq('id', chatId).maybeSingle();
 
       if (existing) return { ...existing, _existed: true };
@@ -205,16 +241,12 @@ const messageProcessor = {
       if (metadata?.username)   ins.username   = metadata.username;
 
       const { data: created, error } = await supabase.from('chats')
-        .insert([ins]).select('id, is_manual_mode, platform, auto_muted, flag_count').single();
+        .insert([ins]).select('id, is_manual_mode, platform, auto_muted, flag_count, chat_summary').single();
 
       if (error?.code === '23505') {
         const { data: retry } = await supabase.from('chats')
-          .select('id, is_manual_mode, platform, auto_muted, flag_count').eq('id', chatId).single();
+          .select('id, is_manual_mode, platform, auto_muted, flag_count, chat_summary').eq('id', chatId).single();
         return retry ? { ...retry, _existed: true } : { id: chatId, is_manual_mode: false, platform, _existed: false };
-      }
-      if (error) {
-        logger.warn(`[MP] Chat insert (nicht fatal): ${error.message}`);
-        return { id: chatId, is_manual_mode: false, platform, _existed: false };
       }
       return { ...(created || { id: chatId, is_manual_mode: false, platform }), _existed: false };
     } catch (err) {

@@ -646,6 +646,11 @@ function _applySettings(s) {
     setSlider('ai-temperature',  s.ai_temperature  || 0.5,  'temp-disp');
     setSlider('rag-threshold',   s.rag_threshold   || 0.45, 'thresh-disp');
     setSlider('rag-match-count', s.rag_match_count || 8,    'count-disp');
+    setSlider('max-history-msgs', s.max_history_msgs || 4, 'hist-disp');
+    setSlider('summary-interval', s.summary_interval || 5, 'summ-disp');
+    // Widget powered-by
+    var pwEl = document.getElementById('widget-powered-by');
+    if (pwEl && s.widget_powered_by != null) pwEl.value = s.widget_powered_by;
 }
 
 // Settings-Cache
@@ -671,8 +676,7 @@ async function saveSettings() {
         ai_max_tokens:       parseInt(gv('ai-max-tokens'))    || 1024,
         ai_temperature:      parseFloat(gv('ai-temperature')) || 0.5,
         rag_threshold:       parseFloat(gv('rag-threshold'))  || 0.45,
-        rag_match_count:     parseInt(gv('rag-match-count'))  || 8,
-        widget_powered_by:   gv('widget-powered-by')
+        rag_match_count:     parseInt(gv('rag-match-count'))  || 8
     };
     try {
         await api.saveSettings(settings);
@@ -896,6 +900,8 @@ async function saveSettings() {
         ai_temperature:      parseFloat(gv('ai-temperature')) || 0.5,
         rag_threshold:       parseFloat(gv('rag-threshold'))  || 0.45,
         rag_match_count:     parseInt(gv('rag-match-count'))  || 8,
+        max_history_msgs:    parseInt(gv('max-history-msgs')) || 4,
+        summary_interval:    parseInt(gv('summary-interval')) || 5,
         widget_powered_by:   gv('widget-powered-by')
     };
 
