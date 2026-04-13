@@ -432,7 +432,13 @@
                     </div>
                     <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
                         <button onclick="createCouponNow()" class="btn btn-primary btn-sm">⚡ Jetzt neuen Coupon erstellen</button>
-                        <button onclick="loadCouponHistory()" class="btn btn-secondary btn-sm">📋 Verlauf</button>
+                        <button onclick="toggleCouponHistory(this)" class="btn btn-secondary btn-sm" id="verlauf-btn">📋 Verlauf</button>
+                    </div>
+                    <!-- Verlauf Dropdown (inline, initially hidden) -->
+                    <div id="coupon-history-dropdown" style="display:none;margin-top:12px;border-top:1px solid #1e3a5f;padding-top:12px;">
+                        <div id="coupon-history-list">
+                            <p style="color:#555;font-size:0.85rem;">Lädt...</p>
+                        </div>
                     </div>
                 </div>
 
@@ -464,19 +470,15 @@
                     <button onclick="saveWeekSchedule()" class="btn btn-success btn-full" style="margin-top:12px;">💾 Wochenplan speichern</button>
                 </div>
 
-                <!-- Coupon History -->
-                <div class="card" style="margin-top:12px;display:none;" id="coupon-history-card">
-                    <h3 class="card-title">📋 Coupon-Verlauf</h3>
-                    <div id="coupon-history-list"></div>
-                </div>
+
             </div>
         </section>
 
     </div>
 </div>
 
-<script src="js/api.js?v=1314"></script>
-<script src="js/dashboard.js?v=1314"></script>
+<script src="js/api.js?v=1320"></script>
+<script src="js/dashboard.js?v=1320"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });
@@ -506,11 +508,7 @@ function showSettingsTab(tab, btn) {
     var el = document.getElementById('settings-tab-' + tab);
     if (el) el.classList.add('active');
     if (btn) btn.classList.add('active');
-    if (tab === 'widget-cfg' && typeof initWidgetTab  === 'function') initWidgetTab();
-    if (tab === 'coupon-cfg') {
-        if (typeof loadActiveCoupon  === 'function') loadActiveCoupon();
-        if (typeof loadWeekSchedule  === 'function') loadWeekSchedule();
-    }
+    if (tab === 'widget-cfg' && typeof initWidgetTab === 'function') initWidgetTab();
 }
 
 async function handleLogin() {

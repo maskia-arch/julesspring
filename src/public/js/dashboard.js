@@ -49,6 +49,24 @@ async function initDashboard() {
     _safeRun(loadBlacklist);
     setTimeout(initPushNotifications, 2000);
 
+    // Coupon + Wochenplan vorladen (1.5s Delay: Settings müssen erst da sein)
+    setTimeout(function() {
+        _safeRun(loadActiveCoupon);
+        _safeRun(loadWeekSchedule);
+        _safeRun(loadCouponHistory);
+    }, 1500);
+
+    // Traffic Chart vorwärmen
+    setTimeout(function() {
+        _safeRun(function() { return loadTraffic('week'); });
+        _safeRun(loadLiveVisitors);
+        _safeRun(loadSessions);
+        _safeRun(loadActivityFeed);
+    }, 2500);
+
+    // Knowledge Kategorien vorladen
+    setTimeout(function() { _safeRun(loadKbCategories); }, 3000);
+
     // Intervalle
     clearInterval(window._statsInterval);
     clearInterval(window._chatsInterval);
@@ -1458,11 +1476,18 @@ async function createCouponNow() {
 
 var WOCHENTAGE_KURZ = ['Mo','Di','Mi','Do','Fr','Sa','So'];
 
+function toggleCouponHistory(btn) {
+    var dropdown = document.getElementById('coupon-history-dropdown');
+    if (!dropdown) return;
+    var isOpen = dropdown.style.display !== 'none';
+    dropdown.style.display = isOpen ? 'none' : 'block';
+    if (btn) btn.textContent = isOpen ? '📋 Verlauf' : '📋 Schließen';
+    if (!isOpen) loadCouponHistory();
+}
+
 async function loadCouponHistory() {
-    var card = document.getElementById('coupon-history-card');
     var list = document.getElementById('coupon-history-list');
-    if (!card || !list) return;
-    card.style.display = 'block';
+    if (!list) return;
     try {
         var data = await api.request('/coupons/history');
         if (!data || !data.length) { list.innerHTML = '<p style="color:#555;font-size:0.85rem;">Kein Verlauf.</p>'; return; }
