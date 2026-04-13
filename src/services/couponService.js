@@ -47,52 +47,62 @@ const couponService = {
   // ── Aktiven Coupon aus DB holen ────────────────────────────────────────────
   async getActiveCoupon() {
     try {
+      const now = new Date().toISOString();
       const { data } = await supabase
         .from('daily_coupons')
         .select('*')
         .eq('is_active', true)
+        .or(`expires_at.is.null,expires_at.gt.${now}`)  // null = kein Ablauf, sonst muss noch gültig sein
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
-      return data || null;
+
+      if (!data) return null;
+
+      // Abgelaufene Coupons on-the-fly bereinigen
+      if (data.expires_at && new Date(data.expires_at) < new Date()) {
+        await supabase.from('daily_coupons').update({ is_active: false }).eq('id', data.id).catch(() => {});
+        logger.info(`[Coupon] Abgelaufener Coupon ${data.code} automatisch deaktiviert`);
+        return null;
+      }
+
+      return data;
     } catch { return null; }
   },
 
   // ── Alten Coupon in Sellauth löschen & in DB deaktivieren ─────────────────
   async _deactivateOld(apiKey, shopId) {
     try {
-      // Alle aktiven Coupons in DB deaktivieren
       const { data: actives } = await supabase
         .from('daily_coupons')
         .select('code, sellauth_id')
         .eq('is_active', true);
 
-      if (actives?.length) {
-        for (const coupon of actives) {
-          // Sellauth DELETE benötigt die NUMERISCHE ID (nicht den Code-String!)
-          const numericId = coupon.sellauth_id ? parseInt(coupon.sellauth_id) : null;
+      if (!actives?.length) return;
 
-          if (!numericId) {
-            logger.info(`[Coupon] ${coupon.code}: keine Sellauth-ID gespeichert – überspringe Löschung`);
-            continue;
-          }
+      // DB ZUERST deaktivieren – unabhängig von Sellauth-Erfolg
+      await supabase.from('daily_coupons').update({ is_active: false }).eq('is_active', true);
+      logger.info(`[Coupon] ${actives.length} alte Coupons in DB deaktiviert`);
 
-          try {
-            await this._client(apiKey).delete(`/shops/${shopId}/coupons/${numericId}`);
-            logger.info(`[Coupon] Gelöscht in Sellauth: ${coupon.code} (ID: ${numericId})`);
-          } catch (e) {
-            const status = e.response?.status;
-            const msg    = e.response?.data?.message || e.message;
-            if (status === 404 || /not found/i.test(msg)) {
-              logger.info(`[Coupon] ${coupon.code} (ID: ${numericId}) nicht in Sellauth – bereits gelöscht oder abgelaufen`);
-            } else {
-              logger.warn(`[Coupon] Löschen fehlgeschlagen (${coupon.code}, ID: ${numericId}): ${msg}`);
-            }
+      // Dann in Sellauth löschen (numerische ID!)
+      for (const coupon of actives) {
+        const numericId = coupon.sellauth_id ? parseInt(coupon.sellauth_id) : null;
+        if (!numericId) {
+          logger.info(`[Coupon] ${coupon.code}: keine Sellauth-ID – überspringe`);
+          continue;
+        }
+        try {
+          await this._client(apiKey).delete(`/shops/${shopId}/coupons/${numericId}`);
+          logger.info(`[Coupon] Sellauth gelöscht: ${coupon.code} (ID: ${numericId})`);
+        } catch (e) {
+          const st = e.response?.status;
+          const msg = e.response?.data?.message || e.message;
+          if (st === 404 || /not found/i.test(msg)) {
+            logger.info(`[Coupon] ${coupon.code} nicht mehr in Sellauth – bereits abgelaufen`);
+          } else {
+            logger.warn(`[Coupon] Sellauth-Löschung fehlgeschlagen (${coupon.code}): ${msg}`);
           }
         }
-
-        // DB: alle als inaktiv markieren
-        await supabase.from('daily_coupons').update({ is_active: false }).eq('is_active', true);
       }
     } catch (e) {
       logger.warn(`[Coupon] _deactivateOld: ${e.message}`);
@@ -189,15 +199,19 @@ const couponService = {
 
     // 3. In DB speichern
 
+    // weekday already defined above from schedule check
+
     const { data: saved } = await supabase.from('daily_coupons').insert([{
       code,
       discount,
       type,
       description,
-      sellauth_id: String(sellauthId || ''),
-      expires_at:  expiresAt.toISOString(),
-      is_active:   true,
-      used_count:  0
+      sellauth_id:   String(sellauthId || ''),
+      expires_at:    expiresAt.toISOString(),
+      is_active:     true,
+      used_count:    0,
+      ki_call_count: 0,
+      weekday
     }]).select().single();
 
     logger.info(`[Coupon] ✅ Tages-Coupon aktiv: ${code}`);

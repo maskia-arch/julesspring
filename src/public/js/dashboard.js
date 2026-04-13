@@ -48,11 +48,6 @@ async function initDashboard() {
     _safeRun(loadLearningQueue);
     _safeRun(loadBlacklist);
     setTimeout(initPushNotifications, 2000);
-    // Coupon-Daten vorab laden damit die Tab sofort fertig ist
-    setTimeout(function() {
-        _safeRun(loadActiveCoupon);
-        _safeRun(loadWeekSchedule);
-    }, 1500);
 
     // Intervalle
     clearInterval(window._statsInterval);
@@ -1461,6 +1456,8 @@ async function createCouponNow() {
     }
 }
 
+var WOCHENTAGE_KURZ = ['Mo','Di','Mi','Do','Fr','Sa','So'];
+
 async function loadCouponHistory() {
     var card = document.getElementById('coupon-history-card');
     var list = document.getElementById('coupon-history-list');
@@ -1468,19 +1465,45 @@ async function loadCouponHistory() {
     card.style.display = 'block';
     try {
         var data = await api.request('/coupons/history');
-        if (!data?.length) { list.innerHTML = '<p style="color:#555;">Kein Verlauf.</p>'; return; }
-        list.innerHTML = data.map(function(c) {
-            var created = new Date(c.created_at).toLocaleString('de-DE', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-            var badge = c.is_active
-                ? '<span style="background:#14532d;color:#4ade80;padding:1px 6px;border-radius:4px;font-size:0.7rem;">AKTIV</span>'
-                : '<span style="background:#1a1a1a;color:#555;padding:1px 6px;border-radius:4px;font-size:0.7rem;">ABGELAUFEN</span>';
-            return '<div style="padding:8px 0;border-bottom:1px solid #1a1a1a;display:flex;gap:8px;align-items:center;">' +
-                '<div style="flex:1;">' +
-                    '<div style="font-weight:700;font-family:monospace;letter-spacing:2px;">' + esc(c.code) + ' ' + badge + '</div>' +
-                    '<div style="font-size:0.75rem;color:#64748b;">' + created + ' · ' + esc(c.description || '') + '</div>' +
-                '</div>' +
+        if (!data || !data.length) { list.innerHTML = '<p style="color:#555;font-size:0.85rem;">Kein Verlauf.</p>'; return; }
+
+        // Group by weekday for summary row
+        var byDay = {};
+        data.forEach(function(row) {
+            var d = (row.weekday !== null && row.weekday !== undefined) ? row.weekday : -1;
+            if (!byDay[d]) byDay[d] = { calls: 0, count: 0, day: d };
+            byDay[d].calls += (row.ki_call_count || 0);
+            byDay[d].count++;
+        });
+
+        var summaryHtml = '<div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:12px;">';
+        for (var dd = 0; dd < 7; dd++) {
+            var entry = byDay[dd] || { calls: 0, count: 0 };
+            var isToday = ((new Date().getDay()||7)-1) === dd;
+            summaryHtml += '<div style="background:#111;border-radius:6px;padding:6px 4px;text-align:center;border:1px solid ' + (isToday ? '#2563eb' : '#1e1e1e') + ';">' +
+                '<div style="font-size:0.72rem;color:#64748b;margin-bottom:2px;">' + WOCHENTAGE_KURZ[dd] + '</div>' +
+                '<div style="font-size:1rem;font-weight:700;color:#4ade80;">' + entry.calls + '</div>' +
+                '<div style="font-size:0.62rem;color:#555;">KI-Aufrufe</div>' +
+            '</div>';
+        }
+        summaryHtml += '</div>';
+
+        // Individual entries (simplified)
+        var rowsHtml = data.slice(0, 14).map(function(row) {
+            var dt      = new Date(row.created_at).toLocaleString('de-DE',{day:'2-digit',month:'2-digit'});
+            var dayName = row.weekday !== null ? (WOCHENTAGE_KURZ[row.weekday] || '?') : '?';
+            var active  = row.is_active;
+            var disc    = (row.discount || 0) + (row.type === 'percentage' ? '%' : '€');
+            return '<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #1a1a1a;">' +
+                '<span style="background:#1a1a1a;color:#94a3b8;padding:2px 7px;border-radius:5px;font-size:0.72rem;font-weight:700;min-width:28px;text-align:center;">' + dayName + '</span>' +
+                '<span style="font-family:monospace;font-size:0.8rem;color:' + (active ? '#4ade80' : '#555') + ';flex:1;">' + esc(row.code || '') + '</span>' +
+                '<span style="font-size:0.78rem;color:#60a5fa;">' + disc + '</span>' +
+                '<span style="font-size:0.72rem;color:#f59e0b;white-space:nowrap;">🤖 ' + (row.ki_call_count || 0) + 'x</span>' +
+                '<span style="font-size:0.68rem;color:#555;">' + dt + '</span>' +
             '</div>';
         }).join('');
+
+        list.innerHTML = summaryHtml + rowsHtml;
     } catch(e) { list.innerHTML = '<p style="color:#ef4444;">' + esc(e.message) + '</p>'; }
 }
 
@@ -1513,57 +1536,6 @@ async function loadWeekSchedule() {
     }
 }
 
-
-function renderWeekSchedule() {
-    var el = document.getElementById('week-schedule-list');
-    if (!el) return;
-    var jsDay = new Date().getDay();
-    var today = jsDay === 0 ? 6 : jsDay - 1;
-    el.innerHTML = '';
-
-    _weekSchedule.forEach(function(s) {
-        var isToday = s.weekday === today;
-        var row = document.createElement('div');
-        row.style.cssText = 'background:#111;border-radius:8px;padding:12px;margin-bottom:8px;border:1px solid ' + (isToday ? '#2563eb' : '#1e1e1e') + ';';
-
-        // Top row: checkbox + day name + discount + type
-        var top = document.createElement('div');
-        top.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:nowrap;';
-
-        var cb = document.createElement('input');
-        cb.type = 'checkbox'; cb.checked = (s.enabled !== false);
-        cb.style.cssText = 'width:18px;height:18px;cursor:pointer;flex-shrink:0;';
-        cb.onchange = (function(day){ return function(){ _updateScheduleField(day, 'enabled', this.checked); }; })(s.weekday);
-
-        var daySpan = document.createElement('span');
-        daySpan.style.cssText = 'font-weight:700;font-size:0.9rem;flex:1;' + (isToday ? 'color:#60a5fa;' : '');
-        daySpan.textContent = WEEKDAYS[s.weekday] + (isToday ? ' ← heute' : '');
-
-        var discInp = document.createElement('input');
-        discInp.type = 'number'; discInp.min = 1; discInp.max = 99; discInp.value = (s.discount || 10);
-        discInp.style.cssText = 'width:56px;padding:5px 6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.875rem;text-align:center;';
-        discInp.onchange = (function(day){ return function(){ _updateScheduleField(day, 'discount', +this.value); }; })(s.weekday);
-
-        var typeEl = document.createElement('select');
-        typeEl.style.cssText = 'padding:5px 6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;';
-        var optP = document.createElement('option'); optP.value = 'percentage'; optP.textContent = '%';
-        var optF = document.createElement('option'); optF.value = 'fixed';      optF.textContent = '€';
-        if (s.type === 'fixed') optF.selected = true; else optP.selected = true;
-        typeEl.appendChild(optP); typeEl.appendChild(optF);
-        typeEl.onchange = (function(day){ return function(){ _updateScheduleField(day, 'type', this.value); }; })(s.weekday);
-
-        top.appendChild(cb); top.appendChild(daySpan); top.appendChild(discInp); top.appendChild(typeEl);
-
-        var descInp = document.createElement('input');
-        descInp.type = 'text'; descInp.placeholder = 'Beschreibung für KI (z.B. "15% Freitags-Rabatt!")';
-        descInp.value = s.description || '';
-        descInp.style.cssText = 'width:100%;padding:6px 10px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;';
-        descInp.oninput = (function(day){ return function(){ _updateScheduleField(day, 'description', this.value); }; })(s.weekday);
-
-        row.appendChild(top); row.appendChild(descInp);
-        el.appendChild(row);
-    });
-}
 
 function _updateScheduleField(weekday, field, value) {
     var entry = _weekSchedule.find(function(s){ return s.weekday === weekday; });

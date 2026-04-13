@@ -98,17 +98,21 @@ const messageProcessor = {
     logger.info(`[MP] ${Date.now()-t0}ms – RAG:${context.length} hist:${recentHistory.length}/${allHistory.length} summary:${chatSummary ? 'ja' : 'nein'}`);
 
     // 8. KI-Antwort
-    // Coupon-Kontext NUR bei coupon-bezogenen Fragen laden (spart Tokens)
+    // Coupon-Kontext NUR bei coupon-bezogenen Fragen (spart Tokens)
     const COUPON_KEYWORDS = /rabatt|coupon|gutschein|code|aktions?|angebot|deal|discount|promo|spare|sparen|reduz/i;
     let couponContext = null;
+    let _activeCouponId = null;
     if (COUPON_KEYWORDS.test(text)) {
       try {
         const activeCoupon = await couponService.getActiveCoupon();
         if (activeCoupon) {
-          const exp = new Date(activeCoupon.expires_at).toLocaleDateString('de-DE');
+          const exp = activeCoupon.expires_at
+            ? new Date(activeCoupon.expires_at).toLocaleDateString('de-DE')
+            : 'heute';
           couponContext = `AKTUELLER COUPON: Code "${activeCoupon.code}" - ${activeCoupon.description} (gültig bis ${exp})`;
+          _activeCouponId = activeCoupon.id;
         } else {
-          couponContext = 'AKTUELLER COUPON: Kein aktiver Coupon heute.';
+          couponContext = 'AKTUELLER COUPON: Kein aktiver Rabattcode heute verfügbar.';
         }
       } catch (_) {}
     }
@@ -141,6 +145,20 @@ const messageProcessor = {
     })();
 
     this._updateChatPreview(chat.id, aiResult.text, 'assistant');
+
+    // KI-Aufruf-Zähler für Coupon erhöhen (fire & forget)
+    if (_activeCouponId) {
+      void (async () => {
+        try {
+          await supabase.rpc('increment_coupon_calls', { coupon_id: _activeCouponId });
+        } catch (_) {
+          // Fallback: direktes Update
+          void supabase.from('daily_coupons')
+            .update({ ki_call_count: supabase.raw ? undefined : 0 })
+            .eq('id', _activeCouponId).catch(() => {});
+        }
+      })();
+    }
 
     // 11. Learning Queue bei [UNKLAR]
     if (aiResult.text.includes('[UNKLAR]')) {

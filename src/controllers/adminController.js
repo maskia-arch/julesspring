@@ -157,18 +157,6 @@ const adminController = {
         ai_temperature:       body.ai_temperature       !== undefined ? parseFloat(body.ai_temperature) : undefined,
         rag_threshold:        body.rag_threshold        !== undefined ? parseFloat(body.rag_threshold)  : undefined,
         rag_match_count:      body.rag_match_count      !== undefined ? parseInt(body.rag_match_count)  : undefined,
-        // Token optimierung
-        max_history_msgs:     body.max_history_msgs     !== undefined ? parseInt(body.max_history_msgs)   : undefined,
-        summary_interval:     body.summary_interval     !== undefined ? parseInt(body.summary_interval)   : undefined,
-        // Widget
-        widget_powered_by:    body.widget_powered_by    !== undefined ? body.widget_powered_by            : undefined,
-        // Coupon system
-        coupon_enabled:       body.coupon_enabled       !== undefined ? Boolean(body.coupon_enabled)      : undefined,
-        coupon_discount:      body.coupon_discount      !== undefined ? parseInt(body.coupon_discount)    : undefined,
-        coupon_type:          body.coupon_type          !== undefined ? body.coupon_type                  : undefined,
-        coupon_description:   body.coupon_description   !== undefined ? body.coupon_description           : undefined,
-        coupon_max_uses:      body.coupon_max_uses      !== undefined ? (body.coupon_max_uses ? parseInt(body.coupon_max_uses) : null) : undefined,
-        coupon_schedule_hour: body.coupon_schedule_hour !== undefined ? parseInt(body.coupon_schedule_hour) : undefined,
       };
 
       // undefined-Felder entfernen (nicht überschreiben wenn nicht gesendet)
@@ -404,8 +392,8 @@ const adminController = {
   async createCouponNow(req, res, next) {
     try {
       const couponService = require('../services/couponService');
-      const coupon = await couponService.createDailyCoupon(true); // force=true: manuelle Erstellung
-      if (!coupon) return res.status(400).json({ error: 'Sellauth API Key oder Shop ID fehlen. Bitte in Settings konfigurieren.' });
+      const coupon = await couponService.createDailyCoupon();
+      if (!coupon) return res.status(400).json({ error: 'Coupon-System deaktiviert oder nicht konfiguriert' });
       res.json({ success: true, coupon });
     } catch (e) { next(e); }
   },
@@ -414,9 +402,9 @@ const adminController = {
     try {
       const { data } = await supabase
         .from('daily_coupons')
-        .select('*')
+        .select('id, code, discount, type, weekday, ki_call_count, is_active, expires_at, created_at')
         .order('created_at', { ascending: false })
-        .limit(30);
+        .limit(60);
       res.json(data || []);
     } catch (e) { next(e); }
   },
