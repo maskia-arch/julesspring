@@ -342,6 +342,18 @@ const adminController = {
   },
 
   // ── Coupon Management ───────────────────────────────────────────────────────
+  async getSessions(req, res, next) {
+    try {
+      const { limit = 50 } = req.query;
+      const { data } = await supabase
+        .from('visitor_sessions')
+        .select('id, chat_id, started_at, last_seen, page_count, entry_page, last_page, is_active, had_chat')
+        .order('started_at', { ascending: false })
+        .limit(parseInt(limit));
+      res.json(data || []);
+    } catch (e) { next(e); }
+  },
+
   async getCouponSchedule(req, res, next) {
     try {
       const { data } = await supabase.from('coupon_schedule').select('*').order('weekday');

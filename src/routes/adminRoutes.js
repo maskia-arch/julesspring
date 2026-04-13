@@ -76,4 +76,14 @@ router.post('/visitors/ip/:ip/ban',  ctrl.banVisitorIp);
 // Invoice
 router.get('/sellauth/invoice/:invoiceId', ctrl.lookupInvoice);
 
+// Coupons
+router.get('/coupons/schedule',       ctrl.getCouponSchedule);
+router.put('/coupons/schedule',       ctrl.saveCouponSchedule);
+router.get('/coupons/active',         ctrl.getActiveCoupon);
+router.post('/coupons/create-now',    ctrl.createCouponNow);
+router.get('/coupons/history',        ctrl.getCouponHistory);
+
+// Sessions
+router.get('/traffic/sessions',       ctrl.getSessions);
+
 module.exports = router;
