@@ -135,14 +135,20 @@ const couponService = {
     const prefix = type === 'percentage' ? `SAVE${discount}` : `EUR${discount}`;
     const code   = this._generateCode(prefix);
 
-    // Ablaufdatum: morgen 23:59 (UTC)
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const expiresDate = tomorrow.toISOString().slice(0, 10); // "YYYY-MM-DD"
+    // Ablaufdatum: HEUTE um 23:59 (nicht morgen!)
+    // Sellauth expiration_date = "YYYY-MM-DD" → gültig bis Ende dieses Tages
+    // Coupon läuft um 00:00 Uhr ab wenn der neue Coupon erstellt wird
+    const today = new Date();
+    const expiresDate = today.toISOString().slice(0, 10); // "YYYY-MM-DD" (heute)
 
-    logger.info(`[Coupon] Erstelle: ${code} (${discount}${type === 'percentage' ? '%' : '€'} Rabatt)`);
+    // Internes Ablaufdatum: morgen 00:00 Uhr (genau wenn der neue erstellt wird)
+    const expiresAt = new Date(today);
+    expiresAt.setDate(expiresAt.getDate() + 1);
+    expiresAt.setHours(0, 0, 0, 0); // 00:00 morgen früh
 
-    // 1. Alten Coupon deaktivieren
+    logger.info(`[Coupon] Erstelle: ${code} (${discount}${type === 'percentage' ? '%' : '€'} Rabatt, gültig bis: ${expiresDate} 23:59)`);
+
+    // 1. Alten Coupon ZUERST in Sellauth löschen (vor dem neuen erstellen)
     await this._deactivateOld(settings.sellauth_api_key, settings.sellauth_shop_id);
 
     // 2. Neuen Coupon in Sellauth erstellen
@@ -152,8 +158,8 @@ const couponService = {
         code,
         global:           true,
         discount:         discount,
-        type:             type,            // "percentage" oder "fixed"
-        expiration_date:  expiresDate,
+        type:             type,
+        expiration_date:  expiresDate,   // Heute – läuft heute Nacht ab
         disable_if_volume_discount: false
       };
       if (maxUses) body.max_uses = maxUses;
@@ -162,15 +168,12 @@ const couponService = {
         .post(`/shops/${settings.sellauth_shop_id}/coupons`, body);
 
       sellauthId = created?.id || null;
-      logger.info(`[Coupon] Sellauth erstellt: ${code} (ID: ${sellauthId})`);
+      logger.info(`[Coupon] Sellauth erstellt: ${code} (ID: ${sellauthId}, läuft ab: ${expiresDate})`);
     } catch (e) {
       logger.error(`[Coupon] Sellauth-Fehler: ${e.response?.data?.message || e.message}`);
-      // Trotzdem in DB speichern (damit KI den Code kennt)
     }
 
     // 3. In DB speichern
-    const expiresAt = new Date(tomorrow);
-    expiresAt.setHours(23, 59, 59, 0);
 
     const { data: saved } = await supabase.from('daily_coupons').insert([{
       code,
@@ -178,7 +181,7 @@ const couponService = {
       type,
       description,
       sellauth_id: String(sellauthId || ''),
-      expires_at:  expiresAt,
+      expires_at:  expiresAt.toISOString(),
       is_active:   true,
       used_count:  0
     }]).select().single();
@@ -203,11 +206,16 @@ const couponService = {
         }
 
         const delay = next.getTime() - now.getTime();
-        logger.info(`[Coupon] Nächste Erneuerung: ${next.toISOString()} (in ${Math.round(delay/60000)} min)`);
+        logger.info(`[Coupon] Nächste Erneuerung: ${next.toISOString()} UTC (in ${Math.round(delay/60000)} min)`);
 
         setTimeout(async () => {
-          await this.createDailyCoupon();
-          scheduleNext(); // Für nächsten Tag
+          logger.info('[Coupon] ⏰ Tägliche Rotation wird ausgeführt...');
+          try {
+            await this.createDailyCoupon();
+          } catch (e) {
+            logger.error('[Coupon] Rotation fehlgeschlagen:', e.message);
+          }
+          scheduleNext(); // Für nächsten Tag neu planen
         }, delay);
 
       } catch (e) {
