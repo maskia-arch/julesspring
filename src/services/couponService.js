@@ -47,27 +47,48 @@ const couponService = {
   // ── Aktiven Coupon aus DB holen ────────────────────────────────────────────
   async getActiveCoupon() {
     try {
-      const now = new Date().toISOString();
-      const { data } = await supabase
+      // Kein .or()-Filter: Supabase v2 .or() mit timestamptz ist unzuverlässig
+      // → is_active=true holen, Ablauf in JavaScript prüfen (sicherer)
+      const { data: rows } = await supabase
         .from('daily_coupons')
         .select('*')
         .eq('is_active', true)
-        .or(`expires_at.is.null,expires_at.gt.${now}`)  // null = kein Ablauf, sonst muss noch gültig sein
         .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .limit(5); // max 5 holen, dann in JS filtern
 
-      if (!data) return null;
+      if (!rows || !rows.length) return null;
 
-      // Abgelaufene Coupons on-the-fly bereinigen
-      if (data.expires_at && new Date(data.expires_at) < new Date()) {
-        await supabase.from('daily_coupons').update({ is_active: false }).eq('id', data.id).catch(() => {});
-        logger.info(`[Coupon] Abgelaufener Coupon ${data.code} automatisch deaktiviert`);
-        return null;
+      const now = new Date();
+      const expiredIds = [];
+
+      for (const row of rows) {
+        // Kein Ablaufdatum → dauerhaft gültig
+        if (!row.expires_at) return row;
+
+        const exp = new Date(row.expires_at);
+        if (exp > now) {
+          // Gültig → nehmen
+          return row;
+        } else {
+          // Abgelaufen → für Cleanup merken
+          expiredIds.push(row.id);
+        }
       }
 
-      return data;
-    } catch { return null; }
+      // Alle abgelaufen → DB bereinigen
+      if (expiredIds.length) {
+        void supabase.from('daily_coupons')
+          .update({ is_active: false })
+          .in('id', expiredIds)
+          .catch(() => {});
+        logger.info(`[Coupon] ${expiredIds.length} abgelaufene Coupons automatisch deaktiviert`);
+      }
+
+      return null;
+    } catch (e) {
+      logger.warn('[Coupon] getActiveCoupon:', e.message);
+      return null;
+    }
   },
 
   // ── Alten Coupon in Sellauth löschen & in DB deaktivieren ─────────────────
