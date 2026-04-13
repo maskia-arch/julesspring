@@ -195,96 +195,49 @@ const adminController = {
     }
   },
 
-  async getSessions(req, res, next) {
-    try {
-      const { limit = 50 } = req.query;
-      const { data, error } = await supabase
-        .from('visitor_sessions')
-        .select('id, chat_id, started_at, last_seen, page_count, entry_page, last_page, is_active, had_chat')
-        .order('started_at', { ascending: false })
-        .limit(parseInt(limit));
-      if (error) throw error;
-      res.json(data || []);
-    } catch (e) { next(e); }
-  },
-
   async getLiveVisitors(req, res, next) {
     try {
-      // Aktive Sessions der letzten 15 Minuten = "live" (großzügigeres Fenster)
-      const since = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-
-      const { data: sessions } = await supabase
-        .from('visitor_sessions')
-        .select('id, chat_id, last_seen, page_count, entry_page, last_page, had_chat, is_active')
+      // Besucher der letzten 5 Minuten = "live"
+      const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { data: visitors } = await supabase
+        .from('widget_visitors')
+        .select('chat_id, ip, last_seen, page_count, user_agent')
         .gte('last_seen', since)
         .order('last_seen', { ascending: false })
-        .limit(50);
+        .limit(50)
+        .catch(() => ({ data: [] }));
 
-      const result = (sessions || []).map(s => ({
-        sessionId:   s.id,
-        chatId:      s.chat_id,
-        lastSeen:    s.last_seen,
-        pageCount:   s.page_count,
-        currentPage: s.last_page || s.entry_page || '?',
-        entryPage:   s.entry_page,
-        hadChat:     s.had_chat,
-        isActive:    s.is_active
-      }));
+      // Letzte Aktivitäten für diese Besucher
+      const chatIds = (visitors || []).map(v => v.chat_id);
+      let activities = [];
+      if (chatIds.length) {
+        const { data: acts } = await supabase
+          .from('visitor_activities')
+          .select('chat_id, activity, page_url, created_at')
+          .in('chat_id', chatIds)
+          .order('created_at', { ascending: false })
+          .limit(100)
+          .catch(() => ({ data: [] }));
+        activities = acts || [];
+      }
+
+      // Attach last activity to each visitor
+      const result = (visitors || []).map(v => {
+        const lastAct = activities.find(a => a.chat_id === v.chat_id);
+        return {
+          chatId:       v.chat_id,
+          lastSeen:     v.last_seen,
+          pageCount:    v.page_count,
+          currentPage:  lastAct?.activity?.replace('Besucht: ', '') || '?',
+          userAgent:    v.user_agent
+        };
+      });
 
       res.json({ live: result.length, visitors: result });
     } catch (e) { next(e); }
   },
 
   async getTrafficStats(req, res, next) {
-    try {
-      const { range = 'week' } = req.query;
-      const days = range === '24h' ? 1 : (range === 'month' ? 30 : 7);
-      const since = new Date(Date.now() - days * 86400000).toISOString();
-
-      // Sessions direkt zählen (korrektere Quelle als widget_visitors)
-      const [sessionsRes, chatsRes, activitiesRes] = await Promise.all([
-        supabase.from('visitor_sessions').select('started_at, had_chat').gte('started_at', since).catch(() => ({ data: [] })),
-        supabase.from('chats').select('created_at, platform').gte('created_at', since).catch(() => ({ data: [] })),
-        supabase.from('visitor_activities').select('created_at').gte('created_at', since).catch(() => ({ data: [] }))
-      ]);
-
-      const sessions   = sessionsRes.data   || [];
-      const chats      = chatsRes.data       || [];
-      const activities = activitiesRes.data  || [];
-
-      // Gruppierung anpassen je nach Range
-      const fmt = range === '24h'
-        ? (dt) => new Date(dt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '00' }) // Stunden
-        : (dt) => new Date(dt).toISOString().slice(0, 10); // Tage
-
-      const buckets = {};
-      for (let d = 0; d < (range === '24h' ? 24 : days); d++) {
-        const dt = new Date(Date.now() - (range === '24h' ? (23-d)*3600000 : (days-1-d)*86400000));
-        const key = fmt(dt.toISOString());
-        buckets[key] = { label: key, sessions: 0, chats: 0, pageviews: 0 };
-      }
-
-      sessions.forEach(s  => { const k = fmt(s.started_at);  if (buckets[k]) buckets[k].sessions++; });
-      chats.forEach(c     => { const k = fmt(c.created_at);  if (buckets[k]) buckets[k].chats++;    });
-      activities.forEach(a=> { const k = fmt(a.created_at);  if (buckets[k]) buckets[k].pageviews++;});
-
-      res.json({
-        range,
-        days: Object.values(buckets),
-        totals: {
-          sessions:      sessions.length,
-          chats:         chats.length,
-          pageviews:     activities.length,
-          widgetChats:   chats.filter(c => c.platform === 'web_widget').length,
-          telegramChats: chats.filter(c => c.platform === 'telegram').length,
-          withChat:      sessions.filter(s => s.had_chat).length
-        }
-      });
-    } catch (e) { next(e); }
-  },
-
-  // Entfernte Methode (ersetzt durch oben):
-  async _oldGetTrafficStats(req, res, next) {
     try {
       const { range = 'week' } = req.query;
       const days = range === 'month' ? 30 : 7;
@@ -385,6 +338,62 @@ const adminController = {
       await supabase.from('admin_subscriptions').delete().filter('subscription_data->endpoint', 'eq', subscription.endpoint).catch(() => {});
       await supabase.from('admin_subscriptions').insert([{ subscription_data: subData }]);
       res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  // ── Coupon Management ───────────────────────────────────────────────────────
+  async getCouponSchedule(req, res, next) {
+    try {
+      const { data } = await supabase.from('coupon_schedule').select('*').order('weekday');
+      res.json(data || []);
+    } catch (e) { next(e); }
+  },
+
+  async saveCouponSchedule(req, res, next) {
+    try {
+      const { schedule } = req.body;
+      if (!Array.isArray(schedule)) return res.status(400).json({ error: 'schedule muss Array sein' });
+      for (const s of schedule) {
+        if (s.weekday < 0 || s.weekday > 6) continue;
+        await supabase.from('coupon_schedule').upsert({
+          weekday:     s.weekday,
+          enabled:     s.enabled !== false,
+          discount:    Math.min(Math.max(parseInt(s.discount)||10, 1), 99),
+          type:        ['percentage','fixed'].includes(s.type) ? s.type : 'percentage',
+          description: (s.description||'').substring(0,200),
+          max_uses:    s.max_uses ? parseInt(s.max_uses) : null,
+          updated_at:  new Date()
+        }, { onConflict: 'weekday' });
+      }
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  async getActiveCoupon(req, res, next) {
+    try {
+      const couponService = require('../services/couponService');
+      const coupon = await couponService.getActiveCoupon();
+      res.json(coupon || { active: false });
+    } catch (e) { next(e); }
+  },
+
+  async createCouponNow(req, res, next) {
+    try {
+      const couponService = require('../services/couponService');
+      const coupon = await couponService.createDailyCoupon();
+      if (!coupon) return res.status(400).json({ error: 'Coupon-System deaktiviert oder nicht konfiguriert' });
+      res.json({ success: true, coupon });
+    } catch (e) { next(e); }
+  },
+
+  async getCouponHistory(req, res, next) {
+    try {
+      const { data } = await supabase
+        .from('daily_coupons')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(30);
+      res.json(data || []);
     } catch (e) { next(e); }
   },
 

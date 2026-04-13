@@ -14,6 +14,7 @@ const telegramService     = require('./telegramService');
 const embeddingService    = require('./embeddingService');
 const notificationService = require('./notificationService');
 const abuseDetector       = require('./abuseDetector');
+const couponService       = require('./couponService');
 const logger              = require('../utils/logger');
 
 let _settingsCache     = null;
@@ -46,10 +47,7 @@ const messageProcessor = {
     // 3. Nutzer-Nachricht speichern (fire & forget)
     void (async () => {
       try {
-        await supabase.from('messages').insert([{
-          chat_id: chat.id, role: 'user', content: text,
-          sent_during_manual: chat.is_manual_mode || false
-        }]);
+        await supabase.from('messages').insert([{ chat_id: chat.id, role: 'user', content: text }]);
       } catch (e) { logger.warn('[MP] msg insert:', e.message); }
     })();
 
@@ -80,10 +78,9 @@ const messageProcessor = {
 
     const [context, allHistory, chatData] = await Promise.all([
       this._searchKnowledge(text, settings),
-      supabase.from('messages').select('role, content, sent_during_manual')
+      supabase.from('messages').select('role, content')
         .eq('chat_id', chat.id)
         .neq('role', 'system')
-        .eq('sent_during_manual', false)   // Manual-Mode Nachrichten ausschließen
         .order('created_at', { ascending: false })
         .limit(Math.max(maxHistory + summaryInterval, 20))
         .then(r => (r.data || []).reverse()),
@@ -101,8 +98,25 @@ const messageProcessor = {
     logger.info(`[MP] ${Date.now()-t0}ms – RAG:${context.length} hist:${recentHistory.length}/${allHistory.length} summary:${chatSummary ? 'ja' : 'nein'}`);
 
     // 8. KI-Antwort
+    // Coupon-Kontext NUR bei coupon-bezogenen Fragen laden (spart Tokens)
+    const COUPON_KEYWORDS = /rabatt|coupon|gutschein|code|aktions?|angebot|deal|discount|promo|spare|sparen|reduz/i;
+    let couponContext = null;
+    if (COUPON_KEYWORDS.test(text)) {
+      try {
+        const activeCoupon = await couponService.getActiveCoupon();
+        if (activeCoupon) {
+          const exp = new Date(activeCoupon.expires_at).toLocaleDateString('de-DE');
+          couponContext = `AKTUELLER COUPON: Code "${activeCoupon.code}" - ${activeCoupon.description} (gültig bis ${exp})`;
+        } else {
+          couponContext = 'AKTUELLER COUPON: Kein aktiver Coupon heute.';
+        }
+      } catch (_) {}
+    }
+
+    const fullSummary = [chatSummary, couponContext].filter(Boolean).join('\n\n') || null;
+
     const aiResult = await Promise.race([
-      deepseekService.generateResponse(text, recentHistory, context, chat.id, settings, chatSummary),
+      deepseekService.generateResponse(text, recentHistory, context, chat.id, settings, fullSummary),
       new Promise((_, reject) => setTimeout(() => reject(new Error('KI-Timeout')), 60000))
     ]);
 
@@ -120,8 +134,7 @@ const messageProcessor = {
           chat_id: chat.id, role: 'assistant', content: aiResult.text,
           prompt_tokens:     aiResult.promptTokens     || 0,
           completion_tokens: aiResult.completionTokens || 0,
-          embedding_tokens:  this._lastEmbeddingTokens || 0,
-          sent_during_manual: false
+          embedding_tokens:  this._lastEmbeddingTokens || 0
         }]);
         this._lastEmbeddingTokens = 0;
       } catch (e) { logger.warn('[MP] ai insert:', e.message); }
@@ -174,19 +187,46 @@ const messageProcessor = {
       if (embResult.tokens) this._lastEmbeddingTokens = embResult.tokens;
 
       const threshold = parseFloat(settings.rag_threshold)  || 0.45;
-      const count     = parseInt(settings.rag_match_count)  || 8;
+      const maxCount  = parseInt(settings.rag_match_count)  || 8;
 
-      const { data: r1 } = await supabase.rpc('match_knowledge', {
-        query_embedding: vector, match_threshold: threshold, match_count: count
-      });
-      if (r1?.length >= 2) return r1;
+      // ── Adaptiver RAG ──────────────────────────────────────────────────────
+      // Stufe 1: Probe mit 3 Einträgen + Score-Rückgabe
+      // Wenn Top-Treffer sehr gut (>=0.85) → 1-2 Einträge reichen
+      // Wenn Top-Treffer gut (>=0.70)      → 3-4 Einträge
+      // Wenn Top-Treffer schwach (<0.70)   → volles Kontingent
 
-      const { data: r2 } = await supabase.rpc('match_knowledge', {
-        query_embedding: vector,
-        match_threshold: Math.max(threshold - 0.15, 0.20),
-        match_count:     count + 5
+      const { data: probe } = await supabase.rpc('match_knowledge', {
+        query_embedding:  vector,
+        match_threshold:  threshold,
+        match_count:      3
       });
-      return r2?.length ? r2 : (r1 || []);
+
+      const topScore = probe?.[0]?.similarity || 0;
+
+      // Sehr guter Treffer: Top-Ergebnis hat hohe Ähnlichkeit → maximal 2 Dokumente
+      if (topScore >= 0.82) {
+        const exact = probe.filter(r => r.similarity >= 0.75);
+        logger.info(`[RAG] Hohe Konfidenz (${topScore.toFixed(3)}) → ${exact.length} Dok.`);
+        return exact.slice(0, 2);
+      }
+
+      // Guter Treffer: 3-4 Dokumente reichen
+      if (topScore >= 0.65 && probe?.length >= 2) {
+        logger.info(`[RAG] Mittlere Konfidenz (${topScore.toFixed(3)}) → ${probe.length} Dok.`);
+        return probe;
+      }
+
+      // Schwacher Treffer: volles Kontingent mit niedrigerem Threshold
+      const { data: full } = await supabase.rpc('match_knowledge', {
+        query_embedding:  vector,
+        match_threshold:  Math.max(threshold - 0.15, 0.20),
+        match_count:      maxCount
+      });
+
+      const result = full?.length ? full : (probe || []);
+      logger.info(`[RAG] Niedrige Konfidenz (${topScore.toFixed(3)}) → ${result.length} Dok.`);
+      return result;
+
     } catch (err) {
       logger.warn(`[MP] Embedding: ${err.message}`);
       return [];

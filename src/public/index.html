@@ -80,16 +80,15 @@
         <section id="traffic-section" class="app-section">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
                 <h2 class="section-title" style="margin:0;">📊 Website Traffic</h2>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;">
-                    <button onclick="loadTraffic('24h')"   id="traffic-btn-24h"   class="btn btn-secondary btn-sm">24h</button>
-                    <button onclick="loadTraffic('week')"  id="traffic-btn-week"  class="btn btn-primary btn-sm">7 Tage</button>
+                <div style="display:flex;gap:6px;">
+                    <button onclick="loadTraffic('week')" id="traffic-btn-week" class="btn btn-primary btn-sm">7 Tage</button>
                     <button onclick="loadTraffic('month')" id="traffic-btn-month" class="btn btn-secondary btn-sm">30 Tage</button>
                 </div>
             </div>
 
             <!-- Totals -->
             <div class="stats-grid" id="traffic-totals" style="margin-bottom:16px;">
-                <div class="stat-card"><div class="stat-label">SESSIONS</div><div class="stat-value" id="t-visitors">–</div></div>
+                <div class="stat-card"><div class="stat-label">BESUCHER</div><div class="stat-value" id="t-visitors">–</div></div>
                 <div class="stat-card"><div class="stat-label">SEITENAUFRUFE</div><div class="stat-value" id="t-pageviews">–</div></div>
                 <div class="stat-card"><div class="stat-label">WIDGET CHATS</div><div class="stat-value" id="t-wchats">–</div></div>
                 <div class="stat-card"><div class="stat-label">TELEGRAM CHATS</div><div class="stat-value" id="t-tchats">–</div></div>
@@ -106,18 +105,6 @@
                 </div>
             </div>
 
-            <!-- Visitor Detail Panel (initially hidden) -->
-            <div id="visitor-detail-panel" style="display:none;background:#0d1929;border:1px solid #1e3a5f;border-radius:12px;padding:14px;margin-bottom:12px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
-                    <div>
-                        <div class="card-title" id="visitor-detail-title" style="font-size:0.95rem;font-weight:700;"></div>
-                        <div id="visitor-detail-id" style="font-size:0.7rem;color:#555;font-family:monospace;margin-top:2px;"></div>
-                    </div>
-                    <button onclick="closeVisitorDetail()" class="btn btn-secondary btn-sm">✕</button>
-                </div>
-                <div id="visitor-detail-acts" style="max-height:260px;overflow-y:auto;"></div>
-            </div>
-
             <!-- Aktivitäts-Feed -->
             <div class="card" style="margin-bottom:12px;">
                 <h3 class="card-title">📋 Letzte Aktivitäten</h3>
@@ -126,17 +113,9 @@
                 </div>
             </div>
 
-            <!-- Sessions -->
-            <div class="card" style="margin-bottom:12px;">
-                <h3 class="card-title">📋 Sessions</h3>
-                <div id="sessions-list" style="max-height:240px;overflow-y:auto;">
-                    <p style="color:#555;font-size:0.85rem;">Lädt...</p>
-                </div>
-            </div>
-
             <!-- Chart -->
             <div class="card">
-                <h3 class="card-title" id="traffic-chart-title">Sessions & Chats – 7 Tage</h3>
+                <h3 class="card-title" id="traffic-chart-title">Besucher & Chats – 7 Tage</h3>
                 <canvas id="traffic-chart" height="200" style="width:100%;"></canvas>
                 <div id="traffic-legend" style="display:flex;gap:16px;margin-top:10px;font-size:0.78rem;color:#94a3b8;flex-wrap:wrap;"></div>
             </div>
@@ -281,6 +260,7 @@
                 <button class="tab-btn" onclick="showSettingsTab('sellauth-cfg',this)">🛒 Sellauth</button>
                 <button class="tab-btn" onclick="showSettingsTab('telegram-cfg',this)">✈️ Telegram</button>
                 <button class="tab-btn" onclick="showSettingsTab('widget-cfg',this)">🔗 Widget</button>
+                <button class="tab-btn" onclick="showSettingsTab('coupon-cfg',this)">🎟️ Coupon</button>
             </div>
 
             <div id="settings-tab-bot" class="tab-pane active">
@@ -440,13 +420,63 @@
                     <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
                 </div>
             </div>
+            <div id="settings-tab-coupon-cfg" class="tab-pane">
+                <!-- Active Coupon Card -->
+                <div class="card" id="active-coupon-card" style="border-color:#14532d;margin-bottom:12px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                        <h3 class="card-title" style="margin:0;">🎟️ Aktiver Tages-Coupon</h3>
+                        <button onclick="loadActiveCoupon()" class="btn btn-secondary btn-sm">↺</button>
+                    </div>
+                    <div id="active-coupon-display">
+                        <p style="color:#555;font-size:0.85rem;">Lädt...</p>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                        <button onclick="createCouponNow()" class="btn btn-primary btn-sm">⚡ Jetzt neuen Coupon erstellen</button>
+                        <button onclick="loadCouponHistory()" class="btn btn-secondary btn-sm">📋 Verlauf</button>
+                    </div>
+                </div>
+
+                <!-- Coupon Global Settings -->
+                <div class="card">
+                    <h3 class="card-title">⚙️ Allgemeine Einstellungen</h3>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:10px;">
+                            <input type="checkbox" id="coupon-enabled" style="width:18px;height:18px;">
+                            Tägl. Coupon-System aktiviert
+                        </label>
+                        <p class="hint">Erstellt täglich automatisch einen neuen Coupon in Sellauth.</p>
+                    </div>
+                    <div class="form-group">
+                        <label>Erneuerung täglich um <span id="schedule-hour-disp" class="label-val">0</span>:00 Uhr</label>
+                        <input type="range" id="coupon-schedule-hour" min="0" max="23" step="1" value="0"
+                            oninput="document.getElementById('schedule-hour-disp').textContent=this.value">
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-success btn-sm">💾 Speichern</button>
+                </div>
+
+                <!-- Weekly Planner -->
+                <div class="card" style="margin-top:12px;">
+                    <h3 class="card-title">📅 Wochenplan</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Rabatt pro Wochentag festlegen. Deaktivierte Tage erstellen keinen Coupon.</p>
+                    <div id="week-schedule-list">
+                        <p style="color:#555;font-size:0.85rem;">Lädt...</p>
+                    </div>
+                    <button onclick="saveWeekSchedule()" class="btn btn-success btn-full" style="margin-top:12px;">💾 Wochenplan speichern</button>
+                </div>
+
+                <!-- Coupon History -->
+                <div class="card" style="margin-top:12px;display:none;" id="coupon-history-card">
+                    <h3 class="card-title">📋 Coupon-Verlauf</h3>
+                    <div id="coupon-history-list"></div>
+                </div>
+            </div>
         </section>
 
     </div>
 </div>
 
-<script src="js/api.js?v=138"></script>
-<script src="js/dashboard.js?v=138"></script>
+<script src="js/api.js?v=1310"></script>
+<script src="js/dashboard.js?v=1310"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });

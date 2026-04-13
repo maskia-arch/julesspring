@@ -14,14 +14,6 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ extended: true }));
-// widget.js mit Cache-Control Headers ausliefern
-app.get('/widget.js', (req, res) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Cache-Control', 'public, max-age=300');
-  res.setHeader('Content-Type', 'application/javascript');
-  res.sendFile(path.join(__dirname, 'public', 'widget.js'));
-});
-
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/api/admin',    adminRoutes);
@@ -37,10 +29,16 @@ app.use(errorHandler);
 
 const server = app.listen(port, () => {
   logger.info(`Server läuft auf Port ${port}`);
-  // Render.com benötigt ~30-45s bis DNS + ausgehende Verbindungen bereit sind
-  // Webhook nach 45s, KeepAlive separate gestaffelt
-  setTimeout(() => autoRegisterWebhook(), 45000);
-  setTimeout(() => startKeepAlive(),       60000);
+  // Warte 5s bis Server stabil ist, dann Webhook + KeepAlive starten
+  setTimeout(() => {
+    autoRegisterWebhook();
+    startKeepAlive();
+    // Coupon Daily Scheduler
+    try {
+      const couponService = require('./services/couponService');
+      couponService.startDailyScheduler();
+    } catch(e) { logger.warn('[Server] Coupon Scheduler:', e.message); }
+  }, 5000);
 });
 
 // ── Auto-Register Webhook ─────────────────────────────────────────────────────
@@ -71,9 +69,9 @@ async function autoRegisterWebhook() {
     if (result.ok) {
       logger.info(`[Webhook] ✅ Auto-registriert: ${appUrl}/api/webhooks/telegram`);
       // Persistent in DB speichern
-      await supabase.from('settings')
-        .upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() })
-        .catch(() => {});
+      try {
+        await supabase.from('settings').upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() });
+      } catch (_) {}
     } else {
       logger.warn(`[Webhook] Auto-Registrierung fehlgeschlagen: ${result.description}`);
     }
@@ -104,9 +102,8 @@ function startKeepAlive() {
     }
   }
 
-  // Sofort pingen (Funktion wird bereits verzögert aufgerufen), dann alle 14 Minuten
-  ping();
-  setInterval(ping, 14 * 60 * 1000);
+  // Erst nach 30s, dann alle 14 Minuten
+  setTimeout(() => { ping(); setInterval(ping, 14 * 60 * 1000); }, 30000);
   logger.info(`[KeepAlive] Aktiv → ${appUrl}/health`);
 }
 

@@ -651,6 +651,15 @@ function _applySettings(s) {
     // Widget powered-by
     var pwEl = document.getElementById('widget-powered-by');
     if (pwEl && s.widget_powered_by != null) pwEl.value = s.widget_powered_by;
+    // Coupon settings
+    var ceEl = document.getElementById('coupon-enabled'); if(ceEl) ceEl.checked = !!s.coupon_enabled;
+    var sv2 = function(id, v){ var el=document.getElementById(id); if(el&&v!=null) el.value=v; };
+    sv2('coupon-discount', s.coupon_discount || 10);
+    sv2('coupon-type', s.coupon_type || 'percentage');
+    sv2('coupon-description', s.coupon_description || '');
+    sv2('coupon-max-uses', s.coupon_max_uses || '');
+    var shEl = document.getElementById('coupon-schedule-hour');
+    if(shEl){ shEl.value = s.coupon_schedule_hour || 0; var shD = document.getElementById('schedule-hour-disp'); if(shD) shD.textContent = s.coupon_schedule_hour || 0; }
 }
 
 // Settings-Cache
@@ -902,7 +911,14 @@ async function saveSettings() {
         rag_match_count:     parseInt(gv('rag-match-count'))  || 8,
         max_history_msgs:    parseInt(gv('max-history-msgs')) || 4,
         summary_interval:    parseInt(gv('summary-interval')) || 5,
-        widget_powered_by:   gv('widget-powered-by')
+        widget_powered_by:   gv('widget-powered-by'),
+        // Coupon settings
+        coupon_enabled:      document.getElementById('coupon-enabled')?.checked || false,
+        coupon_discount:     parseInt(gv('coupon-discount'))      || 10,
+        coupon_type:         gv('coupon-type')                    || 'percentage',
+        coupon_description:  gv('coupon-description'),
+        coupon_max_uses:     parseInt(gv('coupon-max-uses'))       || null,
+        coupon_schedule_hour: parseInt(gv('coupon-schedule-hour')) || 0
     };
 
     var saveBtn = document.getElementById('save-settings') ||
@@ -1079,7 +1095,6 @@ async function hardRefresh() {
         _safeRun(function() { return loadTraffic('week'); });
         _safeRun(loadLiveVisitors);
         _safeRun(loadActivityFeed);
-        _safeRun(loadSessions);
         // Alle 15s live aktualisieren
         clearInterval(_liveInterval);
         _liveInterval = setInterval(function() {
@@ -1215,35 +1230,37 @@ async function loadTraffic(range) {
     range = range || _trafficRange;
     _trafficRange = range;
 
-    // Button states
-    ['24h','week','month'].forEach(function(r) {
-        var btn = document.getElementById('traffic-btn-' + r);
-        if (btn) btn.className = range === r ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm';
-    });
+    // Toggle button styles
+    var wb = document.getElementById('traffic-btn-week');
+    var mb = document.getElementById('traffic-btn-month');
+    if (wb) { wb.className = range === 'week' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'; }
+    if (mb) { mb.className = range === 'month' ? 'btn btn-primary btn-sm' : 'btn btn-secondary btn-sm'; }
 
-    var labels = { '24h': '24 Stunden', 'week': '7 Tage', 'month': '30 Tage' };
     var title = document.getElementById('traffic-chart-title');
-    if (title) title.textContent = 'Sessions & Chats – ' + (labels[range] || '7 Tage');
+    if (title) title.textContent = 'Besucher & Chats – ' + (range === 'week' ? '7 Tage' : '30 Tage');
 
     try {
-        var data = await fetch('/api/admin/traffic?range=' + range, {
-            headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('admin_token')||'') }
-        }).then(function(r){ return r.json(); });
+        var data = await api.request('/traffic?range=' + range);
         if (!data) return;
 
+        // Update totals
         var sv = function(id,v) { var e=document.getElementById(id); if(e) e.textContent=v; };
-        sv('t-visitors',  data.totals?.sessions     || 0);
-        sv('t-pageviews', data.totals?.pageviews     || 0);
-        sv('t-wchats',    data.totals?.widgetChats   || 0);
+        sv('t-visitors',  data.totals?.visitors  || 0);
+        sv('t-pageviews', data.totals?.pageviews  || 0);
+        sv('t-wchats',    data.totals?.widgetChats || 0);
         sv('t-tchats',    data.totals?.telegramChats || 0);
 
+        // Chart
         var days     = data.days || [];
-        var lbls     = days.map(function(d) { return d.label || d.date || ''; });
-        var sessions  = days.map(function(d) { return d.sessions || 0; });
-        var chats     = days.map(function(d) { return d.chats    || 0; });
-        var pageviews = days.map(function(d) { return d.pageviews|| 0; });
+        var labels   = days.map(function(d) {
+            var dt = new Date(d.date);
+            return dt.toLocaleDateString('de-DE', { weekday:'short', day:'numeric', month:'numeric' });
+        });
+        var visitors  = days.map(function(d) { return d.visitors; });
+        var chats     = days.map(function(d) { return d.chats; });
+        var pageviews = days.map(function(d) { return d.pageviews; });
 
-        drawTrafficChart(lbls, sessions, chats, pageviews);
+        drawTrafficChart(labels, visitors, chats, pageviews);
     } catch(e) {
         console.warn('[Traffic]', e.message);
     }
@@ -1327,8 +1344,6 @@ function drawTrafficChart(labels, visitors, chats, pageviews) {
 // ── Live Visitors ─────────────────────────────────────────────────────────────
 var _liveInterval = null;
 
-var _selectedVisitor = null;
-
 async function loadLiveVisitors() {
     try {
         var data = await fetch('/api/admin/traffic/live', {
@@ -1336,101 +1351,35 @@ async function loadLiveVisitors() {
         }).then(function(r){ return r.json(); });
 
         var countEl = document.getElementById('live-count');
-        if (countEl) {
-            countEl.textContent = (data.live || 0) + ' online';
-            countEl.style.background = data.live > 0 ? '#14532d' : '#1e3a5f';
-            countEl.style.color      = data.live > 0 ? '#4ade80' : '#60a5fa';
-        }
+        if (countEl) countEl.textContent = (data.live || 0) + ' online';
 
         var listEl = document.getElementById('live-visitors-list');
         if (!listEl) return;
 
-        if (!data.visitors || !data.visitors.length) {
-            listEl.innerHTML = '<p style="color:#555;font-size:0.82rem;padding:8px;">Keine aktiven Besucher in den letzten 15 Minuten.</p>';
+        if (!data.visitors?.length) {
+            listEl.innerHTML = '<p style="color:#555;font-size:0.82rem;padding:4px;">Keine aktiven Besucher gerade.</p>';
             return;
         }
 
         listEl.innerHTML = data.visitors.map(function(v) {
             var ago = Math.round((Date.now() - new Date(v.lastSeen)) / 1000);
-            var agoStr = ago < 60 ? ago + 's' : ago < 3600 ? Math.round(ago/60) + 'min' : Math.round(ago/3600) + 'h';
-            var isRecent = ago < 180;
-            var dotColor = isRecent ? '#4ade80' : '#f59e0b';
-            var dotAnim  = isRecent ? 'animation:vspulse 2s infinite' : '';
-            var chatBadge = v.hadChat ? '<span style="font-size:0.65rem;background:#1e3a5f;color:#60a5fa;padding:1px 5px;border-radius:4px;margin-left:4px;">💬</span>' : '';
-            var shortId = (v.chatId || '').substring(0, 14) + '…';
-            var sid = esc(v.sessionId || '');
-            var cid = v.chatId || '';
-            var cp  = v.currentPage || '?';
-            var safeClick = 'openVisitorDetail(this.getAttribute(\'data-cid\'),this.getAttribute(\'data-sid\'),this.getAttribute(\'data-cp\'))';
-            return '<div data-cid="' + esc(cid) + '" data-sid="' + esc(sid) + '" data-cp="' + esc(cp) + '" onclick="' + safeClick + '" ' +
-                'style="display:flex;align-items:center;gap:9px;padding:10px;border-radius:8px;background:#111;margin-bottom:6px;cursor:pointer;">' +
-                '<span style="width:10px;height:10px;border-radius:50%;background:' + dotColor + ';display:inline-block;flex-shrink:0;' + dotAnim + ';"></span>' +
+            var agoStr = ago < 60 ? ago + 's' : Math.round(ago/60) + 'min';
+            var ua = (v.userAgent || '').toLowerCase();
+            var device = ua.includes('mobile') ? '📱' : (ua.includes('tablet') ? '📲' : '🖥️');
+            return '<div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #1a1a1a;">' +
+                '<span style="font-size:1.1rem;">' + device + '</span>' +
                 '<div style="flex:1;min-width:0;">' +
-                    '<div style="font-size:0.85rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + cp + chatBadge + '</div>' +
-                    '<div style="font-size:0.72rem;color:#64748b;margin-top:2px;">' + shortId + ' · ' + agoStr + ' · ' + (v.pageCount || 1) + ' Seiten</div>' +
+                    '<div style="font-size:0.82rem;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' + esc(v.currentPage) + '</div>' +
+                    '<div style="font-size:0.7rem;color:#555;">' + agoStr + ' ago · ' + v.pageCount + ' Seiten</div>' +
                 '</div>' +
-                '<span style="color:#64748b;font-size:0.8rem;">›</span>' +
+                '<button onclick="showChatById(\'' + esc(v.chatId) + '\')" class="btn btn-secondary btn-sm" style="font-size:0.7rem;padding:2px 8px;">Chat</button>' +
             '</div>';
         }).join('');
     } catch(e) {
         var listEl = document.getElementById('live-visitors-list');
-        if (listEl) listEl.innerHTML = '<p style="color:#ef4444;font-size:0.82rem;">' + esc(e.message) + '</p>';
+        if (listEl) listEl.innerHTML = '<p style="color:#555;font-size:0.82rem;">Keine Daten.</p>';
     }
 }
-
-async function openVisitorDetail(chatId, sessionId, currentPage) {
-    _selectedVisitor = { chatId: chatId, sessionId: sessionId };
-    var panel = document.getElementById('visitor-detail-panel');
-    if (!panel) return;
-    panel.style.display = 'block';
-
-    var titleEl = document.getElementById('visitor-detail-title');
-    if (titleEl) titleEl.textContent = currentPage || chatId.substring(0, 20);
-    var idEl = document.getElementById('visitor-detail-id');
-    if (idEl) idEl.textContent = chatId;
-
-    var actEl = document.getElementById('visitor-detail-acts');
-    if (actEl) actEl.innerHTML = '<p style="color:#555;font-size:0.82rem;">Lädt...</p>';
-
-    try {
-        var sessions = await fetch('/api/admin/traffic/sessions?limit=100', {
-            headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('admin_token')||'') }
-        }).then(function(r){ return r.json(); }).catch(function(){ return []; });
-
-        var visitorSessions = (sessions || []).filter(function(s){ return s.chat_id === chatId; });
-
-        if (!actEl) return;
-        if (!visitorSessions.length) {
-            actEl.innerHTML = '<p style="color:#555;font-size:0.82rem;">Keine Sessions gefunden.</p>';
-            return;
-        }
-
-        actEl.innerHTML = visitorSessions.map(function(s) {
-            var dt = new Date(s.started_at).toLocaleString('de-DE', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-            var ago = Math.round((Date.now() - new Date(s.last_seen)) / 1000);
-            var agoStr = ago < 60 ? ago+'s' : ago < 3600 ? Math.round(ago/60)+'min' : Math.round(ago/3600)+'h';
-            var dot = '<span style="width:8px;height:8px;border-radius:50%;background:' + (s.is_active ? '#4ade80' : '#555') + ';display:inline-block;margin-right:5px;flex-shrink:0;"></span>';
-            return '<div style="padding:10px;background:#111;border-radius:8px;margin-bottom:6px;">' +
-                '<div style="font-size:0.85rem;font-weight:600;display:flex;align-items:center;margin-bottom:4px;">' + dot + esc(s.entry_page || '?') + '</div>' +
-                '<div style="font-size:0.75rem;color:#64748b;">' +
-                    dt + ' · ' + (s.page_count || 1) + ' Seiten' +
-                    (s.had_chat ? ' · <span style="color:#60a5fa;">💬 Chat</span>' : '') +
-                    ' · ' + agoStr + ' ago' +
-                '</div>' +
-                (s.last_page && s.last_page !== s.entry_page ? '<div style="font-size:0.72rem;color:#555;margin-top:2px;">→ ' + esc(s.last_page) + '</div>' : '') +
-            '</div>';
-        }).join('');
-    } catch(e) {
-        if (actEl) actEl.innerHTML = '<p style="color:#ef4444;font-size:0.8rem;">' + esc(e.message) + '</p>';
-    }
-}
-
-function closeVisitorDetail() {
-    var panel = document.getElementById('visitor-detail-panel');
-    if (panel) panel.style.display = 'none';
-    _selectedVisitor = null;
-}
-
 
 async function loadActivityFeed() {
     try {
@@ -1468,36 +1417,121 @@ function showChatById(chatId) {
 }
 
 
-async function loadSessions() {
-    var el = document.getElementById('sessions-list');
+// ── Coupon Management ─────────────────────────────────────────────────────────
+
+async function loadActiveCoupon() {
+    var el = document.getElementById('active-coupon-display');
+    try {
+        var data = await api.request('/coupons/active');
+        if (!el) return;
+        if (!data || !data.code) {
+            el.innerHTML = '<p style="color:#555;font-size:0.85rem;">Kein aktiver Coupon.</p>';
+            return;
+        }
+        var exp = data.expires_at ? new Date(data.expires_at).toLocaleString('de-DE', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : '–';
+        el.innerHTML =
+            '<div style="background:#052e16;border:1px solid #14532d;border-radius:8px;padding:12px;">' +
+            '<div style="font-size:1.6rem;font-weight:900;letter-spacing:4px;color:#4ade80;font-family:monospace;">' + esc(data.code) + '</div>' +
+            '<div style="font-size:0.875rem;color:#86efac;margin-top:4px;">' + esc(data.description || '') + '</div>' +
+            '<div style="font-size:0.75rem;color:#555;margin-top:6px;">Gültig bis: ' + exp + '</div>' +
+            '</div>';
+    } catch(e) {
+        if (el) el.innerHTML = '<p style="color:#ef4444;font-size:0.82rem;">' + esc(e.message) + '</p>';
+    }
+}
+
+async function createCouponNow() {
+    var btn = event.target;
+    btn.disabled = true; btn.textContent = '⏳ Erstelle...';
+    try {
+        var data = await api.request('/coupons/create-now', 'POST');
+        if (data.success) {
+            showToast('✅ Coupon erstellt: ' + data.coupon.code);
+            loadActiveCoupon();
+        }
+    } catch(e) {
+        alert('Fehler: ' + e.message);
+    } finally {
+        btn.disabled = false; btn.textContent = '⚡ Jetzt neuen Coupon erstellen';
+    }
+}
+
+async function loadCouponHistory() {
+    var card = document.getElementById('coupon-history-card');
+    var list = document.getElementById('coupon-history-list');
+    if (!card || !list) return;
+    card.style.display = 'block';
+    try {
+        var data = await api.request('/coupons/history');
+        if (!data?.length) { list.innerHTML = '<p style="color:#555;">Kein Verlauf.</p>'; return; }
+        list.innerHTML = data.map(function(c) {
+            var created = new Date(c.created_at).toLocaleString('de-DE', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
+            var badge = c.is_active
+                ? '<span style="background:#14532d;color:#4ade80;padding:1px 6px;border-radius:4px;font-size:0.7rem;">AKTIV</span>'
+                : '<span style="background:#1a1a1a;color:#555;padding:1px 6px;border-radius:4px;font-size:0.7rem;">ABGELAUFEN</span>';
+            return '<div style="padding:8px 0;border-bottom:1px solid #1a1a1a;display:flex;gap:8px;align-items:center;">' +
+                '<div style="flex:1;">' +
+                    '<div style="font-weight:700;font-family:monospace;letter-spacing:2px;">' + esc(c.code) + ' ' + badge + '</div>' +
+                    '<div style="font-size:0.75rem;color:#64748b;">' + created + ' · ' + esc(c.description || '') + '</div>' +
+                '</div>' +
+            '</div>';
+        }).join('');
+    } catch(e) { list.innerHTML = '<p style="color:#ef4444;">' + esc(e.message) + '</p>'; }
+}
+
+
+// ── Wochenplan ────────────────────────────────────────────────────────────────
+
+var WEEKDAYS = ['Montag','Dienstag','Mittwoch','Donnerstag','Freitag','Samstag','Sonntag'];
+var _weekSchedule = [];
+
+async function loadWeekSchedule() {
+    var el = document.getElementById('week-schedule-list');
     if (!el) return;
     try {
-        var data = await fetch('/api/admin/traffic/sessions?limit=30', {
+        var data = await fetch('/api/admin/coupons/schedule', {
             headers: { 'Authorization': 'Bearer ' + (localStorage.getItem('admin_token')||'') }
         }).then(function(r){ return r.json(); });
 
-        if (!data?.length) { el.innerHTML = '<p style="color:#555;font-size:0.82rem;">Keine Sessions.</p>'; return; }
+        _weekSchedule = data || [];
 
-        el.innerHTML = data.map(function(s) {
-            var started = new Date(s.started_at).toLocaleString('de-DE', {day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
-            var ago = Math.round((Date.now() - new Date(s.last_seen)) / 1000);
-            var agoStr = ago < 60 ? ago+'s' : ago < 3600 ? Math.round(ago/60)+'min' : Math.round(ago/3600)+'h';
-            var statusDot = s.is_active
-                ? '<span style="width:8px;height:8px;border-radius:50%;background:#4caf50;display:inline-block;margin-right:4px;animation:vspulse 2s infinite"></span>'
-                : '<span style="width:8px;height:8px;border-radius:50%;background:#888;display:inline-block;margin-right:4px;"></span>';
-            return '<div style="padding:8px 0;border-bottom:1px solid #1a1a1a;display:flex;gap:8px;align-items:flex-start;">' +
-                '<div style="flex:1;min-width:0;">' +
-                    '<div style="font-size:0.82rem;font-weight:600;display:flex;align-items:center;gap:4px;">' + statusDot + esc(s.entry_page||'?') + '</div>' +
-                    '<div style="font-size:0.72rem;color:#64748b;margin-top:1px;">' +
-                        started + ' · ' + (s.page_count||0) + ' Seiten' +
-                        (s.had_chat ? ' · <span style="color:#60a5fa">💬 Chat</span>' : '') +
-                    '</div>' +
-                    (s.last_page && s.last_page !== s.entry_page ? '<div style="font-size:0.7rem;color:#555;">→ '+esc(s.last_page)+'</div>' : '') +
-                '</div>' +
-                '<div style="font-size:0.7rem;color:#555;white-space:nowrap;">' + agoStr + '</div>' +
-            '</div>';
-        }).join('');
-    } catch(e) { el.innerHTML = '<p style="color:#ef4444;font-size:0.8rem;">'+esc(e.message)+'</p>'; }
+        // Fill missing days with defaults
+        for (var d = 0; d < 7; d++) {
+            if (!_weekSchedule.find(function(s){ return s.weekday === d; })) {
+                _weekSchedule.push({ weekday: d, enabled: true, discount: 10, type: 'percentage', description: '' });
+            }
+        }
+        _weekSchedule.sort(function(a,b){ return a.weekday - b.weekday; });
+        renderWeekSchedule();
+    } catch(e) {
+        if (el) el.innerHTML = '<p style="color:#ef4444;">' + esc(e.message) + '</p>';
+    }
+}
+
+
+function _updateScheduleField(weekday, field, value) {
+    var entry = _weekSchedule.find(function(s){ return s.weekday === weekday; });
+    if (entry) entry[field] = value;
+}
+
+async function saveWeekSchedule() {
+    var btn = document.querySelector('button[onclick="saveWeekSchedule()"]');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Speichert...'; }
+    try {
+        await fetch('/api/admin/coupons/schedule', {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + (localStorage.getItem('admin_token')||'')
+            },
+            body: JSON.stringify({ schedule: _weekSchedule })
+        });
+        showToast('✅ Wochenplan gespeichert!');
+    } catch(e) {
+        alert('Fehler: ' + e.message);
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '💾 Wochenplan speichern'; }
+    }
 }
 
 function showToast(msg) {

@@ -23,7 +23,12 @@ UNSICHERHEITS-REGELN:
 3. NIEMALS "Ausverkauft" ohne expliziten Hinweis
 
 BESTELLSTATUS: Wenn Kunde nach Bestellung fragt →
-"Sende: /order DEINE_INVOICE_ID (aus Bestätigungs-E-Mail)"`;
+"Sende: /order DEINE_INVOICE_ID (aus Bestätigungs-E-Mail)"
+
+TAGES-COUPON: Wenn Kunde nach Rabatt, Coupon, Angebot oder Aktion fragt →
+Der aktuelle Coupon-Code wird dir als Teil des Kontexts mitgeteilt (AKTUELLER COUPON).
+Wenn ein Coupon aktiv ist: Nenne den Code und die Beschreibung. Weise auf ValueShop25.com hin.
+Wenn kein Coupon-Kontext vorhanden: "Gerade haben wir keinen aktiven Code. Schau morgen wieder vorbei!"`
 
 const deepseekService = {
 
