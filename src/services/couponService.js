@@ -68,18 +68,25 @@ const couponService = {
         .eq('is_active', true);
 
       if (actives?.length) {
-        for (const c of actives) {
-          // Sellauth: Coupon löschen
+        for (const coupon of actives) {
+          // Sellauth DELETE benötigt die NUMERISCHE ID (nicht den Code-String!)
+          const numericId = coupon.sellauth_id ? parseInt(coupon.sellauth_id) : null;
+
+          if (!numericId) {
+            logger.info(`[Coupon] ${coupon.code}: keine Sellauth-ID gespeichert – überspringe Löschung`);
+            continue;
+          }
+
           try {
-            await this._client(apiKey).delete(`/shops/${shopId}/coupons/${c.code}`);
-            logger.info(`[Coupon] Gelöscht in Sellauth: ${c.code}`);
+            await this._client(apiKey).delete(`/shops/${shopId}/coupons/${numericId}`);
+            logger.info(`[Coupon] Gelöscht in Sellauth: ${coupon.code} (ID: ${numericId})`);
           } catch (e) {
             const status = e.response?.status;
             const msg    = e.response?.data?.message || e.message;
             if (status === 404 || /not found/i.test(msg)) {
-              logger.info(`[Coupon] ${c.code} nicht in Sellauth (bereits abgelaufen oder nie erstellt) – überspringe`);
+              logger.info(`[Coupon] ${coupon.code} (ID: ${numericId}) nicht in Sellauth – bereits gelöscht oder abgelaufen`);
             } else {
-              logger.warn(`[Coupon] Löschen fehlgeschlagen (${c.code}): ${msg}`);
+              logger.warn(`[Coupon] Löschen fehlgeschlagen (${coupon.code}, ID: ${numericId}): ${msg}`);
             }
           }
         }
