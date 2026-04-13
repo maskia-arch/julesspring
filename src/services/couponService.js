@@ -87,16 +87,16 @@ const couponService = {
   },
 
   // ── Neuen täglichen Coupon erstellen ──────────────────────────────────────
-  async createDailyCoupon() {
+  async createDailyCoupon(force = false) {
     const settings = await this._loadSettings();
 
-    if (!settings.coupon_enabled) {
-      logger.info('[Coupon] Deaktiviert in Settings, kein Coupon erstellt');
+    if (!force && !settings.coupon_enabled) {
+      logger.info('[Coupon] Deaktiviert in Settings – nutze force:true zum manuellen Erstellen');
       return null;
     }
 
     if (!settings.sellauth_api_key || !settings.sellauth_shop_id) {
-      logger.warn('[Coupon] Sellauth nicht konfiguriert');
+      logger.warn('[Coupon] Sellauth nicht konfiguriert (API Key / Shop ID fehlt)');
       return null;
     }
 

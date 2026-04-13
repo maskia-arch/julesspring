@@ -128,105 +128,147 @@ const sellauthService = {
     ].filter(Boolean).join('\n');
   },
 
-  async syncToKnowledgeBase(apiKey, shopId, shopUrl) {
-    const results = { total: 0, saved: 0, skipped: 0, errors: [] };
+  async syncToKnowledgeBase(apiKey, shopId, shopUrl, jobId) {
+    const syncJobManager = require('./syncJobManager');
+    const progress = (pct, step) => {
+      if (jobId) syncJobManager.updateProgress(jobId, pct, step);
+      logger.info(`[Sellauth] ${pct}% – ${step}`);
+    };
+
+    const results = { saved: 0, skipped: 0, errors: 0 };
+
+    progress(2, 'Lade Produkte und Kategorien...');
 
     const [products, categories] = await Promise.all([
       this.getAllProducts(apiKey, shopId),
       this.getCategories(apiKey, shopId)
     ]);
 
-    results.total = products.length;
-    logger.info(`[Sellauth] ${products.length} Produkte geladen`);
+    progress(8, `${products.length} Produkte geladen, ${categories.length} Kategorien`);
 
-    // Sellauth-Import Kategorie-ID holen
-    let categoryId = null;
+    // ── Deduplizierung: Produkte mit identischem Path oder Namen filtern ────
+    // "Bestseller"-Gruppen sind Duplikate von regulären Produkten
+    const SKIP_NAME_PATTERNS = /bestseller/i;
+    const seenPaths = new Set();
+    const filtered = products.filter(p => {
+      if (p.visibility === 'hidden') return false;
+      if (SKIP_NAME_PATTERNS.test(p.name)) return false; // Bestseller-Duplikat
+      const key = p.path || p.name;
+      if (seenPaths.has(key)) return false;
+      seenPaths.add(key);
+      return true;
+    });
+    const skipped = products.length - filtered.length;
+    progress(12, `${filtered.length} einzigartige Produkte (${skipped} Duplikate übersprungen)`);
+
+    // ── Kategorien in Wissensdatenbank anlegen / sicherstellen ──────────────
+    progress(14, 'Kategorien vorbereiten...');
+    const catMap = await this._ensureKbCategories(categories);
+
+    // ── Alte Sellauth-Einträge löschen ────────────────────────────────────
+    progress(16, 'Alte Einträge löschen...');
     try {
-      const { data: kbCat } = await supabase.from('knowledge_categories').select('id').eq('name', 'Sellauth Import').single();
-      categoryId = kbCat?.id || null;
-    } catch {}
+      await supabase.from('knowledge_base').delete().eq('source', 'sellauth_sync');
+    } catch (e) { logger.warn('[Sellauth] Delete:', e.message); }
 
-    // Alte Einträge löschen
-    await supabase.from('knowledge_base').delete().eq('source', 'sellauth_sync');
+    // ── Produkte verarbeiten ───────────────────────────────────────────────
+    const total = filtered.length;
+    for (let i = 0; i < total; i++) {
+      const product = filtered[i];
+      const pct     = 18 + Math.round((i / total) * 75);
+      progress(pct, `Produkt ${i+1}/${total}: ${product.name}`);
 
-    for (const product of products) {
-      if (product.visibility === 'hidden') { results.skipped++; continue; }
-
-      const cat        = categories.find(c => c.id === product.category_id);
-      const catName    = cat?.name || null;
+      const cat       = categories.find(c => c.id === product.category_id);
+      const catName   = cat?.name || null;
+      const kbCatId   = catMap[product.category_id] || catMap['_products'] || null;
       const productUrl = this.buildProductUrl(shopUrl, product.path);
 
       try {
         if (product.type === 'variant' && product.variants?.length) {
+          // Übersichts-Eintrag (einmal pro Produkt)
+          const overview  = this.formatOverviewKnowledge(product, productUrl, catName);
+          const _eo       = await deepseekService.generateEmbedding(overview);
+          const embOver   = _eo.embedding || _eo;
+          await supabase.from('knowledge_base').insert([{
+            content: overview, embedding: embOver,
+            title:   `${product.name} (Übersicht)`,
+            source:  'sellauth_sync',
+            category_id: kbCatId,
+            metadata: { product_id: product.id, product_url: productUrl, type: 'overview' }
+          }]);
+          results.saved++;
+          await new Promise(r => setTimeout(r, 150));
 
-          // 1. Pro Variante ein Eintrag
+          // Pro Variante einzelner Eintrag
           for (const variant of product.variants) {
             const content   = this.formatVariantKnowledge(product, variant, productUrl, catName);
-            const _emb1    = await deepseekService.generateEmbedding(content);
-            const embedding = _emb1.embedding || _emb1;  // unwrap {embedding,tokens}
-            const title     = `${product.name} – ${variant.name}`;
-
+            const _ev       = await deepseekService.generateEmbedding(content);
+            const embedding = _ev.embedding || _ev;
             await supabase.from('knowledge_base').insert([{
-              content, embedding, title,
-              source:      'sellauth_sync',
-              category_id: categoryId,
+              content, embedding,
+              title:  `${product.name} – ${variant.name}`,
+              source: 'sellauth_sync',
+              category_id: kbCatId,
               metadata: {
-                product_id:   product.id,
-                variant_id:   variant.id,
-                product_url:  productUrl,
-                price:        variant.price,
-                currency:     product.currency,
-                stock:        variant.stock,
-                type:         'variant'
+                product_id: product.id, variant_id: variant.id,
+                product_url: productUrl, price: variant.price,
+                currency: product.currency, stock: variant.stock, type: 'variant'
               }
             }]);
             results.saved++;
-            await new Promise(r => setTimeout(r, 200));
+            await new Promise(r => setTimeout(r, 150));
           }
-
-          // 2. Übersichts-Eintrag mit allen Varianten
-          const overview  = this.formatOverviewKnowledge(product, productUrl, catName);
-          const _embOver  = await deepseekService.generateEmbedding(overview);
-          const embOver   = _embOver.embedding || _embOver;  // unwrap
-          await supabase.from('knowledge_base').insert([{
-            content: overview, embedding: embOver,
-            title:   `${product.name} (alle Optionen)`,
-            source:  'sellauth_sync',
-            category_id: categoryId,
-            metadata: { product_id: product.id, product_url: productUrl, type: 'overview' }
-          }]);
-          await new Promise(r => setTimeout(r, 200));
-
         } else {
           const content   = this.formatSingleProductKnowledge(product, productUrl, catName);
-          const _emb3    = await deepseekService.generateEmbedding(content);
-          const embedding = _emb3.embedding || _emb3;  // unwrap
+          const _es       = await deepseekService.generateEmbedding(content);
+          const embedding = _es.embedding || _es;
           await supabase.from('knowledge_base').insert([{
             content, embedding,
-            title:       product.name,
-            source:      'sellauth_sync',
-            category_id: categoryId,
-            metadata: {
-              product_id:  product.id,
-              product_url: productUrl,
-              price:       product.price,
-              currency:    product.currency,
-              type:        'single'
-            }
+            title:  product.name, source: 'sellauth_sync',
+            category_id: kbCatId,
+            metadata: { product_id: product.id, product_url: productUrl, price: product.price, currency: product.currency, type: 'single' }
           }]);
           results.saved++;
-          await new Promise(r => setTimeout(r, 200));
+          await new Promise(r => setTimeout(r, 150));
         }
-
-        logger.info(`[Sellauth] ✓ ${product.name}`);
-      } catch (err) {
-        results.errors.push(`${product.name}: ${err.message}`);
-        logger.warn(`[Sellauth] ✗ ${product.name}: ${err.message}`);
+      } catch (e) {
+        logger.warn(`[Sellauth] Produkt-Fehler (${product.name}): ${e.message}`);
+        results.errors++;
       }
     }
 
-    logger.info(`[Sellauth] Sync: ${results.saved} Einträge für ${results.total} Produkte`);
+    progress(95, 'Abschluss...');
+    logger.info(`[Sellauth] Sync: ${results.saved} Einträge, ${results.skipped} übersprungen, ${results.errors} Fehler`);
     return results;
+  },
+
+  // Wissensdatenbank-Kategorien aus Sellauth-Kategorien ableiten
+  async _ensureKbCategories(sellauthCategories) {
+    const map = {};
+    // Standard-Kategorien die wir immer wollen
+    const needed = ['Produkte', 'Tarife', 'FAQ', 'Support'];
+    for (const name of needed) {
+      try {
+        const { data: existing } = await supabase.from('knowledge_categories')
+          .select('id').eq('name', name).maybeSingle();
+        if (existing) { map['_' + name.toLowerCase()] = existing.id; continue; }
+        const { data: created } = await supabase.from('knowledge_categories')
+          .insert([{ name, icon: name === 'Produkte' ? '🛒' : name === 'Tarife' ? '📶' : name === 'FAQ' ? '❓' : '🛠️', color: '#3b82f6' }])
+          .select('id').single();
+        if (created) map['_' + name.toLowerCase()] = created.id;
+      } catch (_) {}
+    }
+    map['_products'] = map['_produkte'] || map['_tarife'] || null;
+
+    // Sellauth-Kategorien → KB-Kategorien mappen
+    for (const cat of (sellauthCategories || [])) {
+      const lname = (cat.name || '').toLowerCase();
+      if (/tarif|esim|data|sim/.test(lname)) map[cat.id] = map['_tarife'] || map['_products'];
+      else if (/faq|info|hilfe|help/.test(lname)) map[cat.id] = map['_faq'];
+      else if (/support|kontakt/.test(lname)) map[cat.id] = map['_support'];
+      else map[cat.id] = map['_produkte'] || map['_products'];
+    }
+    return map;
   },
 
   async testConnection(apiKey, shopId) {
