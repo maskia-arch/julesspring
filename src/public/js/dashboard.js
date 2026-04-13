@@ -48,6 +48,11 @@ async function initDashboard() {
     _safeRun(loadLearningQueue);
     _safeRun(loadBlacklist);
     setTimeout(initPushNotifications, 2000);
+    // Coupon-Daten vorab laden damit die Tab sofort fertig ist
+    setTimeout(function() {
+        _safeRun(loadActiveCoupon);
+        _safeRun(loadWeekSchedule);
+    }, 1500);
 
     // Intervalle
     clearInterval(window._statsInterval);
