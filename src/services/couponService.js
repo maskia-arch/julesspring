@@ -74,7 +74,13 @@ const couponService = {
             await this._client(apiKey).delete(`/shops/${shopId}/coupons/${c.code}`);
             logger.info(`[Coupon] Gelöscht in Sellauth: ${c.code}`);
           } catch (e) {
-            logger.warn(`[Coupon] Löschen fehlgeschlagen (${c.code}): ${e.response?.data?.message || e.message}`);
+            const status = e.response?.status;
+            const msg    = e.response?.data?.message || e.message;
+            if (status === 404 || /not found/i.test(msg)) {
+              logger.info(`[Coupon] ${c.code} nicht in Sellauth (bereits abgelaufen oder nie erstellt) – überspringe`);
+            } else {
+              logger.warn(`[Coupon] Löschen fehlgeschlagen (${c.code}): ${msg}`);
+            }
           }
         }
 
@@ -135,18 +141,19 @@ const couponService = {
     const prefix = type === 'percentage' ? `SAVE${discount}` : `EUR${discount}`;
     const code   = this._generateCode(prefix);
 
-    // Ablaufdatum: HEUTE um 23:59 (nicht morgen!)
-    // Sellauth expiration_date = "YYYY-MM-DD" → gültig bis Ende dieses Tages
-    // Coupon läuft um 00:00 Uhr ab wenn der neue Coupon erstellt wird
-    const today = new Date();
-    const expiresDate = today.toISOString().slice(0, 10); // "YYYY-MM-DD" (heute)
+    // Sellauth Regel: expiration_date MUSS nach heute liegen (nicht heute selbst!)
+    // → Wir schicken morgen an Sellauth, löschen aber beim nächsten Coupon aktiv
+    // Effektive Laufzeit: heute (wird um 00:00 durch neuen Coupon ersetzt)
+    const today    = new Date();
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const expiresDate = tomorrow.toISOString().slice(0, 10); // YYYY-MM-DD (morgen → Sellauth-Pflicht)
 
-    // Internes Ablaufdatum: morgen 00:00 Uhr (genau wenn der neue erstellt wird)
+    // Dashboard-Anzeige: heute 23:59 (wann der Coupon effektiv ersetzt wird)
     const expiresAt = new Date(today);
-    expiresAt.setDate(expiresAt.getDate() + 1);
-    expiresAt.setHours(0, 0, 0, 0); // 00:00 morgen früh
+    expiresAt.setHours(23, 59, 59, 0);
 
-    logger.info(`[Coupon] Erstelle: ${code} (${discount}${type === 'percentage' ? '%' : '€'} Rabatt, gültig bis: ${expiresDate} 23:59)`);
+    logger.info(`[Coupon] Erstelle: ${code} (${discount}${type === 'percentage' ? '%' : '€'} Rabatt, Sellauth-Ablauf: ${expiresDate})`);
 
     // 1. Alten Coupon ZUERST in Sellauth löschen (vor dem neuen erstellen)
     await this._deactivateOld(settings.sellauth_api_key, settings.sellauth_shop_id);
