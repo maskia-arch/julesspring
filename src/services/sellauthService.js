@@ -60,34 +60,55 @@ const sellauthService = {
   },
 
   // Format für Variante: Link führt immer zur Produktseite
+  // Parst "50.00GB / 180 Days" → { gb: "50", days: "180" }
+  _parseVariantName(name) {
+    const m = name.match(/([\d.]+)\s*GB.*?(\d+)\s*(?:Day|Tag)/i);
+    return m ? { gb: parseFloat(m[1]).toString(), days: m[2] } : null;
+  },
+
   formatVariantKnowledge(product, variant, productUrl, categoryName) {
     const price = variant.price ? `${variant.price} ${product.currency || 'EUR'}` : null;
-    // Sellauth: stock = null oder -1 → unbegrenzt vorrätig, 0 → ausverkauft
     const stock = variant.stock;
     const isUnlimited = stock === null || stock === -1;
     const inStock = isUnlimited || stock > 0;
     const stockDisplay = isUnlimited ? 'Unbegrenzt vorrätig' : stock > 0 ? `${stock} auf Lager` : 'Ausverkauft';
 
+    // Deutsche Synonyme aus englischen Varianten-Namen ableiten
+    const parsed = this._parseVariantName(variant.name);
+    const gbPart   = parsed ? `${parsed.gb} GB` : '';
+    const daysPart = parsed ? `${parsed.days} Tage` : '';
+    const germanName = parsed ? `${parsed.gb}GB ${parsed.days} Tage` : '';
+    const shortName  = parsed ? `${parsed.gb}GB / ${parsed.days} Tage` : '';
+
     const lines = [
       `Produkt: ${product.name}`,
-      `Option/Variante: ${variant.name}`,
-      price ? `Preis: ${price}` : '',
-      `Status: ${stockDisplay}`,
+      `Variante: ${variant.name}`,
+      germanName    ? `Auch bekannt als: ${germanName}` : '',
+      shortName     ? `Kurzbezeichnung: ${shortName}` : '',
+      gbPart        ? `Datenvolumen: ${gbPart}` : '',
+      daysPart      ? `Laufzeit: ${daysPart}` : '',
+      price         ? `Preis: ${price}` : '',
+      `Verfügbarkeit: ${stockDisplay}`,
       `Kauflink: ${productUrl}`,
-      categoryName ? `Kategorie: ${categoryName}` : '',
+      categoryName  ? `Kategorie: ${categoryName}` : '',
     ];
 
-    // Produktbeschreibung (einmal, nicht pro Variante redundant)
     if (product.description) {
       const clean = product.description.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-      if (clean.length > 10) lines.push(`Info: ${clean.substring(0, 500)}`);
+      if (clean.length > 10) lines.push(`Info: ${clean.substring(0, 300)}`);
     }
 
     lines.push('');
-    lines.push(`Wenn ein Kunde "${variant.name}" oder "${product.name}" sucht: Link → ${productUrl}`);
+    // Suchformulierungen die Kunden benutzen
+    if (parsed) {
+      lines.push(`Suchanfrage: "${product.name} ${parsed.gb}GB" oder "${product.name} ${parsed.days} Tage" → Kauflink: ${productUrl}`);
+      lines.push(`Kunden fragen oft nach "${parsed.gb} gb ${parsed.days} tage" oder "${parsed.gb}GB ${parsed.days} Tage ${product.name}"`);
+    } else {
+      lines.push(`Suchanfrage: "${variant.name}" oder "${product.name}" → Kauflink: ${productUrl}`);
+    }
     if (price) lines.push(`Empfehlung: "${variant.name}" für ${price} – Kauflink: ${productUrl}`);
 
-    return lines.filter(l => l !== undefined && l !== null && l !== '').join('\n');
+    return lines.filter(Boolean).join('\n');
   },
 
   // Format für Produkte ohne Varianten
@@ -111,20 +132,28 @@ const sellauthService = {
   // Übersichts-Eintrag für Variant-Produkt (alle Optionen auf einen Blick)
   formatOverviewKnowledge(product, productUrl, categoryName) {
     const variantLines = (product.variants || []).map(v => {
-      const price = v.price ? `${v.price} ${product.currency || 'EUR'}` : '?';
+      const price     = v.price ? `${v.price} ${product.currency || 'EUR'}` : '?';
       const stockNote = (v.stock === 0) ? ' (ausverkauft)' : (v.stock === null || v.stock === -1) ? ' (unbegrenzt)' : '';
-      return `  • ${v.name}: ${price}${stockNote}`;
+      const parsed    = this._parseVariantName(v.name);
+      const german    = parsed ? ` / ${parsed.gb}GB ${parsed.days} Tage` : '';
+      return `  • ${v.name}${german}: ${price}${stockNote}`;
     }).join('\n');
+
+    // Alle Varianten-GB-Werte als Suchterme
+    const gbValues = [...new Set((product.variants||[]).map(v => {
+      const p = this._parseVariantName(v.name); return p ? p.gb + 'GB' : null;
+    }).filter(Boolean))].join(', ');
 
     return [
       `Produkt-Übersicht: ${product.name}`,
       categoryName ? `Kategorie: ${categoryName}` : '',
-      `Kauflink (alle Optionen auf dieser Seite): ${productUrl}`,
+      gbValues ? `Verfügbare Datenvolumen: ${gbValues}` : '',
+      `Kauflink: ${productUrl}`,
       '',
-      `Verfügbare Optionen:`,
+      `Alle Optionen für ${product.name}:`,
       variantLines,
       '',
-      `Kunden können auf der Seite ${productUrl} die gewünschte Option auswählen und direkt kaufen.`
+      `Auf der Seite ${productUrl} kannst du die passende Option (Datenmenge und Laufzeit) wählen und kaufen.`
     ].filter(Boolean).join('\n');
   },
 

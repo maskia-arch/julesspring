@@ -1509,6 +1509,57 @@ async function loadWeekSchedule() {
 }
 
 
+function renderWeekSchedule() {
+    var el = document.getElementById('week-schedule-list');
+    if (!el) return;
+    var jsDay = new Date().getDay();
+    var today = jsDay === 0 ? 6 : jsDay - 1;
+    el.innerHTML = '';
+
+    _weekSchedule.forEach(function(s) {
+        var isToday = s.weekday === today;
+        var row = document.createElement('div');
+        row.style.cssText = 'background:#111;border-radius:8px;padding:12px;margin-bottom:8px;border:1px solid ' + (isToday ? '#2563eb' : '#1e1e1e') + ';';
+
+        // Top row: checkbox + day name + discount + type
+        var top = document.createElement('div');
+        top.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:nowrap;';
+
+        var cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = (s.enabled !== false);
+        cb.style.cssText = 'width:18px;height:18px;cursor:pointer;flex-shrink:0;';
+        cb.onchange = (function(day){ return function(){ _updateScheduleField(day, 'enabled', this.checked); }; })(s.weekday);
+
+        var daySpan = document.createElement('span');
+        daySpan.style.cssText = 'font-weight:700;font-size:0.9rem;flex:1;' + (isToday ? 'color:#60a5fa;' : '');
+        daySpan.textContent = WEEKDAYS[s.weekday] + (isToday ? ' ← heute' : '');
+
+        var discInp = document.createElement('input');
+        discInp.type = 'number'; discInp.min = 1; discInp.max = 99; discInp.value = (s.discount || 10);
+        discInp.style.cssText = 'width:56px;padding:5px 6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.875rem;text-align:center;';
+        discInp.onchange = (function(day){ return function(){ _updateScheduleField(day, 'discount', +this.value); }; })(s.weekday);
+
+        var typeEl = document.createElement('select');
+        typeEl.style.cssText = 'padding:5px 6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;';
+        var optP = document.createElement('option'); optP.value = 'percentage'; optP.textContent = '%';
+        var optF = document.createElement('option'); optF.value = 'fixed';      optF.textContent = '€';
+        if (s.type === 'fixed') optF.selected = true; else optP.selected = true;
+        typeEl.appendChild(optP); typeEl.appendChild(optF);
+        typeEl.onchange = (function(day){ return function(){ _updateScheduleField(day, 'type', this.value); }; })(s.weekday);
+
+        top.appendChild(cb); top.appendChild(daySpan); top.appendChild(discInp); top.appendChild(typeEl);
+
+        var descInp = document.createElement('input');
+        descInp.type = 'text'; descInp.placeholder = 'Beschreibung für KI (z.B. "15% Freitags-Rabatt!")';
+        descInp.value = s.description || '';
+        descInp.style.cssText = 'width:100%;padding:6px 10px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;';
+        descInp.oninput = (function(day){ return function(){ _updateScheduleField(day, 'description', this.value); }; })(s.weekday);
+
+        row.appendChild(top); row.appendChild(descInp);
+        el.appendChild(row);
+    });
+}
+
 function _updateScheduleField(weekday, field, value) {
     var entry = _weekSchedule.find(function(s){ return s.weekday === weekday; });
     if (entry) entry[field] = value;
