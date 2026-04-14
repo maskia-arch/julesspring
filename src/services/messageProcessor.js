@@ -98,21 +98,17 @@ const messageProcessor = {
     logger.info(`[MP] ${Date.now()-t0}ms – RAG:${context.length} hist:${recentHistory.length}/${allHistory.length} summary:${chatSummary ? 'ja' : 'nein'}`);
 
     // 8. KI-Antwort
-    // Coupon-Kontext NUR bei coupon-bezogenen Fragen (spart Tokens)
+    // Coupon-Kontext NUR bei coupon-bezogenen Fragen laden (spart Tokens)
     const COUPON_KEYWORDS = /rabatt|coupon|gutschein|code|aktions?|angebot|deal|discount|promo|spare|sparen|reduz/i;
     let couponContext = null;
-    let _activeCouponId = null;
     if (COUPON_KEYWORDS.test(text)) {
       try {
         const activeCoupon = await couponService.getActiveCoupon();
         if (activeCoupon) {
-          const exp = activeCoupon.expires_at
-            ? new Date(activeCoupon.expires_at).toLocaleDateString('de-DE')
-            : 'heute';
+          const exp = new Date(activeCoupon.expires_at).toLocaleDateString('de-DE');
           couponContext = `AKTUELLER COUPON: Code "${activeCoupon.code}" - ${activeCoupon.description} (gültig bis ${exp})`;
-          _activeCouponId = activeCoupon.id;
         } else {
-          couponContext = 'AKTUELLER COUPON: Kein aktiver Rabattcode heute verfügbar.';
+          couponContext = 'AKTUELLER COUPON: Kein aktiver Coupon heute.';
         }
       } catch (_) {}
     }
@@ -145,20 +141,6 @@ const messageProcessor = {
     })();
 
     this._updateChatPreview(chat.id, aiResult.text, 'assistant');
-
-    // KI-Aufruf-Zähler für Coupon erhöhen (fire & forget)
-    if (_activeCouponId) {
-      void (async () => {
-        try {
-          await supabase.rpc('increment_coupon_calls', { coupon_id: _activeCouponId });
-        } catch (_) {
-          // Fallback: direktes Update
-          void supabase.from('daily_coupons')
-            .update({ ki_call_count: supabase.raw ? undefined : 0 })
-            .eq('id', _activeCouponId).catch(() => {});
-        }
-      })();
-    }
 
     // 11. Learning Queue bei [UNKLAR]
     if (aiResult.text.includes('[UNKLAR]')) {
@@ -277,6 +259,53 @@ const messageProcessor = {
         max_history_msgs: 4, summary_interval: 5
       };
     }
+  },
+
+  async _isRephrasing(text, history) {
+    // Prüft ob die aktuelle Nachricht nur eine Wiederholung/Verbesserung der letzten ist
+    if (!history || history.length < 2) return false;
+    const lastUserMsg = [...history].reverse().find(m => m.role === 'user');
+    if (!lastUserMsg) return false;
+
+    const prev = (lastUserMsg.content || '').toLowerCase().trim();
+    const curr = text.toLowerCase().trim();
+
+    // Identisch oder sehr kurz → Verbesserung
+    if (curr === prev) return true;
+    if (curr.length < 8 && prev.length > 10) return false; // Zu kurz um zu urteilen
+
+    // Tippfehler-Korrektur-Patterns (z.B. "e sil" → "e sim", "esil" → "esim")
+    const normalizeMsg = s => s.replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+    const normPrev = normalizeMsg(prev);
+    const normCurr = normalizeMsg(curr);
+
+    // Levenshtein-Distanz < 40% der Länge → Umformulierung
+    const maxLen = Math.max(normPrev.length, normCurr.length);
+    if (maxLen === 0) return false;
+    const dist = this._levenshtein(normPrev, normCurr);
+    if (dist / maxLen < 0.40 && dist > 0) return true;
+
+    // Gleiche Kernwörter (> 60% Überschneidung)
+    const words1 = new Set(normPrev.split(' ').filter(w => w.length > 2));
+    const words2 = new Set(normCurr.split(' ').filter(w => w.length > 2));
+    if (words1.size === 0 || words2.size === 0) return false;
+    const overlap = [...words1].filter(w => words2.has(w)).length;
+    const similarity = overlap / Math.max(words1.size, words2.size);
+    return similarity > 0.65;
+  },
+
+  _levenshtein(a, b) {
+    const m = a.length, n = b.length;
+    if (m === 0) return n; if (n === 0) return m;
+    const dp = Array.from({ length: m + 1 }, (_, i) => i === 0
+      ? Array.from({ length: n + 1 }, (_, j) => j)
+      : [i, ...new Array(n).fill(0)]
+    );
+    for (let i = 1; i <= m; i++)
+      for (let j = 1; j <= n; j++)
+        dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1]
+          : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
+    return dp[m][n];
   },
 
   _updateChatPreview(chatId, message, role) {

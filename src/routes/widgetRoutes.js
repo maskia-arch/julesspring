@@ -197,11 +197,22 @@ router.post('/message', async (req, res) => {
     }
 
     // Bestellstatus-Abfrage direkt im Widget
-    const UNIQUE_ID_RE = /[a-f0-9]{8,}-[0-9]{10,}/i;
-    const ID_PATTERN   = '([a-f0-9]+-[0-9]+|[0-9]+)';
-    const orderMatch   = text.match(new RegExp('^\\/order\\s+' + ID_PATTERN, 'i')) ||
-                         text.match(new RegExp('^(?:bestellung|invoice|order|rechnung)[:\\s#]+' + ID_PATTERN, 'i')) ||
-                         (text.match(UNIQUE_ID_RE) ? [null, text.match(UNIQUE_ID_RE)[0]] : null);
+    // Flexible Invoice-ID Erkennung (explizit + natürliche Sprache)
+    const UNIQUE_ID_RE = /([a-f0-9]{5,}-[0-9]{6,})/i;
+    const ID_PATTERN   = '([a-f0-9]{5,}-[0-9]{6,}|[0-9]{6,})';
+    const orderMatch   = text.match(new RegExp('^\/order\s+' + ID_PATTERN, 'i')) ||
+                         text.match(new RegExp('(?:bestellung|invoice|order|rechnung|nummer)[:\s#.]*' + ID_PATTERN, 'i')) ||
+                         text.match(new RegExp('(?:meine|mein)\s+(?:code|id|nummer)\s*[:\s]*' + ID_PATTERN, 'i')) ||
+                         (UNIQUE_ID_RE.test(text) ? [null, text.match(UNIQUE_ID_RE)[1]] : null);
+
+    // Wenn Bestellkontext aber keine ID → nach ID fragen
+    const hasOrderContext = /(?:bestellung|bestell|order|invoice|rechnung|meine esim|wann kommt|schon da|status|lieferung|wo ist)/i.test(text);
+    if (hasOrderContext && !orderMatch) {
+      return res.json({
+        reply: 'Um deinen Bestellstatus abzufragen, benötige ich deine Invoice-ID aus der Bestätigungs-E-Mail von Sellauth.\n\nSende einfach: /order DEINE-INVOICE-ID\noder schreib direkt deine ID in den Chat (Format: xxxxxxx-0000000000000)',
+        type: 'order_help'
+      });
+    }
 
     if (orderMatch) {
       const invoiceId = orderMatch[1];
@@ -368,11 +379,11 @@ router.get('/config', async (req, res) => {
 
 async function _upsertSession(chatId, pageTitle, supabase, isNew) {
   try {
-    // Aktive Session suchen (letzte 60 Minuten) - breites Fenster verhindert Duplikate
-    const cutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString(); // 60 min window
+    // Aktive Session suchen (letzte 30 Minuten)
+    const cutoff = new Date(Date.now() - 30 * 60 * 1000).toISOString();
     const { data: active } = await supabase
       .from('visitor_sessions')
-      .select('id, page_count, last_page')
+      .select('id, page_count')
       .eq('chat_id', chatId)
       .eq('is_active', true)
       .gte('last_seen', cutoff)
@@ -381,10 +392,10 @@ async function _upsertSession(chatId, pageTitle, supabase, isNew) {
       .maybeSingle();
 
     if (active) {
-      // Session aktualisieren – page_count nur wenn neue Seite
+      // Session aktualisieren
       await supabase.from('visitor_sessions').update({
         last_seen:  new Date(),
-        page_count: pageTitle !== active.last_page ? (active.page_count || 0) + 1 : (active.page_count || 1),
+        page_count: (active.page_count || 0) + 1,
         last_page:  pageTitle
       }).eq('id', active.id);
       return active.id;

@@ -49,6 +49,24 @@ async function initDashboard() {
     _safeRun(loadBlacklist);
     setTimeout(initPushNotifications, 2000);
 
+    // Coupon + Wochenplan vorladen (1.5s nach Settings)
+    setTimeout(function() {
+        _safeRun(loadActiveCoupon);
+        _safeRun(loadWeekSchedule);
+        _safeRun(loadCouponHistory);
+    }, 1500);
+
+    // Traffic Chart vorwärmen
+    setTimeout(function() {
+        _safeRun(function() { return loadTraffic('week'); });
+        _safeRun(loadLiveVisitors);
+        _safeRun(loadSessions);
+        _safeRun(loadActivityFeed);
+    }, 2500);
+
+    // Knowledge Kategorien vorladen
+    setTimeout(function() { _safeRun(loadKbCategories); }, 3000);
+
     // Intervalle
     clearInterval(window._statsInterval);
     clearInterval(window._chatsInterval);
