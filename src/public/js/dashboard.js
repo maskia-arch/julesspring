@@ -299,6 +299,7 @@ async function refreshMessages() {
     if (!_currentChat) return;
     try {
         var data = await api.getChatMessages(_currentChat);
+        if (!data || !data.messages) return; // Server returned nothing, keep existing
         if (!data) return; // Server nicht erreichbar - Nachrichten nicht leeren
         var area = document.getElementById('msg-' + _currentChat);
         if (!area) return;
@@ -1398,66 +1399,82 @@ function drawTrafficChart(labels, visitors, chats, pageviews) {
     if (!canvas) return;
     var ctx = canvas.getContext('2d');
 
-    // Destroy old chart
-    if (_trafficChart) { _trafficChart.destroy(); _trafficChart = null; }
-
-    // Simple canvas chart (no external lib needed)
-    var allVals = visitors.concat(chats).concat(pageviews);
-    var maxVal  = Math.max.apply(null, allVals) || 1;
+    // Modern canvas chart with gradient fill
     var W = canvas.offsetWidth || 340;
-    var H = 200;
-    canvas.width  = W;
-    canvas.height = H;
+    var H = 220;
+    canvas.width  = W * (window.devicePixelRatio || 1);
+    canvas.height = H * (window.devicePixelRatio || 1);
+    canvas.style.width  = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
 
-    var pad = { t:10, r:10, b:30, l:30 };
+    var pad = { t:16, r:12, b:36, l:36 };
     var cW  = W - pad.l - pad.r;
     var cH  = H - pad.t - pad.b;
     var n   = labels.length;
+    if (n === 0) return;
     var step = n > 1 ? cW / (n - 1) : cW;
+
+    var allVals = visitors.concat(chats).concat(pageviews);
+    var maxVal  = Math.max.apply(null, allVals.concat([1]));
+    var yScale  = function(v) { return pad.t + cH - (v / maxVal) * cH; };
+    var xAt     = function(i) { return pad.l + i * step; };
 
     ctx.clearRect(0, 0, W, H);
 
-    // Grid lines
-    ctx.strokeStyle = '#1e2d3d'; ctx.lineWidth = 1;
-    for (var g = 0; g <= 4; g++) {
-        var y = pad.t + cH - (g / 4) * cH;
-        ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cW, y); ctx.stroke();
-        ctx.fillStyle = '#4a5568'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
-        ctx.fillText(Math.round((g / 4) * maxVal), pad.l - 4, y + 4);
-    }
+    // Background
+    ctx.fillStyle = '#0d1117';
+    ctx.fillRect(0, 0, W, H);
 
-    // X labels (every nth)
-    var skip = n > 14 ? 3 : (n > 7 ? 2 : 1);
-    ctx.fillStyle = '#4a5568'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
-    for (var i = 0; i < n; i++) {
-        if (i % skip === 0) {
-            var x = pad.l + i * step;
-            ctx.fillText(labels[i], x, H - 4);
+    // Horizontal grid
+    var gridCount = 4;
+    for (var g = 0; g <= gridCount; g++) {
+        var gy = pad.t + (g / gridCount) * cH;
+        ctx.strokeStyle = g === gridCount ? '#1e3a5f' : '#121f2e';
+        ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad.l, gy); ctx.lineTo(pad.l + cW, gy); ctx.stroke();
+        var val = Math.round(maxVal * (1 - g / gridCount));
+        if (val > 0 || g === gridCount) {
+            ctx.fillStyle = '#3d5168'; ctx.font = '10px sans-serif'; ctx.textAlign = 'right';
+            ctx.fillText(val, pad.l - 6, gy + 4);
         }
     }
 
-    // Draw a line series
-    function drawLine(data, color) {
-        ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    // Draw filled line series
+    function drawSeries(data, lineColor, fillColor) {
+        if (!data.some(function(v){ return v > 0; })) return;
+        // Filled area
+        var grad = ctx.createLinearGradient(0, pad.t, 0, pad.t + cH);
+        grad.addColorStop(0, fillColor); grad.addColorStop(1, 'rgba(0,0,0,0)');
         ctx.beginPath();
-        for (var k = 0; k < data.length; k++) {
-            var px = pad.l + k * step;
-            var py = pad.t + cH - (data[k] / maxVal) * cH;
-            if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
-        }
+        ctx.moveTo(xAt(0), yScale(data[0]));
+        for (var i = 1; i < data.length; i++) ctx.lineTo(xAt(i), yScale(data[i]));
+        ctx.lineTo(xAt(data.length-1), pad.t + cH);
+        ctx.lineTo(xAt(0), pad.t + cH); ctx.closePath();
+        ctx.fillStyle = grad; ctx.fill();
+        // Line
+        ctx.beginPath(); ctx.strokeStyle = lineColor; ctx.lineWidth = 2.5; ctx.lineJoin = 'round';
+        ctx.moveTo(xAt(0), yScale(data[0]));
+        for (var j = 1; j < data.length; j++) ctx.lineTo(xAt(j), yScale(data[j]));
         ctx.stroke();
-        // Dots
-        ctx.fillStyle = color;
-        for (var k2 = 0; k2 < data.length; k2++) {
-            var px2 = pad.l + k2 * step;
-            var py2 = pad.t + cH - (data[k2] / maxVal) * cH;
-            ctx.beginPath(); ctx.arc(px2, py2, 3, 0, Math.PI*2); ctx.fill();
-        }
+        // Dots for non-zero
+        data.forEach(function(v, idx) {
+            if (v === 0) return;
+            ctx.beginPath(); ctx.fillStyle = lineColor;
+            ctx.arc(xAt(idx), yScale(v), 4, 0, Math.PI*2); ctx.fill();
+        });
     }
 
-    drawLine(pageviews, '#3b82f6');
-    drawLine(visitors,  '#10b981');
-    drawLine(chats,     '#f59e0b');
+    drawSeries(pageviews, '#3b82f6', 'rgba(59,130,246,0.18)');
+    drawSeries(visitors,  '#10b981', 'rgba(16,185,129,0.15)');
+    drawSeries(chats,     '#f59e0b', 'rgba(245,158,11,0.15)');
+
+    // X labels
+    var skip = n > 20 ? 4 : n > 10 ? 2 : 1;
+    ctx.fillStyle = '#4a5568'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
+    for (var xi = 0; xi < n; xi++) {
+        if (xi % skip === 0) ctx.fillText(labels[xi], xAt(xi), H - 8);
+    }
 
     // Legend
     var legend = document.getElementById('traffic-legend');

@@ -63,6 +63,35 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
+  async cleanupOldMessages(req, res, next) {
+    // Löscht Nachrichten älter als 48h wenn der Chat nie manuell bearbeitet wurde
+    try {
+      const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+      // Chats finden die KEINE manuelle Nachricht und KEIN manuelles Engagement hatten
+      const { data: chatsToClean } = await supabase
+        .from('chats')
+        .select('id')
+        .eq('is_manual_mode', false)
+        .lt('updated_at', cutoff)
+        .is('manual_mode_started_at', null);
+
+      if (!chatsToClean?.length) return res.json({ deleted: 0 });
+
+      const chatIds = chatsToClean.map(c => c.id);
+
+      // Nur Nachrichten löschen die nicht manuell gesendet wurden
+      const { count } = await supabase
+        .from('messages')
+        .delete({ count: 'exact' })
+        .in('chat_id', chatIds)
+        .eq('is_manual', false)
+        .lt('created_at', cutoff);
+
+      res.json({ deleted: count || 0, chats: chatIds.length });
+    } catch (e) { next(e); }
+  },
+
   async getChats(req, res, next) {
     try {
       const { data, error } = await supabase.from('chats').select('*').order('updated_at', { ascending: false }).limit(100);
@@ -81,11 +110,13 @@ const adminController = {
   async getChatMessages(req, res, next) {
     try {
       const { chatId } = req.params;
-      const [{ data: chat }, { data: msgs, error }] = await Promise.all([
-        supabase.from('chats').select('*').eq('id', chatId).single(),
+      const [chatResult, msgsResult] = await Promise.all([
+        supabase.from('chats').select('*').eq('id', chatId).maybeSingle(),
         supabase.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending: true }).limit(200)
       ]);
-      if (error) throw error;
+      const chat = chatResult.data;
+      const msgs = msgsResult.data;
+      if (msgsResult.error) throw msgsResult.error;
       // Collapse consecutive 📍 visit messages to show only the last
       const allMsgs = msgs || [];
       const filtered = [];
@@ -240,53 +271,56 @@ const adminController = {
   async getTrafficStats(req, res, next) {
     try {
       const { range = 'week' } = req.query;
-      const days = range === 'month' ? 30 : 7;
-      const since = new Date(Date.now() - days * 86400000).toISOString();
+      const is24h = range === '24h';
+      const days  = range === 'month' ? 30 : 7;
+      const since = new Date(Date.now() - (is24h ? 86400000 : days * 86400000)).toISOString();
 
-      const [visitorsRes, chatsRes, activitiesRes] = await Promise.all([
-        supabase.from('widget_visitors').select('first_seen, page_count').gte('first_seen', since).catch(() => ({ data: [] })),
-        supabase.from('chats').select('created_at, platform').gte('created_at', since).catch(() => ({ data: [] })),
-        supabase.from('visitor_activities').select('created_at').gte('created_at', since).catch(() => ({ data: [] }))
+      const [sessionsRes, chatsRes, activitiesRes] = await Promise.all([
+        supabase.from('visitor_sessions').select('started_at, had_chat').gte('started_at', since),
+        supabase.from('chats').select('created_at, platform').gte('created_at', since),
+        supabase.from('visitor_activities').select('created_at').gte('created_at', since)
       ]);
 
-      const visitors   = visitorsRes.data   || [];
+      const sessions   = sessionsRes.data   || [];
       const chats      = chatsRes.data       || [];
       const activities = activitiesRes.data  || [];
 
-      // Group by day
-      const byDay = {};
-      for (let d = 0; d < days; d++) {
-        const dt = new Date(Date.now() - (days - 1 - d) * 86400000);
-        const key = dt.toISOString().slice(0, 10);
-        byDay[key] = { date: key, visitors: 0, chats: 0, pageviews: 0 };
+      const buckets = {};
+      if (is24h) {
+        for (let h = 0; h < 24; h++) {
+          const dt = new Date(Date.now() - (23-h)*3600000);
+          const key = dt.toISOString().slice(0, 13);
+          buckets[key] = { label: dt.getHours()+':00', sessions:0, chats:0, pageviews:0 };
+        }
+        const hk = dt => new Date(dt).toISOString().slice(0, 13);
+        sessions.forEach(s   => { const k=hk(s.started_at);  if(buckets[k]) buckets[k].sessions++;  });
+        chats.forEach(ch     => { const k=hk(ch.created_at); if(buckets[k]) buckets[k].chats++;     });
+        activities.forEach(a => { const k=hk(a.created_at);  if(buckets[k]) buckets[k].pageviews++; });
+      } else {
+        for (let d = 0; d < days; d++) {
+          const dt = new Date(Date.now() - (days-1-d)*86400000);
+          const key = dt.toISOString().slice(0, 10);
+          buckets[key] = { label: dt.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}), sessions:0, chats:0, pageviews:0 };
+        }
+        const dk = dt => new Date(dt).toISOString().slice(0, 10);
+        sessions.forEach(s   => { const k=dk(s.started_at);  if(buckets[k]) buckets[k].sessions++;  });
+        chats.forEach(ch     => { const k=dk(ch.created_at); if(buckets[k]) buckets[k].chats++;     });
+        activities.forEach(a => { const k=dk(a.created_at);  if(buckets[k]) buckets[k].pageviews++; });
       }
-
-      visitors.forEach(v => {
-        const key = v.first_seen?.slice(0, 10);
-        if (byDay[key]) byDay[key].visitors++;
-      });
-      chats.forEach(c => {
-        const key = c.created_at?.slice(0, 10);
-        if (byDay[key]) byDay[key].chats++;
-      });
-      activities.forEach(a => {
-        const key = a.created_at?.slice(0, 10);
-        if (byDay[key]) byDay[key].pageviews++;
-      });
 
       res.json({
         range,
-        days: Object.values(byDay),
+        days: Object.values(buckets),
         totals: {
-          visitors:  visitors.length,
-          chats:     chats.length,
-          pageviews: activities.length,
-          widgetChats: chats.filter(c => c.platform === 'web_widget').length,
-          telegramChats: chats.filter(c => c.platform === 'telegram').length
+          sessions: sessions.length, chats: chats.length, pageviews: activities.length,
+          widgetChats: chats.filter(ch=>ch.platform==='web_widget').length,
+          telegramChats: chats.filter(ch=>ch.platform==='telegram').length,
+          withChat: sessions.filter(s=>s.had_chat).length
         }
       });
     } catch (e) { next(e); }
   },
+
 
   async lookupVisitorIp(req, res, next) {
     try {
@@ -392,8 +426,8 @@ const adminController = {
   async createCouponNow(req, res, next) {
     try {
       const couponService = require('../services/couponService');
-      const coupon = await couponService.createDailyCoupon(true); // force=true: Enabled-Check überspringen
-      if (!coupon) return res.status(400).json({ error: 'Sellauth API Key oder Shop ID fehlt. Bitte in Settings → Sellauth prüfen.' });
+      const coupon = await couponService.createDailyCoupon();
+      if (!coupon) return res.status(400).json({ error: 'Coupon-System deaktiviert oder nicht konfiguriert' });
       res.json({ success: true, coupon });
     } catch (e) { next(e); }
   },

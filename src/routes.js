@@ -89,6 +89,4 @@ router.get('/coupons/history',        ctrl.getCouponHistory);
 // Sessions
 router.get('/traffic/sessions',       ctrl.getSessions);
 
-router.post('/chats/cleanup-old',    ctrl.cleanupOldMessages);
-
 module.exports = router;
