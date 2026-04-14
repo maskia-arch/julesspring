@@ -418,6 +418,83 @@ Gib NUR das JSON zurück, kein Markdown. Format:
     return map;
   },
 
+  async getInvoice(apiKey, shopId, invoiceId) {
+    try {
+      const { data } = await this._client(apiKey).get(
+        `/shops/${shopId}/invoices/${encodeURIComponent(invoiceId)}`
+      );
+      return data;
+    } catch (err) {
+      // Fallback: wenn unique_id übergeben, aber numeric ID auch versuchen
+      if (invoiceId.includes('-') && err.response?.status !== 404) {
+        const numericId = invoiceId.split('-').pop().replace(/^0+/, '') || '0';
+        const { data } = await this._client(apiKey).get(
+          `/shops/${shopId}/invoices/${numericId}`
+        );
+        return data;
+      }
+      throw err;
+    }
+  },
+
+  // Formatiert Invoice-Daten für Kunden (keine sensiblen Felder)
+  formatInvoiceForCustomer(invoice, shopUrl) {
+    // Checkout-URL: {shopUrl}/checkout/{unique_id}
+    const checkoutUrl = invoice.unique_id
+      ? `${(shopUrl || '').replace(/\/$/, '')}/checkout/${invoice.unique_id}`
+      : null;
+
+    // Status auf Deutsch
+    const statusMap = {
+      completed:  { text: 'Abgeschlossen', emoji: '✅' },
+      pending:    { text: 'Ausstehend / Offen', emoji: '⏳' },
+      refunded:   { text: 'Erstattet', emoji: '↩️' },
+      cancelled:  { text: 'Storniert', emoji: '❌' },
+      processing: { text: 'Wird verarbeitet', emoji: '🔄' }
+    };
+    const status = statusMap[invoice.status] || { text: invoice.status, emoji: '❓' };
+
+    // Produkte aus items
+    const products = (invoice.items || []).map(item => {
+      const pName = item.product?.name || 'Produkt';
+      const vName = item.variant?.name  || null;
+      return vName ? `${pName} – ${vName}` : pName;
+    });
+
+    const lines = [
+      `Bestellnummer: ${invoice.id}`,
+      `Status: ${status.emoji} ${status.text}`,
+      '',
+      products.length
+        ? `Produkt: ${products.join(', ')}`
+        : '',
+      invoice.price
+        ? `Betrag: ${invoice.price} ${invoice.currency || 'EUR'}`
+        : '',
+      invoice.gateway
+        ? `Zahlungsart: ${invoice.gateway}`
+        : '',
+      invoice.completed_at
+        ? `Abgeschlossen am: ${new Date(invoice.completed_at).toLocaleString('de-DE')}`
+        : '',
+    ].filter(Boolean);
+
+    // Checkout-Link IMMER anzeigen (auch bei completed – dort ist die eSIM abrufbar)
+    if (checkoutUrl) {
+      lines.push('');
+      if (invoice.status === 'completed') {
+        lines.push('Deine eSIM und Bestelldetails findest du hier:');
+      } else if (invoice.status === 'pending') {
+        lines.push('Zahlung noch offen. Bezahle und erhalte deine eSIM hier:');
+      } else {
+        lines.push('Bestellseite:');
+      }
+      lines.push(checkoutUrl);
+    }
+
+    return lines.join('\n');
+  },
+
   async testConnection(apiKey, shopId) {
     try {
       const shop = await this.getShopInfo(apiKey, shopId);

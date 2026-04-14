@@ -392,8 +392,8 @@ const adminController = {
   async createCouponNow(req, res, next) {
     try {
       const couponService = require('../services/couponService');
-      const coupon = await couponService.createDailyCoupon();
-      if (!coupon) return res.status(400).json({ error: 'Coupon-System deaktiviert oder nicht konfiguriert' });
+      const coupon = await couponService.createDailyCoupon(true); // force=true: Enabled-Check überspringen
+      if (!coupon) return res.status(400).json({ error: 'Sellauth API Key oder Shop ID fehlt. Bitte in Settings → Sellauth prüfen.' });
       res.json({ success: true, coupon });
     } catch (e) { next(e); }
   },
