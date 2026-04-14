@@ -70,11 +70,15 @@ async function initDashboard() {
     // Intervalle
     clearInterval(window._statsInterval);
     clearInterval(window._chatsInterval);
+    clearInterval(window._msgsInterval);
     window._statsInterval = setInterval(function() { _safeRun(updateStats); }, 30000);
     window._chatsInterval = setInterval(function() {
         _safeRun(loadChats);
-        if (_currentChat) _safeRun(refreshMessages);
     }, 8000);
+    // Nachrichten im aktiven Chat schneller aktualisieren (3s)
+    window._msgsInterval = setInterval(function() {
+        if (_currentChat) _safeRun(refreshMessages);
+    }, 3000);
 }
 
 function _showLoadingGate(show) {
@@ -216,7 +220,8 @@ async function selectChat(chatId) {
     if (sec) sec.classList.add('chat-open');
 
     try {
-        var data = await api.getChatMessages(chatId);
+        // Cache-Buster: stellt sicher wir bekommen die neuesten Nachrichten
+        var data = await api.request('/chats/' + chatId + '/messages?t=' + Date.now());
         var info = data.chat_info || {};
         var name = info.first_name || info.username || chatId.substring(0, 16);
         var isTg = info.platform !== 'web_widget';
@@ -298,14 +303,16 @@ function renderMsgs(messages) {
 async function refreshMessages() {
     if (!_currentChat) return;
     try {
-        var data = await api.getChatMessages(_currentChat);
-        if (!data || !data.messages) return; // Server returned nothing, keep existing
-        if (!data) return; // Server nicht erreichbar - Nachrichten nicht leeren
+        // Cache-Buster: verhindert dass _pending-Dedup veraltete Antwort zurückgibt
+        var data = await api.request('/chats/' + _currentChat + '/messages?t=' + Date.now());
+        if (!data || !data.messages) return;
         var area = document.getElementById('msg-' + _currentChat);
         if (!area) return;
-        var atBottom = area.scrollHeight - area.scrollTop - area.clientHeight < 80;
-        area.innerHTML = renderMsgs(data.messages || []);
-        if (atBottom) scrollBottom('msg-' + _currentChat);
+        var prevCount = area.querySelectorAll('.msg-row').length;
+        var atBottom  = area.scrollHeight - area.scrollTop - area.clientHeight < 120;
+        area.innerHTML = renderMsgs(data.messages);
+        // Scroll to bottom if: was at bottom OR new messages arrived
+        if (atBottom || data.messages.length > prevCount) scrollBottom('msg-' + _currentChat);
     } catch(e) {}
 }
 
