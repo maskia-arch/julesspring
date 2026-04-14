@@ -402,9 +402,9 @@ const adminController = {
     try {
       const { data } = await supabase
         .from('daily_coupons')
-        .select('id, code, discount, type, weekday, ki_call_count, is_active, expires_at, created_at')
+        .select('*')
         .order('created_at', { ascending: false })
-        .limit(60);
+        .limit(30);
       res.json(data || []);
     } catch (e) { next(e); }
   },
@@ -588,13 +588,17 @@ const adminController = {
     try {
       const { title, content, category_id } = req.body;
       if (!content) return res.status(400).json({ error: 'Inhalt fehlt' });
-      const fullContent = title ? `### ${title}\n${content}` : content;
-      const embedding   = await deepseekService.generateEmbedding(fullContent);
-      const ins = { content: fullContent, title: title||null, embedding, source: 'manual_entry' };
-      if (category_id) ins.category_id = parseInt(category_id);
-      const { data, error } = await supabase.from('knowledge_base').insert([ins]).select();
-      if (error) throw error;
-      res.json({ success: true, data: data[0] });
+      const fullContent = title ? `${title}\n${content}` : content;
+
+      // KI-Vorarbeiter: intelligente Kategorisierung + Anreicherung
+      const knowledgeEnricher = require('../services/knowledgeEnricher');
+      const saved = await knowledgeEnricher.enrichAndStore(
+        fullContent, 'manual_entry',
+        category_id ? parseInt(category_id) : null,
+        { original_title: title || null }
+      );
+
+      res.json({ success: true, saved: saved.length, data: saved[0] || null });
     } catch (e) { next(e); }
   },
 
@@ -612,15 +616,19 @@ const adminController = {
       if (!urls?.length) return res.status(400).json({ error: 'Keine URLs' });
       const scraped = await scraperService.processMultipleUrls(urls);
       let saved = 0;
+      const knowledgeEnricher = require('../services/knowledgeEnricher');
       for (const page of scraped) {
         for (const chunk of page.chunks) {
           try {
-            const emb = await deepseekService.generateEmbedding(chunk);
-            const ins = { content: `Quelle: ${page.url}\n${chunk}`, title: page.title, embedding: emb, source: 'web_scrape', metadata: { url: page.url } };
-            if (category_id) ins.category_id = parseInt(category_id);
-            await supabase.from('knowledge_base').insert([ins]);
-            saved++;
-          } catch {}
+            const rawContent = `Quelle: ${page.url}\nTitel: ${page.title || ''}\n${chunk}`;
+            // KI-Vorarbeiter: strukturieren + kategorisieren
+            const entries = await knowledgeEnricher.enrichAndStore(
+              rawContent, 'web_scrape',
+              category_id ? parseInt(category_id) : null,
+              { url: page.url, page_title: page.title }
+            );
+            saved += entries.length;
+          } catch (e) { logger.warn('[Scrape] Chunk fehlgeschlagen:', e.message); }
         }
       }
       res.json({ success: true, savedChunks: saved, processedUrls: scraped.length });

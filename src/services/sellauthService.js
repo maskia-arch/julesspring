@@ -172,6 +172,61 @@ const sellauthService = {
     ].filter(Boolean).join('\n');
   },
 
+
+  // ── KI-gestützte Anreicherung mit OpenAI ────────────────────────────────
+  // Erstellt mehrsprachige, kategoriespezifische Wissensdatenbank-Einträge
+  async _enrichWithAI(product, variants, productUrl, catName) {
+    const { openai } = require('../config/env');
+    const axios      = require('axios');
+
+    if (!openai?.apiKey) return null; // OpenAI nicht konfiguriert
+
+    const variantSummary = variants.map(v => {
+      const rawP = v.price ? parseFloat(v.price) : null;
+      const p    = rawP ? `€${rawP.toFixed(2)}` : '?';
+      return `  - ${v.name}: ${p}`;
+    }).join('\n');
+
+    const prompt = `Du bist ein Wissensbank-Assistent für einen eSIM-Shop. 
+Erstelle aus diesen Produktdaten STRUKTURIERTE Wissenseinträge auf Deutsch UND Englisch.
+
+Produkt: ${product.name}
+Kategorie: ${catName || 'eSIM'}
+Kauflink: ${productUrl}
+Varianten mit Preisen:
+${variantSummary}
+
+Erstelle genau DREI Einträge als JSON-Array:
+1. "de_faq" – häufige deutsche Kundenfragen + Antworten mit genauen Preisen
+2. "en_faq" – same in English with exact prices  
+3. "price_list" – strukturierte Preisliste auf Deutsch, alle Varianten
+
+Gib NUR das JSON zurück, kein Markdown. Format:
+[{"type":"de_faq","content":"..."},{"type":"en_faq","content":"..."},{"type":"price_list","content":"..."}]`;
+
+    try {
+      const resp = await axios.post(
+        'https://api.openai.com/v1/chat/completions',
+        {
+          model:       'gpt-4o-mini',
+          max_tokens:  1200,
+          temperature: 0.1,
+          messages: [
+            { role: 'system', content: 'Du erstellst präzise, faktentreue Produktbeschreibungen für eine KI-Wissensdatenbank. Erfinde NIEMALS Preise - verwende nur die exakten Zahlen aus dem Input.' },
+            { role: 'user',   content: prompt }
+          ]
+        },
+        { headers: { 'Authorization': `Bearer ${openai.apiKey}`, 'Content-Type': 'application/json' }, timeout: 30000 }
+      );
+      const raw  = resp.data.choices[0].message.content.trim();
+      const clean = raw.replace(/```json|```/g, '').trim();
+      return JSON.parse(clean);
+    } catch (e) {
+      logger.warn(`[Sellauth] AI-Enrichment fehlgeschlagen (${product.name}): ${e.message}`);
+      return null;
+    }
+  },
+
   async syncToKnowledgeBase(apiKey, shopId, shopUrl, jobId) {
     const syncJobManager = require('./syncJobManager');
     const progress = (pct, step) => {
@@ -192,16 +247,18 @@ const sellauthService = {
 
     // ── Deduplizierung ────────────────────────────────────────────────────────
     // Bestseller, Bundles etc. sind Duplikate mit evtl. falschen Preisen → weglassen
-    const SKIP_NAME_PATTERNS = /bestseller|bundle|combo/i;
-    const seenPaths = new Set();
+    // Ausschlussmuster – prüft SOWOHL Name ALS AUCH URL-Pfad
+    const SKIP_PATTERNS = /bestseller|bundle|combo|upsell/i;
+    const seenPaths    = new Set();
     const seenNormNames = new Set();
     const filtered = products.filter(p => {
       if (p.visibility === 'hidden') return false;
-      if (SKIP_NAME_PATTERNS.test(p.name)) return false;
-      // Exakter Pfad-Check
+      if (SKIP_PATTERNS.test(p.name)) return false;   // Name-Check
+      if (SKIP_PATTERNS.test(p.path || '')) return false; // PATH-Check (!)
+      // Doppelter Pfad
       if (p.path && seenPaths.has(p.path)) return false;
       if (p.path) seenPaths.add(p.path);
-      // Normalisierter Name-Check (entfernt Leerzeichen, Sonderzeichen)
+      // Normalisierter Name
       const normName = (p.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
       if (seenNormNames.has(normName)) return false;
       seenNormNames.add(normName);
@@ -234,7 +291,25 @@ const sellauthService = {
 
       try {
         if (product.type === 'variant' && product.variants?.length) {
-          // Übersichts-Eintrag (einmal pro Produkt)
+          // 1. KI-gestützte Anreicherung (OpenAI, einmal pro Produkt)
+          const aiEntries = await this._enrichWithAI(product, product.variants, productUrl, catName);
+          if (aiEntries && aiEntries.length) {
+            for (const entry of aiEntries) {
+              const _ea = await deepseekService.generateEmbedding(entry.content);
+              const embAI = _ea.embedding || _ea;
+              await supabase.from('knowledge_base').insert([{
+                content: entry.content, embedding: embAI,
+                title:  `${product.name} (${entry.type})`,
+                source: 'sellauth_sync',
+                category_id: entry.type === 'price_list' ? (catMap['_preise'] || kbCatId) : kbCatId,
+                metadata: { product_id: product.id, product_url: productUrl, type: entry.type }
+              }]);
+              results.saved++;
+              await new Promise(r => setTimeout(r, 150));
+            }
+          }
+
+          // 2. Fallback/Ergänzung: Übersichts-Eintrag
           const overview  = this.formatOverviewKnowledge(product, productUrl, catName);
           const _eo       = await deepseekService.generateEmbedding(overview);
           const embOver   = _eo.embedding || _eo;
@@ -248,7 +323,7 @@ const sellauthService = {
           results.saved++;
           await new Promise(r => setTimeout(r, 150));
 
-          // Pro Variante einzelner Eintrag
+          // 3. Pro Variante: fact-based Eintrag mit exakten Preisen
           for (const variant of product.variants) {
             const content   = this.formatVariantKnowledge(product, variant, productUrl, catName);
             const _ev       = await deepseekService.generateEmbedding(content);

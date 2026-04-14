@@ -153,9 +153,15 @@ const deepseekService = {
   async processLearningResponse(adminAnswer, questionId) {
     const { data: q } = await supabase.from('learning_queue').select('*').eq('id', questionId).single();
     if (!q) throw new Error('Frage nicht gefunden');
-    const content    = `Frage: ${q.unanswered_question}\nAntwort: ${adminAnswer}`;
-    const { embedding } = await this.generateEmbedding(content);
-    await supabase.from('knowledge_base').insert([{ content, embedding, source: 'learning_chat' }]);
+
+    const rawContent = `Frage: ${q.unanswered_question}\nAntwort: ${adminAnswer}`;
+
+    // KI-Vorarbeiter: strukturieren + kategorisieren via OpenAI
+    const knowledgeEnricher = require('./knowledgeEnricher');
+    await knowledgeEnricher.enrichAndStore(rawContent, 'learning_chat', null, {
+      original_question: q.unanswered_question
+    });
+
     await supabase.from('learning_queue').update({ status: 'resolved' }).eq('id', questionId);
     return true;
   }
