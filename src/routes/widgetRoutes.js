@@ -226,9 +226,11 @@ router.post('/message', async (req, res) => {
         }
       } catch (err) {
         const status = err.response?.status;
+        const apiMsg = err.response?.data?.message || err.message || '';
+        console.error('[Widget/Order] Fehler:', status, apiMsg);
         const msg = status === 404
-          ? `Bestellung ${invoiceId} nicht gefunden. Bitte prüfe die Invoice-ID.`
-          : 'Bestellabfrage momentan nicht verfügbar.';
+          ? `Bestellung ${invoiceId} nicht gefunden.\nBitte prüfe die Invoice-ID aus deiner Bestätigungs-E-Mail.`
+          : `Bestellabfrage momentan nicht verfügbar (${status || 'Netzwerk'}).\nBitte versuche es später oder wende dich an den Support.`;
         return res.json({ reply: msg, type: 'order_error' });
       }
     }

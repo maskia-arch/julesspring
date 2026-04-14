@@ -419,21 +419,42 @@ Gib NUR das JSON zurück, kein Markdown. Format:
   },
 
   async getInvoice(apiKey, shopId, invoiceId) {
+    const client = this._client(apiKey);
+
+    // Versuch 1: Direkt via unique_id (z.B. b0c9b78fda81e-0000011560293)
     try {
-      const { data } = await this._client(apiKey).get(
-        `/shops/${shopId}/invoices/${encodeURIComponent(invoiceId)}`
-      );
-      return data;
-    } catch (err) {
-      // Fallback: wenn unique_id übergeben, aber numeric ID auch versuchen
-      if (invoiceId.includes('-') && err.response?.status !== 404) {
-        const numericId = invoiceId.split('-').pop().replace(/^0+/, '') || '0';
-        const { data } = await this._client(apiKey).get(
-          `/shops/${shopId}/invoices/${numericId}`
-        );
-        return data;
+      const { data } = await client.get(`/shops/${shopId}/invoices/${encodeURIComponent(invoiceId)}`);
+      if (data && data.id) return data;
+    } catch (err1) {
+      logger.info(`[Invoice] Direkt-Lookup fehlgeschlagen (${invoiceId}): ${err1.response?.status} ${err1.response?.data?.message || err1.message}`);
+
+      // Versuch 2: Numerische ID aus unique_id extrahieren
+      // Format: b0c9b78fda81e-0000011560293 → letzter Teil ohne führende Nullen → 11560293
+      if (invoiceId.includes('-')) {
+        const numericPart = invoiceId.split('-').pop().replace(/^0+/, '') || '1';
+        try {
+          const { data: data2 } = await client.get(`/shops/${shopId}/invoices/${numericPart}`);
+          if (data2 && data2.id) return data2;
+        } catch (err2) {
+          logger.info(`[Invoice] Numerisch-Lookup fehlgeschlagen (${numericPart}): ${err2.response?.status}`);
+        }
       }
-      throw err;
+
+      // Versuch 3: Suche via Invoices-Liste (unique_id als Filter)
+      try {
+        const { data: listData } = await client.get(`/shops/${shopId}/invoices`, {
+          params: { id: invoiceId, perPage: 5 }
+        });
+        const found = (listData?.data || []).find(inv =>
+          inv.unique_id === invoiceId || String(inv.id) === invoiceId
+        );
+        if (found) return found;
+      } catch (err3) {
+        logger.info(`[Invoice] Listen-Lookup fehlgeschlagen: ${err3.message}`);
+      }
+
+      // Wenn nichts gefunden: Original-Fehler weiterwerfen
+      throw err1;
     }
   },
 

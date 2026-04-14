@@ -76,13 +76,14 @@ router.post('/telegram', (req, res) => {
           console.error('[Order] Fehler für', invoiceId, '- Status:', status, '-', err.response?.data?.message || err.message);
           if (status === 404) {
             await telegramService.sendMessage(chatId,
-              'Bestellung ' + invoiceId + ' wurde nicht gefunden. Bitte prüfe ob die Invoice-ID korrekt ist.');
+              'Bestellung ' + invoiceId + ' wurde nicht gefunden. Bitte prüfe ob die Invoice-ID korrekt ist.\n\nDie ID steht in der Bestätigungs-E-Mail von Sellauth (Format: xxxxxxx-0000000000000)');
           } else if (status === 401 || status === 403) {
             await telegramService.sendMessage(chatId,
-              'Bestellabfrage konnte nicht durchgeführt werden. Bitte wende dich an unseren Support.');
+              'Bestellabfrage konnte nicht durchgeführt werden. Bitte wende dich an den Support: @autoacts');
           } else {
+            console.error('[Order] Unerwarteter Fehler:', status, err.response?.data);
             await telegramService.sendMessage(chatId,
-              'Bestellabfrage ist momentan nicht verfügbar. Bitte versuche es in einigen Minuten erneut oder kontaktiere den Support.');
+              'Bestellabfrage ist momentan nicht verfügbar (Code: ' + (status || 'timeout') + '). Bitte wende dich an @autoacts');
           }
         }
         return;
