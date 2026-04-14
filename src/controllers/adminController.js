@@ -584,6 +584,73 @@ const adminController = {
       res.json({ success: true });
     } catch (e) { next(e); }
   },
+  async updateKnowledgeEntry(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { title, content, category_id } = req.body;
+      if (!content) return res.status(400).json({ error: 'Inhalt fehlt' });
+      // Re-embed with new content
+      const embResult = await deepseekService.generateEmbedding(content);
+      const embedding = embResult.embedding || embResult;
+      const { data, error } = await supabase.from('knowledge_base')
+        .update({ title: title || null, content, embedding, category_id: category_id || null, updated_at: new Date() })
+        .eq('id', id).select().single();
+      if (error) throw error;
+      res.json({ success: true, data });
+    } catch (e) { next(e); }
+  },
+
+  async syncKnowledgeEntry(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { data: entry } = await supabase.from('knowledge_base')
+        .select('*').eq('id', id).single();
+      if (!entry) return res.status(404).json({ error: 'Eintrag nicht gefunden' });
+
+      const knowledgeEnricher = require('../services/knowledgeEnricher');
+
+      // 1. Originaleintrag löschen
+      await supabase.from('knowledge_base').delete().eq('id', id);
+
+      // 2. Verwandte Einträge finden (gleiche product_id oder ähnlicher Inhalt)
+      let relatedIds = [];
+      if (entry.metadata?.product_id) {
+        const { data: related } = await supabase.from('knowledge_base')
+          .select('id').eq('source', entry.source)
+          .filter('metadata->>product_id', 'eq', String(entry.metadata.product_id))
+          .neq('id', id);
+        relatedIds = (related || []).map(r => r.id);
+      }
+
+      // 3. Via OpenAI neu strukturieren
+      const saved = await knowledgeEnricher.enrichAndStore(
+        entry.content, entry.source, entry.category_id,
+        { ...entry.metadata, synced_at: new Date().toISOString() }
+      );
+
+      res.json({ success: true, savedEntries: saved.length, deletedRelated: relatedIds.length });
+    } catch (e) { next(e); }
+  },
+
+  async getRelatedEntries(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { data: entry } = await supabase.from('knowledge_base')
+        .select('source, metadata').eq('id', id).single();
+      if (!entry) return res.json([]);
+
+      let query = supabase.from('knowledge_base')
+        .select('id, title, content, category_id, source, created_at')
+        .eq('source', entry.source).neq('id', id).limit(20);
+
+      if (entry.metadata?.product_id) {
+        query = query.filter('metadata->>product_id', 'eq', String(entry.metadata.product_id));
+      }
+      const { data } = await query;
+      res.json(data || []);
+    } catch (e) { next(e); }
+  },
+
   async addManualKnowledge(req, res, next) {
     try {
       const { title, content, category_id } = req.body;

@@ -49,24 +49,6 @@ async function initDashboard() {
     _safeRun(loadBlacklist);
     setTimeout(initPushNotifications, 2000);
 
-    // Coupon + Wochenplan vorladen (1.5s Delay: Settings müssen erst da sein)
-    setTimeout(function() {
-        _safeRun(loadActiveCoupon);
-        _safeRun(loadWeekSchedule);
-        _safeRun(loadCouponHistory);
-    }, 1500);
-
-    // Traffic Chart vorwärmen
-    setTimeout(function() {
-        _safeRun(function() { return loadTraffic('week'); });
-        _safeRun(loadLiveVisitors);
-        _safeRun(loadSessions);
-        _safeRun(loadActivityFeed);
-    }, 2500);
-
-    // Knowledge Kategorien vorladen
-    setTimeout(function() { _safeRun(loadKbCategories); }, 3000);
-
     // Intervalle
     clearInterval(window._statsInterval);
     clearInterval(window._chatsInterval);
@@ -445,14 +427,21 @@ async function loadKbEntries(catId) {
             var catPill = cat
                 ? '<div class="cat-pill" style="background:' + cat.color + '22;color:' + cat.color + ';">' + (cat.icon||'') + ' ' + esc(cat.name) + '</div>'
                 : '';
-            return '<div class="kb-entry">' +
+            var syncBadge = e.metadata && e.metadata.enriched
+                ? '<span style="background:#1e3a5f;color:#60a5fa;font-size:0.62rem;padding:1px 5px;border-radius:3px;margin-left:4px;">🤖 KI</span>'
+                : '';
+            return '<div class="kb-entry" data-entry-id="' + e.id + '">' +
                 '<div class="kb-entry-body">' +
                     catPill +
-                    '<div class="kb-entry-title">' + esc(e.title || '(kein Titel)') + '</div>' +
+                    '<div class="kb-entry-title">' + esc(e.title || '(kein Titel)') + syncBadge + '</div>' +
                     '<div class="kb-entry-preview">' + esc(e.content_preview) + '</div>' +
                     '<div class="kb-entry-meta"><span>' + esc(e.source) + '</span><span>·</span><span>' + new Date(e.created_at).toLocaleDateString('de-DE') + '</span></div>' +
                 '</div>' +
-                '<button onclick="delKbEntry(\'' + e.id + '\')" class="icon-btn" style="flex-shrink:0;" title="Löschen">🗑</button>' +
+                '<div style="display:flex;gap:4px;flex-shrink:0;">' +
+                    '<button onclick="openKbEdit(\'' + e.id + '\')" class="icon-btn" title="Bearbeiten" style="background:#1e3a5f;color:#60a5fa;">✏️</button>' +
+                    '<button onclick="syncKbEntry(\'' + e.id + '\')" class="icon-btn" title="Mit KI synchronisieren" style="background:#14532d;color:#4ade80;">🤖</button>' +
+                    '<button onclick="delKbEntry(\'' + e.id + '\')" class="icon-btn" style="flex-shrink:0;" title="Löschen">🗑</button>' +
+                '</div>' +
             '</div>';
         }).join('');
     } catch(e) {
@@ -466,6 +455,108 @@ function filterKbByCategory(catId) {
     var active = catId ? document.querySelector('.kb-cat-item[onclick="filterKbByCategory(' + catId + ')"]') : document.getElementById('kb-cat-all');
     if (active) active.classList.add('active');
     loadKbEntries(catId);
+}
+
+
+// ── Wissens-Eintrag bearbeiten ────────────────────────────────────────────────
+
+var _editingEntryId = null;
+
+async function openKbEdit(id) {
+    _editingEntryId = id;
+    // Load full content
+    try {
+        var entries = await api.request('/knowledge/entries?id=' + id) || [];
+        // Load related entries
+        var related = await api.request('/knowledge/entries/' + id + '/related').catch(function(){return [];}) || [];
+
+        var entry = entries.find(function(e){ return e.id === id; });
+        if (!entry) {
+            // Try direct fetch if not in current list
+            entry = { id, title: '', content: '', category_id: null };
+        }
+
+        // Build modal
+        var cats = _allKbCats || [];
+        var catOptions = cats.map(function(c) {
+            return '<option value="' + c.id + '"' + (entry.category_id == c.id ? ' selected' : '') + '>' + esc(c.icon || '') + ' ' + esc(c.name) + '</option>';
+        }).join('');
+
+        var relatedHtml = related.length
+            ? '<div style="margin-top:10px;font-size:0.78rem;color:#64748b;">' +
+              '📎 ' + related.length + ' verwandte Einträge werden beim Sync ebenfalls aktualisiert.</div>'
+            : '';
+
+        var modal = document.getElementById('kb-edit-modal');
+        if (!modal) {
+            modal = document.createElement('div');
+            modal.id = 'kb-edit-modal';
+            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+            document.body.appendChild(modal);
+        }
+
+        modal.innerHTML =
+            '<div style="background:#0d1117;border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:600px;max-height:85vh;overflow-y:auto;">' +
+                '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+                    '<h3 style="color:white;font-size:1rem;margin:0;">✏️ Eintrag bearbeiten</h3>' +
+                    '<button onclick="closeKbEdit()" style="background:#333;border:none;color:white;border-radius:5px;padding:4px 10px;cursor:pointer;">✕</button>' +
+                '</div>' +
+                '<div class="form-group"><label>Titel</label>' +
+                    '<input type="text" id="kb-edit-title" value="' + esc(entry.title || '') + '" placeholder="Titel..." style="width:100%;">' +
+                '</div>' +
+                '<div class="form-group"><label>Kategorie</label>' +
+                    '<select id="kb-edit-cat" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">' +
+                    '<option value="">– Keine –</option>' + catOptions + '</select>' +
+                '</div>' +
+                '<div class="form-group"><label>Inhalt</label>' +
+                    '<textarea id="kb-edit-content" rows="8" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.875rem;resize:vertical;">' + esc(entry.content || '') + '</textarea>' +
+                '</div>' +
+                relatedHtml +
+                '<div style="display:flex;gap:8px;margin-top:12px;">' +
+                    '<button onclick="saveKbEdit()" class="btn btn-success" style="flex:1;">💾 Speichern</button>' +
+                    '<button onclick="syncKbEntry(\''+id+'\',true)" class="btn btn-primary" style="flex:1;">🤖 KI-Sync</button>' +
+                '</div>' +
+            '</div>';
+
+        modal.style.display = 'flex';
+        setTimeout(function(){ document.getElementById('kb-edit-content')?.focus(); }, 100);
+    } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+function closeKbEdit() {
+    var modal = document.getElementById('kb-edit-modal');
+    if (modal) modal.style.display = 'none';
+    _editingEntryId = null;
+}
+
+async function saveKbEdit() {
+    if (!_editingEntryId) return;
+    var title    = document.getElementById('kb-edit-title')?.value.trim();
+    var content  = document.getElementById('kb-edit-content')?.value.trim();
+    var catId    = document.getElementById('kb-edit-cat')?.value;
+    if (!content) { alert('Inhalt darf nicht leer sein.'); return; }
+
+    try {
+        await api.request('/knowledge/entries/' + _editingEntryId, 'PUT', {
+            title: title || null, content, category_id: catId ? parseInt(catId) : null
+        });
+        showToast('✅ Eintrag aktualisiert');
+        closeKbEdit();
+        loadKbEntries(_kbCatId);
+    } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+async function syncKbEntry(id, fromModal) {
+    if (!confirm('Eintrag via OpenAI neu strukturieren und kategorisieren?\nAlle verwandten Einträge werden ebenfalls aktualisiert.')) return;
+    if (fromModal) closeKbEdit();
+
+    showToast('⏳ KI-Sync läuft…');
+    try {
+        var result = await api.request('/knowledge/entries/' + id + '/sync', 'POST');
+        showToast('✅ KI-Sync: ' + (result.savedEntries || 0) + ' Einträge aktualisiert');
+        loadKbEntries(_kbCatId);
+        updateStats();
+    } catch(e) { alert('KI-Sync Fehler: ' + e.message); }
 }
 
 async function delKbEntry(id) {
@@ -1476,18 +1567,11 @@ async function createCouponNow() {
 
 var WOCHENTAGE_KURZ = ['Mo','Di','Mi','Do','Fr','Sa','So'];
 
-function toggleCouponHistory(btn) {
-    var dropdown = document.getElementById('coupon-history-dropdown');
-    if (!dropdown) return;
-    var isOpen = dropdown.style.display !== 'none';
-    dropdown.style.display = isOpen ? 'none' : 'block';
-    if (btn) btn.textContent = isOpen ? '📋 Verlauf' : '📋 Schließen';
-    if (!isOpen) loadCouponHistory();
-}
-
 async function loadCouponHistory() {
+    var card = document.getElementById('coupon-history-card');
     var list = document.getElementById('coupon-history-list');
-    if (!list) return;
+    if (!card || !list) return;
+    card.style.display = 'block';
     try {
         var data = await api.request('/coupons/history');
         if (!data || !data.length) { list.innerHTML = '<p style="color:#555;font-size:0.85rem;">Kein Verlauf.</p>'; return; }

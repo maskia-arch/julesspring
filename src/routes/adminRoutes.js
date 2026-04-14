@@ -33,7 +33,10 @@ router.delete('/knowledge/categories/:id',ctrl.deleteKnowledgeCategory);
 
 // Einträge
 router.get('/knowledge/entries',     ctrl.getKnowledgeEntries);
-router.delete('/knowledge/entries/:id', ctrl.deleteKnowledgeEntry);
+router.delete('/knowledge/entries/:id',      ctrl.deleteKnowledgeEntry);
+router.put('/knowledge/entries/:id',         ctrl.updateKnowledgeEntry);
+router.post('/knowledge/entries/:id/sync',   ctrl.syncKnowledgeEntry);
+router.get('/knowledge/entries/:id/related', ctrl.getRelatedEntries);
 
 // Manuell + Scraper
 router.post('/knowledge/manual',    ctrl.addManualKnowledge);
