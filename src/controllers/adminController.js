@@ -114,10 +114,11 @@ const adminController = {
       const { chatId } = req.params;
       const [chatResult, msgsResult] = await Promise.all([
         supabase.from('chats').select('*').eq('id', chatId).maybeSingle(),
-        supabase.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending: true }).limit(200)
+        // DESC + limit → neueste 200; dann umkehren für chronologische Anzeige
+        supabase.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending: false }).limit(200)
       ]);
       const chat = chatResult.data;
-      const msgs = msgsResult.data;
+      let msgs = (msgsResult.data || []).reverse(); // älteste zuerst nach dem DESC-Limit
       if (msgsResult.error) throw msgsResult.error;
       // Collapse consecutive 📍 visit messages to show only the last
       const allMsgs = msgs || [];

@@ -223,7 +223,11 @@ async function selectChat(chatId) {
         // Cache-Buster: stellt sicher wir bekommen die neuesten Nachrichten
         var data = await api.request('/chats/' + chatId + '/messages?t=' + Date.now());
         var info = data.chat_info || {};
-        var name = info.first_name || info.username || chatId.substring(0, 16);
+        // Name: first_name > username > metadata fallback > truncated ID
+        var meta = info.metadata || {};
+        var name = info.first_name || info.username ||
+                   meta.first_name || meta.username ||
+                   (chatId.length > 10 ? chatId.substring(0, 10) + '…' : chatId);
         var isTg = info.platform !== 'web_widget';
         var avCls = isTg ? 'avatar-tg' : 'avatar-web';
 
