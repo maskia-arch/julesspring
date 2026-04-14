@@ -56,8 +56,12 @@ router.post('/telegram', (req, res) => {
         const sellauthService = require('../services/sellauthService');
         const invoiceId = orderMatch[1];
         try {
-          const { data: s } = await supabase.from('settings')
-            .select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single().catch(() => ({ data: null }));
+          let s = null;
+          try {
+            const { data: _s } = await supabase.from('settings')
+              .select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single();
+            s = _s;
+          } catch (_) {}
 
           if (!s?.sellauth_api_key || !s?.sellauth_shop_id) {
             await telegramService.sendMessage(chatId,
