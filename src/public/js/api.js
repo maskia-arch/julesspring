@@ -53,6 +53,7 @@ var api = {
     async _doFetch(endpoint, method, body) {
         var opts = {
             method: method,
+            cache: 'no-store', // Kein Browser-Cache für API-Antworten
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')
