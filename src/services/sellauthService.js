@@ -36,6 +36,7 @@ const sellauthService = {
     const client = this._client(apiKey);
     const all = [];
     let page = 1, lastPage = 1;
+    // 1. Alle Produkte listen
     do {
       const { data } = await client.get(`/shops/${shopId}/products`, {
         params: { page, perPage: 100, orderColumn: 'name', orderDirection: 'asc' }
@@ -44,7 +45,29 @@ const sellauthService = {
       lastPage = data.last_page || 1;
       page++;
     } while (page <= lastPage);
-    return all;
+
+    // 2. Für Variant-Produkte: Einzel-Abruf für vollständige Varianten-Preise
+    // Die List-API gibt manchmal unvollständige Varianten zurück
+    const enriched = [];
+    for (const product of all) {
+      if (product.type === 'variant' && product.id) {
+        try {
+          const { data: full } = await client.get(`/shops/${shopId}/products/${product.id}`);
+          // Varianten aus Einzel-Abruf sind vollständiger (inkl. Preise, Stock)
+          if (full && full.variants && full.variants.length >= (product.variants || []).length) {
+            enriched.push({ ...product, variants: full.variants });
+          } else {
+            enriched.push(product);
+          }
+          await new Promise(r => setTimeout(r, 100)); // Rate-Limit-Schutz
+        } catch {
+          enriched.push(product); // Fallback auf List-Daten
+        }
+      } else {
+        enriched.push(product);
+      }
+    }
+    return enriched;
   },
 
   async getCategories(apiKey, shopId) {
@@ -60,55 +83,36 @@ const sellauthService = {
   },
 
   // Format für Variante: Link führt immer zur Produktseite
-  // Parst "50.00GB / 180 Days" → { gb: "50", days: "180" }
-  _parseVariantName(name) {
-    const m = name.match(/([\d.]+)\s*GB.*?(\d+)\s*(?:Day|Tag)/i);
-    return m ? { gb: parseFloat(m[1]).toString(), days: m[2] } : null;
-  },
-
   formatVariantKnowledge(product, variant, productUrl, categoryName) {
-    const price = variant.price ? `${variant.price} ${product.currency || 'EUR'}` : null;
+    // Preis korrekt formatieren (Sellauth gibt String wie "8.29" zurück)
+    const rawPrice = variant.price ? parseFloat(variant.price) : null;
+    const price = rawPrice ? `${rawPrice.toFixed(2)} ${product.currency || 'EUR'}` : null;
+    // Sellauth: stock = null oder -1 → unbegrenzt vorrätig, 0 → ausverkauft
     const stock = variant.stock;
     const isUnlimited = stock === null || stock === -1;
     const inStock = isUnlimited || stock > 0;
     const stockDisplay = isUnlimited ? 'Unbegrenzt vorrätig' : stock > 0 ? `${stock} auf Lager` : 'Ausverkauft';
 
-    // Deutsche Synonyme aus englischen Varianten-Namen ableiten
-    const parsed = this._parseVariantName(variant.name);
-    const gbPart   = parsed ? `${parsed.gb} GB` : '';
-    const daysPart = parsed ? `${parsed.days} Tage` : '';
-    const germanName = parsed ? `${parsed.gb}GB ${parsed.days} Tage` : '';
-    const shortName  = parsed ? `${parsed.gb}GB / ${parsed.days} Tage` : '';
-
     const lines = [
       `Produkt: ${product.name}`,
-      `Variante: ${variant.name}`,
-      germanName    ? `Auch bekannt als: ${germanName}` : '',
-      shortName     ? `Kurzbezeichnung: ${shortName}` : '',
-      gbPart        ? `Datenvolumen: ${gbPart}` : '',
-      daysPart      ? `Laufzeit: ${daysPart}` : '',
-      price         ? `Preis: ${price}` : '',
-      `Verfügbarkeit: ${stockDisplay}`,
+      `Option/Variante: ${variant.name}`,
+      price ? `Preis: ${price}` : '',
+      `Status: ${stockDisplay}`,
       `Kauflink: ${productUrl}`,
-      categoryName  ? `Kategorie: ${categoryName}` : '',
+      categoryName ? `Kategorie: ${categoryName}` : '',
     ];
 
+    // Produktbeschreibung (einmal, nicht pro Variante redundant)
     if (product.description) {
       const clean = product.description.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-      if (clean.length > 10) lines.push(`Info: ${clean.substring(0, 300)}`);
+      if (clean.length > 10) lines.push(`Info: ${clean.substring(0, 500)}`);
     }
 
     lines.push('');
-    // Suchformulierungen die Kunden benutzen
-    if (parsed) {
-      lines.push(`Suchanfrage: "${product.name} ${parsed.gb}GB" oder "${product.name} ${parsed.days} Tage" → Kauflink: ${productUrl}`);
-      lines.push(`Kunden fragen oft nach "${parsed.gb} gb ${parsed.days} tage" oder "${parsed.gb}GB ${parsed.days} Tage ${product.name}"`);
-    } else {
-      lines.push(`Suchanfrage: "${variant.name}" oder "${product.name}" → Kauflink: ${productUrl}`);
-    }
+    lines.push(`Wenn ein Kunde "${variant.name}" oder "${product.name}" sucht: Link → ${productUrl}`);
     if (price) lines.push(`Empfehlung: "${variant.name}" für ${price} – Kauflink: ${productUrl}`);
 
-    return lines.filter(Boolean).join('\n');
+    return lines.filter(l => l !== undefined && l !== null && l !== '').join('\n');
   },
 
   // Format für Produkte ohne Varianten
@@ -132,28 +136,20 @@ const sellauthService = {
   // Übersichts-Eintrag für Variant-Produkt (alle Optionen auf einen Blick)
   formatOverviewKnowledge(product, productUrl, categoryName) {
     const variantLines = (product.variants || []).map(v => {
-      const price     = v.price ? `${v.price} ${product.currency || 'EUR'}` : '?';
+      const price = v.price ? `${v.price} ${product.currency || 'EUR'}` : '?';
       const stockNote = (v.stock === 0) ? ' (ausverkauft)' : (v.stock === null || v.stock === -1) ? ' (unbegrenzt)' : '';
-      const parsed    = this._parseVariantName(v.name);
-      const german    = parsed ? ` / ${parsed.gb}GB ${parsed.days} Tage` : '';
-      return `  • ${v.name}${german}: ${price}${stockNote}`;
+      return `  • ${v.name}: ${price}${stockNote}`;
     }).join('\n');
-
-    // Alle Varianten-GB-Werte als Suchterme
-    const gbValues = [...new Set((product.variants||[]).map(v => {
-      const p = this._parseVariantName(v.name); return p ? p.gb + 'GB' : null;
-    }).filter(Boolean))].join(', ');
 
     return [
       `Produkt-Übersicht: ${product.name}`,
       categoryName ? `Kategorie: ${categoryName}` : '',
-      gbValues ? `Verfügbare Datenvolumen: ${gbValues}` : '',
-      `Kauflink: ${productUrl}`,
+      `Kauflink (alle Optionen auf dieser Seite): ${productUrl}`,
       '',
-      `Alle Optionen für ${product.name}:`,
+      `Verfügbare Optionen:`,
       variantLines,
       '',
-      `Auf der Seite ${productUrl} kannst du die passende Option (Datenmenge und Laufzeit) wählen und kaufen.`
+      `Kunden können auf der Seite ${productUrl} die gewünschte Option auswählen und direkt kaufen.`
     ].filter(Boolean).join('\n');
   },
 
@@ -175,16 +171,21 @@ const sellauthService = {
 
     progress(8, `${products.length} Produkte geladen, ${categories.length} Kategorien`);
 
-    // ── Deduplizierung: Produkte mit identischem Path oder Namen filtern ────
-    // "Bestseller"-Gruppen sind Duplikate von regulären Produkten
-    const SKIP_NAME_PATTERNS = /bestseller/i;
+    // ── Deduplizierung ────────────────────────────────────────────────────────
+    // Bestseller, Bundles etc. sind Duplikate mit evtl. falschen Preisen → weglassen
+    const SKIP_NAME_PATTERNS = /bestseller|bundle|combo/i;
     const seenPaths = new Set();
+    const seenNormNames = new Set();
     const filtered = products.filter(p => {
       if (p.visibility === 'hidden') return false;
-      if (SKIP_NAME_PATTERNS.test(p.name)) return false; // Bestseller-Duplikat
-      const key = p.path || p.name;
-      if (seenPaths.has(key)) return false;
-      seenPaths.add(key);
+      if (SKIP_NAME_PATTERNS.test(p.name)) return false;
+      // Exakter Pfad-Check
+      if (p.path && seenPaths.has(p.path)) return false;
+      if (p.path) seenPaths.add(p.path);
+      // Normalisierter Name-Check (entfernt Leerzeichen, Sonderzeichen)
+      const normName = (p.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (seenNormNames.has(normName)) return false;
+      seenNormNames.add(normName);
       return true;
     });
     const skipped = products.length - filtered.length;
@@ -274,28 +275,51 @@ const sellauthService = {
   // Wissensdatenbank-Kategorien aus Sellauth-Kategorien ableiten
   async _ensureKbCategories(sellauthCategories) {
     const map = {};
-    // Standard-Kategorien die wir immer wollen
-    const needed = ['Produkte', 'Tarife', 'FAQ', 'Support'];
-    for (const name of needed) {
+
+    // Alle existierenden KB-Kategorien laden (User-Kategorien bewahren!)
+    try {
+      const { data: allCats } = await supabase.from('knowledge_categories').select('id, name');
+      for (const cat of (allCats || [])) {
+        map['_' + cat.name.toLowerCase()] = cat.id;
+      }
+    } catch (_) {}
+
+    // Standard-Kategorien anlegen falls noch nicht vorhanden
+    const needed = [
+      { name: 'Produkte', icon: '🛒' },
+      { name: 'Tarife',   icon: '📶' },
+      { name: 'Preise',   icon: '💰' },
+      { name: 'FAQ',      icon: '❓' },
+      { name: 'Support',  icon: '🛠️' },
+    ];
+    for (const def of needed) {
+      const key = '_' + def.name.toLowerCase();
+      if (map[key]) continue; // Bereits vorhanden → nicht überschreiben
       try {
-        const { data: existing } = await supabase.from('knowledge_categories')
-          .select('id').eq('name', name).maybeSingle();
-        if (existing) { map['_' + name.toLowerCase()] = existing.id; continue; }
         const { data: created } = await supabase.from('knowledge_categories')
-          .insert([{ name, icon: name === 'Produkte' ? '🛒' : name === 'Tarife' ? '📶' : name === 'FAQ' ? '❓' : '🛠️', color: '#3b82f6' }])
+          .insert([{ name: def.name, icon: def.icon, color: '#3b82f6' }])
           .select('id').single();
-        if (created) map['_' + name.toLowerCase()] = created.id;
+        if (created) map[key] = created.id;
       } catch (_) {}
     }
-    map['_products'] = map['_produkte'] || map['_tarife'] || null;
+
+    // Fallback-Alias
+    map['_products'] = map['_tarife'] || map['_produkte'] || null;
 
     // Sellauth-Kategorien → KB-Kategorien mappen
     for (const cat of (sellauthCategories || [])) {
       const lname = (cat.name || '').toLowerCase();
-      if (/tarif|esim|data|sim/.test(lname)) map[cat.id] = map['_tarife'] || map['_products'];
-      else if (/faq|info|hilfe|help/.test(lname)) map[cat.id] = map['_faq'];
-      else if (/support|kontakt/.test(lname)) map[cat.id] = map['_support'];
-      else map[cat.id] = map['_produkte'] || map['_products'];
+      if (/tarif|esim|data|sim|travel|unlimited/.test(lname)) {
+        map[cat.id] = map['_tarife'] || map['_products'];
+      } else if (/preis|price|kosten|cost/.test(lname)) {
+        map[cat.id] = map['_preise'] || map['_tarife'];
+      } else if (/faq|info|hilfe|help|anleitung/.test(lname)) {
+        map[cat.id] = map['_faq'];
+      } else if (/support|kontakt|service/.test(lname)) {
+        map[cat.id] = map['_support'];
+      } else {
+        map[cat.id] = map['_produkte'] || map['_products'];
+      }
     }
     return map;
   },
