@@ -80,8 +80,9 @@
         <section id="traffic-section" class="app-section">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
                 <h2 class="section-title" style="margin:0;">📊 Website Traffic</h2>
-                <div style="display:flex;gap:6px;">
-                    <button onclick="loadTraffic('week')" id="traffic-btn-week" class="btn btn-primary btn-sm">7 Tage</button>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button onclick="loadTraffic('24h')"   id="traffic-btn-24h"   class="btn btn-secondary btn-sm">24h</button>
+                    <button onclick="loadTraffic('week')"  id="traffic-btn-week"  class="btn btn-primary btn-sm">7 Tage</button>
                     <button onclick="loadTraffic('month')" id="traffic-btn-month" class="btn btn-secondary btn-sm">30 Tage</button>
                 </div>
             </div>

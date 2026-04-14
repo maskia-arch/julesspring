@@ -230,37 +230,43 @@ const adminController = {
     try {
       // Besucher der letzten 5 Minuten = "live"
       const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      const { data: visitors } = await supabase
-        .from('widget_visitors')
-        .select('chat_id, ip, last_seen, page_count, user_agent')
-        .gte('last_seen', since)
-        .order('last_seen', { ascending: false })
-        .limit(50)
-        .catch(() => ({ data: [] }));
+      let visitors = [];
+      try {
+        const { data: _v } = await supabase
+          .from('visitor_sessions')
+          .select('id, chat_id, last_seen, page_count, entry_page, last_page, had_chat, is_active')
+          .gte('last_seen', since)
+          .order('last_seen', { ascending: false })
+          .limit(50);
+        visitors = _v || [];
+      } catch (_) {}
 
-      // Letzte Aktivitäten für diese Besucher
-      const chatIds = (visitors || []).map(v => v.chat_id);
+      const chatIds = visitors.map(v => v.chat_id);
       let activities = [];
       if (chatIds.length) {
-        const { data: acts } = await supabase
-          .from('visitor_activities')
-          .select('chat_id, activity, page_url, created_at')
-          .in('chat_id', chatIds)
-          .order('created_at', { ascending: false })
-          .limit(100)
-          .catch(() => ({ data: [] }));
-        activities = acts || [];
+        try {
+          const { data: acts } = await supabase
+            .from('visitor_activities')
+            .select('chat_id, activity, page_url, created_at')
+            .in('chat_id', chatIds)
+            .order('created_at', { ascending: false })
+            .limit(100);
+          activities = acts || [];
+        } catch (_) {}
       }
 
       // Attach last activity to each visitor
-      const result = (visitors || []).map(v => {
+      const result = visitors.map(v => {
         const lastAct = activities.find(a => a.chat_id === v.chat_id);
         return {
-          chatId:       v.chat_id,
-          lastSeen:     v.last_seen,
-          pageCount:    v.page_count,
-          currentPage:  lastAct?.activity?.replace('Besucht: ', '') || '?',
-          userAgent:    v.user_agent
+          sessionId:   v.id,
+          chatId:      v.chat_id,
+          lastSeen:    v.last_seen,
+          pageCount:   v.page_count,
+          currentPage: v.last_page || v.entry_page || lastAct?.activity?.replace('Besucht: ', '') || '?',
+          entryPage:   v.entry_page,
+          hadChat:     v.had_chat,
+          isActive:    v.is_active
         };
       });
 

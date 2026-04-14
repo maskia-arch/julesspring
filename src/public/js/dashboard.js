@@ -1379,14 +1379,11 @@ async function loadTraffic(range) {
         sv('t-tchats',    data.totals?.telegramChats || 0);
 
         // Chart
-        var days     = data.days || [];
-        var labels   = days.map(function(d) {
-            var dt = new Date(d.date);
-            return dt.toLocaleDateString('de-DE', { weekday:'short', day:'numeric', month:'numeric' });
-        });
-        var visitors  = days.map(function(d) { return d.visitors; });
-        var chats     = days.map(function(d) { return d.chats; });
-        var pageviews = days.map(function(d) { return d.pageviews; });
+        var days      = data.days || [];
+        var labels    = days.map(function(d) { return d.label || d.date || ''; });
+        var visitors  = days.map(function(d) { return d.sessions  || 0; });
+        var chats     = days.map(function(d) { return d.chats     || 0; });
+        var pageviews = days.map(function(d) { return d.pageviews || 0; });
 
         drawTrafficChart(labels, visitors, chats, pageviews);
     } catch(e) {
