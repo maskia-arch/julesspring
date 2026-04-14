@@ -54,12 +54,11 @@ const sellauthService = {
         try {
           const { data: full } = await client.get(`/shops/${shopId}/products/${product.id}`);
           // Varianten aus Einzel-Abruf sind vollständiger (inkl. Preise, Stock)
-          if (full && full.variants && full.variants.length >= (product.variants || []).length) {
-            enriched.push({ ...product, variants: full.variants });
+          if (full && full.variants && full.variants.length > 0) {
+            enriched.push({ ...product, variants: full.variants }); // Einzel-Abruf ist autoritativ
           } else {
             enriched.push(product);
-          }
-          await new Promise(r => setTimeout(r, 100)); // Rate-Limit-Schutz
+          }    await new Promise(r => setTimeout(r, 100)); // Rate-Limit-Schutz
         } catch {
           enriched.push(product); // Fallback auf List-Daten
         }
@@ -83,36 +82,56 @@ const sellauthService = {
   },
 
   // Format für Variante: Link führt immer zur Produktseite
+  // Parst "50.00GB / 180 Days" → { gb: "50", days: "180" }
+  _parseVariantName(name) {
+    const m = (name || '').match(/([\d.]+)\s*GB.*?(\d+)\s*(?:Day|Tag)/i);
+    return m ? { gb: parseFloat(m[1]).toString(), days: m[2] } : null;
+  },
+
   formatVariantKnowledge(product, variant, productUrl, categoryName) {
-    // Preis korrekt formatieren (Sellauth gibt String wie "8.29" zurück)
     const rawPrice = variant.price ? parseFloat(variant.price) : null;
-    const price = rawPrice ? `${rawPrice.toFixed(2)} ${product.currency || 'EUR'}` : null;
-    // Sellauth: stock = null oder -1 → unbegrenzt vorrätig, 0 → ausverkauft
-    const stock = variant.stock;
-    const isUnlimited = stock === null || stock === -1;
-    const inStock = isUnlimited || stock > 0;
+    const price    = rawPrice ? `${rawPrice.toFixed(2)} ${product.currency || 'EUR'}` : null;
+    const stock    = variant.stock;
+    const isUnlimited  = stock === null || stock === -1;
     const stockDisplay = isUnlimited ? 'Unbegrenzt vorrätig' : stock > 0 ? `${stock} auf Lager` : 'Ausverkauft';
+
+    // Deutsche Synonyme ableiten für besseres RAG-Matching
+    const parsed   = this._parseVariantName(variant.name);
+    const gbPart   = parsed ? `${parsed.gb} GB`               : '';
+    const daysPart = parsed ? `${parsed.days} Tage`            : '';
+    const germanName = parsed ? `${parsed.gb}GB ${parsed.days} Tage` : '';
 
     const lines = [
       `Produkt: ${product.name}`,
-      `Option/Variante: ${variant.name}`,
-      price ? `Preis: ${price}` : '',
-      `Status: ${stockDisplay}`,
+      `Variante: ${variant.name}`,
+      germanName ? `Auch bekannt als: ${germanName}` : '',
+      gbPart     ? `Datenvolumen: ${gbPart}`          : '',
+      daysPart   ? `Laufzeit: ${daysPart}`             : '',
+      price      ? `Preis: ${price}`                  : 'Preis: Bitte Produktseite besuchen',
+      price      ? `Kosten: ${price}`                 : '',
+      `Verfügbarkeit: ${stockDisplay}`,
       `Kauflink: ${productUrl}`,
-      categoryName ? `Kategorie: ${categoryName}` : '',
+      categoryName ? `Kategorie: ${categoryName}`     : '',
     ];
 
-    // Produktbeschreibung (einmal, nicht pro Variante redundant)
     if (product.description) {
       const clean = product.description.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
-      if (clean.length > 10) lines.push(`Info: ${clean.substring(0, 500)}`);
+      if (clean.length > 10) lines.push(`Info: ${clean.substring(0, 300)}`);
     }
 
     lines.push('');
-    lines.push(`Wenn ein Kunde "${variant.name}" oder "${product.name}" sucht: Link → ${productUrl}`);
-    if (price) lines.push(`Empfehlung: "${variant.name}" für ${price} – Kauflink: ${productUrl}`);
+    if (parsed) {
+      lines.push(`Suchanfrage "${product.name} ${parsed.gb}GB" → Kauflink: ${productUrl}`);
+      lines.push(`Kunden fragen nach "${parsed.gb} gb ${parsed.days} tage"`);
+    } else {
+      lines.push(`Suchanfrage "${variant.name}" → Kauflink: ${productUrl}`);
+    }
+    if (price) {
+      lines.push(`Kaufempfehlung: ${variant.name} für genau ${price}. Kauflink: ${productUrl}`);
+      lines.push(`PREIS-FAKT (nicht verändern): ${product.name} – ${variant.name} = ${price}`);
+    }
 
-    return lines.filter(l => l !== undefined && l !== null && l !== '').join('\n');
+    return lines.filter(Boolean).join('\n');
   },
 
   // Format für Produkte ohne Varianten
