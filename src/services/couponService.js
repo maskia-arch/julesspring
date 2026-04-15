@@ -47,46 +47,16 @@ const couponService = {
   // ── Aktiven Coupon aus DB holen ────────────────────────────────────────────
   async getActiveCoupon() {
     try {
-      // Kein .or()-Filter: Supabase v2 .or() mit timestamptz ist unzuverlässig
-      // → is_active=true holen, Ablauf in JavaScript prüfen (sicherer)
-      const { data: rows } = await supabase
+      const { data } = await supabase
         .from('daily_coupons')
         .select('*')
         .eq('is_active', true)
         .order('created_at', { ascending: false })
-        .limit(5); // max 5 holen, dann in JS filtern
-
-      if (!rows || !rows.length) return null;
-
-      const now = new Date();
-      const expiredIds = [];
-
-      for (const row of rows) {
-        // Kein Ablaufdatum → dauerhaft gültig
-        if (!row.expires_at) return row;
-
-        const exp = new Date(row.expires_at);
-        if (exp > now) {
-          // Gültig → nehmen
-          return row;
-        } else {
-          // Abgelaufen → für Cleanup merken
-          expiredIds.push(row.id);
-        }
-      }
-
-      // Alle abgelaufen → DB bereinigen
-      if (expiredIds.length) {
-        void supabase.from('daily_coupons')
-          .update({ is_active: false })
-          .in('id', expiredIds)
-          .catch(() => {});
-        logger.info(`[Coupon] ${expiredIds.length} abgelaufene Coupons automatisch deaktiviert`);
-      }
-
-      return null;
+        .limit(1)
+        .maybeSingle();
+      return data || null;
     } catch (e) {
-      logger.warn('[Coupon] getActiveCoupon:', e.message);
+      logger.warn('[Coupon] getActiveCoupon Fehler:', e.message || String(e));
       return null;
     }
   },
@@ -94,36 +64,38 @@ const couponService = {
   // ── Alten Coupon in Sellauth löschen & in DB deaktivieren ─────────────────
   async _deactivateOld(apiKey, shopId) {
     try {
+      // Alle aktiven Coupons in DB deaktivieren
       const { data: actives } = await supabase
         .from('daily_coupons')
         .select('code, sellauth_id')
         .eq('is_active', true);
 
-      if (!actives?.length) return;
+      if (actives?.length) {
+        for (const coupon of actives) {
+          // Sellauth DELETE benötigt die NUMERISCHE ID (nicht den Code-String!)
+          const numericId = coupon.sellauth_id ? parseInt(coupon.sellauth_id) : null;
 
-      // DB ZUERST deaktivieren – unabhängig von Sellauth-Erfolg
-      await supabase.from('daily_coupons').update({ is_active: false }).eq('is_active', true);
-      logger.info(`[Coupon] ${actives.length} alte Coupons in DB deaktiviert`);
+          if (!numericId) {
+            logger.info(`[Coupon] ${coupon.code}: keine Sellauth-ID gespeichert – überspringe Löschung`);
+            continue;
+          }
 
-      // Dann in Sellauth löschen (numerische ID!)
-      for (const coupon of actives) {
-        const numericId = coupon.sellauth_id ? parseInt(coupon.sellauth_id) : null;
-        if (!numericId) {
-          logger.info(`[Coupon] ${coupon.code}: keine Sellauth-ID – überspringe`);
-          continue;
-        }
-        try {
-          await this._client(apiKey).delete(`/shops/${shopId}/coupons/${numericId}`);
-          logger.info(`[Coupon] Sellauth gelöscht: ${coupon.code} (ID: ${numericId})`);
-        } catch (e) {
-          const st = e.response?.status;
-          const msg = e.response?.data?.message || e.message;
-          if (st === 404 || /not found/i.test(msg)) {
-            logger.info(`[Coupon] ${coupon.code} nicht mehr in Sellauth – bereits abgelaufen`);
-          } else {
-            logger.warn(`[Coupon] Sellauth-Löschung fehlgeschlagen (${coupon.code}): ${msg}`);
+          try {
+            await this._client(apiKey).delete(`/shops/${shopId}/coupons/${numericId}`);
+            logger.info(`[Coupon] Gelöscht in Sellauth: ${coupon.code} (ID: ${numericId})`);
+          } catch (e) {
+            const status = e.response?.status;
+            const msg    = e.response?.data?.message || e.message;
+            if (status === 404 || /not found/i.test(msg)) {
+              logger.info(`[Coupon] ${coupon.code} (ID: ${numericId}) nicht in Sellauth – bereits gelöscht oder abgelaufen`);
+            } else {
+              logger.warn(`[Coupon] Löschen fehlgeschlagen (${coupon.code}, ID: ${numericId}): ${msg}`);
+            }
           }
         }
+
+        // DB: alle als inaktiv markieren
+        await supabase.from('daily_coupons').update({ is_active: false }).eq('is_active', true);
       }
     } catch (e) {
       logger.warn(`[Coupon] _deactivateOld: ${e.message}`);
@@ -220,19 +192,15 @@ const couponService = {
 
     // 3. In DB speichern
 
-    // weekday already defined above from schedule check
-
     const { data: saved } = await supabase.from('daily_coupons').insert([{
       code,
       discount,
       type,
       description,
-      sellauth_id:   String(sellauthId || ''),
-      expires_at:    expiresAt.toISOString(),
-      is_active:     true,
-      used_count:    0,
-      ki_call_count: 0,
-      weekday
+      sellauth_id: String(sellauthId || ''),
+      expires_at:  expiresAt.toISOString(),
+      is_active:   true,
+      used_count:  0
     }]).select().single();
 
     logger.info(`[Coupon] ✅ Tages-Coupon aktiv: ${code}`);
@@ -241,18 +209,24 @@ const couponService = {
 
   // ── Scheduler: läuft täglich zur eingestellten Stunde ────────────────────
   startDailyScheduler() {
+    // Beim Start: prüfen ob der heutige Coupon fehlt (nach SIGTERM/Neustart)
+    this._checkMissedCoupon();
+
     const scheduleNext = async () => {
       try {
         const settings = await this._loadSettings();
-        const targetHour = parseInt(settings.coupon_schedule_hour) || 0;
+        if (!settings.coupon_enabled) {
+          logger.info('[Coupon] System deaktiviert – Scheduler pausiert. Prüfe in 30min erneut.');
+          setTimeout(scheduleNext, 30 * 60 * 1000);
+          return;
+        }
 
+        const targetHour = parseInt(settings.coupon_schedule_hour) || 0;
         const now  = new Date();
         let next   = new Date();
-        next.setHours(targetHour, 0, 5, 0); // +5s Puffer
+        next.setHours(targetHour, 0, 5, 0);
 
-        if (next <= now) {
-          next.setDate(next.getDate() + 1); // Morgen
-        }
+        if (next <= now) next.setDate(next.getDate() + 1);
 
         const delay = next.getTime() - now.getTime();
         logger.info(`[Coupon] Nächste Erneuerung: ${next.toISOString()} UTC (in ${Math.round(delay/60000)} min)`);
@@ -264,18 +238,48 @@ const couponService = {
           } catch (e) {
             logger.error('[Coupon] Rotation fehlgeschlagen:', e.message);
           }
-          scheduleNext(); // Für nächsten Tag neu planen
+          scheduleNext();
         }, delay);
 
       } catch (e) {
         logger.warn(`[Coupon] Scheduler-Fehler: ${e.message}`);
-        // Bei Fehler: in 1h nochmal versuchen
         setTimeout(scheduleNext, 60 * 60 * 1000);
       }
     };
 
     scheduleNext();
     logger.info('[Coupon] Daily Scheduler gestartet');
+  },
+
+  // Prüft beim Serverstart ob der Coupon für heute schon erstellt wurde
+  async _checkMissedCoupon() {
+    try {
+      await new Promise(r => setTimeout(r, 5000)); // 5s warten bis DB-Verbindung steht
+
+      const settings = await this._loadSettings();
+      if (!settings.coupon_enabled) return;
+
+      const targetHour = parseInt(settings.coupon_schedule_hour) || 0;
+      const now = new Date();
+      const todayTarget = new Date();
+      todayTarget.setHours(targetHour, 0, 0, 0);
+
+      // Nur prüfen wenn wir NACH der geplanten Zeit starten
+      if (now < todayTarget) return;
+
+      // Prüfen ob heute schon ein aktiver Coupon existiert
+      const activeCoupon = await this.getActiveCoupon();
+      if (activeCoupon) {
+        logger.info(`[Coupon] Startup-Check: Coupon ${activeCoupon.code} bereits aktiv.`);
+        return;
+      }
+
+      // Kein Coupon für heute → nachholen
+      logger.info('[Coupon] Startup-Check: Kein Coupon für heute – erstelle jetzt (SIGTERM-Recovery)...');
+      await this.createDailyCoupon(true);
+    } catch (e) {
+      logger.warn('[Coupon] Startup-Check fehlgeschlagen:', e.message);
+    }
   }
 };
 

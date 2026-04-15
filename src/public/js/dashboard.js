@@ -1052,7 +1052,7 @@ async function saveSettings() {
         summary_interval:    parseInt(gv('summary-interval')) || 5,
         widget_powered_by:   gv('widget-powered-by'),
         // Coupon settings
-        coupon_enabled:      document.getElementById('coupon-enabled')?.checked || false,
+        coupon_enabled:      !!(document.getElementById('coupon-enabled')?.checked),
         coupon_discount:     parseInt(gv('coupon-discount'))      || 10,
         coupon_type:         gv('coupon-type')                    || 'percentage',
         coupon_description:  gv('coupon-description'),

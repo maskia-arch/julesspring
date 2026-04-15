@@ -191,6 +191,18 @@ const adminController = {
         ai_temperature:       body.ai_temperature       !== undefined ? parseFloat(body.ai_temperature) : undefined,
         rag_threshold:        body.rag_threshold        !== undefined ? parseFloat(body.rag_threshold)  : undefined,
         rag_match_count:      body.rag_match_count      !== undefined ? parseInt(body.rag_match_count)  : undefined,
+        // Coupon-Einstellungen
+        coupon_enabled:       body.coupon_enabled       !== undefined ? Boolean(body.coupon_enabled)       : undefined,
+        coupon_discount:      body.coupon_discount      !== undefined ? parseInt(body.coupon_discount)     : undefined,
+        coupon_type:          body.coupon_type          ?? undefined,
+        coupon_description:   body.coupon_description   ?? undefined,
+        coupon_max_uses:      body.coupon_max_uses      !== undefined ? parseInt(body.coupon_max_uses)||null: undefined,
+        coupon_schedule_hour: body.coupon_schedule_hour !== undefined ? parseInt(body.coupon_schedule_hour): undefined,
+        // Widget-Einstellungen
+        widget_powered_by:    body.widget_powered_by    ?? undefined,
+        max_history_msgs:     body.max_history_msgs     !== undefined ? parseInt(body.max_history_msgs)    : undefined,
+        summary_interval:     body.summary_interval     !== undefined ? parseInt(body.summary_interval)    : undefined,
+        ai_max_input_tokens:  body.ai_max_input_tokens  !== undefined ? parseInt(body.ai_max_input_tokens) : undefined,
       };
 
       // undefined-Felder entfernen (nicht überschreiben wenn nicht gesendet)
