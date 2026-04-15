@@ -4,6 +4,9 @@ const router  = express.Router();
 // ── Telegram Webhook ──────────────────────────────────────────────────────────
 // REGEL: res.sendStatus(200) ist die allererste synchrone Operation.
 // Alles danach läuft in setImmediate() – kein Crash kann die 200 blockieren.
+const channelController = require('../controllers/channelController');
+const smalltalkAgent    = require('../services/ai/smalltalkAgent');
+
 router.post('/telegram', (req, res) => {
   res.sendStatus(200);
 

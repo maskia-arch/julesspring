@@ -264,6 +264,8 @@
                 <button class="tab-btn" onclick="showSettingsTab('telegram-cfg',this)">✈️ Telegram</button>
                 <button class="tab-btn" onclick="showSettingsTab('widget-cfg',this)">🔗 Widget</button>
                 <button class="tab-btn" onclick="showSettingsTab('coupon-cfg',this)">🎟️ Coupon</button>
+                <button class="tab-btn" onclick="showSettingsTab('channel-cfg',this)">📢 Channel</button>
+                <button class="tab-btn" onclick="showSettingsTab('smalltalk-cfg',this)">💬 Smalltalk</button>
             </div>
 
             <div id="settings-tab-bot" class="tab-pane active">
@@ -474,14 +476,61 @@
                 </div>
 
 
+                <!-- Channel Settings -->
+                <div id="settings-tab-channel-cfg" class="tab-pane">
+                  <div class="card">
+                    <h3 class="card-title">📢 Channel Bot</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Channels & Gruppen wo der Bot als Admin hinzugefügt wurde. Bot erkennt sich automatisch beim Hinzufügen.</p>
+                    <div id="channel-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                    <button onclick="loadChannels()" class="btn btn-secondary btn-sm" style="margin-top:8px;">↺ Aktualisieren</button>
+                  </div>
+                </div>
+
+                <!-- Smalltalk Settings -->
+                <div id="settings-tab-smalltalk-cfg" class="tab-pane">
+                  <div class="card">
+                    <h3 class="card-title">💬 Smalltalk-Agent</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Antwortet auf /ai in Channels. Getrennte Persönlichkeit vom Berater-Bot.</p>
+                    <div class="form-group">
+                      <label>System-Prompt</label>
+                      <textarea id="smalltalk-system-prompt" rows="5" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;resize:vertical;" placeholder="Du bist ein freundlicher KI-Assistent im Telegram-Channel von ValueShop25…"></textarea>
+                    </div>
+                    <div class="form-group">
+                      <label>Modell (kostensparend)</label>
+                      <select id="smalltalk-model" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <option value="deepseek-chat">DeepSeek Chat (günstig)</option>
+                        <option value="deepseek-reasoner">DeepSeek Reasoner</option>
+                      </select>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                      <div class="form-group">
+                        <label>Max Tokens</label>
+                        <input type="number" id="smalltalk-max-tokens" min="50" max="400" value="200" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                      <div class="form-group">
+                        <label>Temperature</label>
+                        <input type="number" id="smalltalk-temperature" min="0" max="1" step="0.1" value="0.8" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                    </div>
+                    <div class="form-group">
+                      <label>Smalltalk Wissenskategorie</label>
+                      <select id="smalltalk-kb-category" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <option value="">– Keine –</option>
+                      </select>
+                      <p class="hint">Erstelle zuerst eine KB-Kategorie "Smalltalk" im Wissen-Tab.</p>
+                    </div>
+                    <button onclick="saveSmallTalkSettings()" class="btn btn-success btn-full">💾 Smalltalk-Einstellungen speichern</button>
+                  </div>
+                </div>
+
             </div>
         </section>
 
     </div>
 </div>
 
-<script src="js/api.js?v=1334"></script>
-<script src="js/dashboard.js?v=1334"></script>
+<script src="js/api.js?v=140"></script>
+<script src="js/dashboard.js?v=140"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });

@@ -198,6 +198,12 @@ const adminController = {
         coupon_description:   body.coupon_description   ?? undefined,
         coupon_max_uses:      body.coupon_max_uses      !== undefined ? parseInt(body.coupon_max_uses)||null: undefined,
         coupon_schedule_hour: body.coupon_schedule_hour !== undefined ? parseInt(body.coupon_schedule_hour): undefined,
+        // Smalltalk-Agent Einstellungen
+        smalltalk_system_prompt:  body.smalltalk_system_prompt   ?? undefined,
+        smalltalk_model:          body.smalltalk_model           ?? undefined,
+        smalltalk_max_tokens:     body.smalltalk_max_tokens      !== undefined ? parseInt(body.smalltalk_max_tokens)     : undefined,
+        smalltalk_temperature:    body.smalltalk_temperature     !== undefined ? parseFloat(body.smalltalk_temperature)  : undefined,
+        smalltalk_kb_category_id: body.smalltalk_kb_category_id !== undefined ? parseInt(body.smalltalk_kb_category_id)||null : undefined,
         // Widget-Einstellungen
         widget_powered_by:    body.widget_powered_by    ?? undefined,
         max_history_msgs:     body.max_history_msgs     !== undefined ? parseInt(body.max_history_msgs)    : undefined,

@@ -89,6 +89,10 @@ router.get('/coupons/history',        ctrl.getCouponHistory);
 // Sessions
 router.get('/traffic/sessions',       ctrl.getSessions);
 
-router.post('/chats/cleanup-old',    ctrl.cleanupOldMessages);
+// ── Channels ──────────────────────────────────────────────────────────────
+const channelCtrl = require('../controllers/channelController');
+router.get('/channels',          channelCtrl.getChannels.bind(channelCtrl));
+router.put('/channels/:id',      channelCtrl.updateChannel.bind(channelCtrl));
+router.delete('/channels/:id',   channelCtrl.deleteChannel.bind(channelCtrl));
 
 module.exports = router;

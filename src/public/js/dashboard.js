@@ -66,6 +66,8 @@ async function initDashboard() {
 
     // Knowledge Kategorien vorladen
     setTimeout(function() { _safeRun(loadKbCategories); }, 3000);
+    // Channel-Liste vorladen
+    setTimeout(function() { _safeRun(loadChannels); }, 3500);
 
     // Intervalle
     clearInterval(window._statsInterval);
@@ -589,6 +591,99 @@ async function syncKbEntry(id, fromModal) {
     } catch(e) { alert('KI-Sync Fehler: ' + e.message); }
 }
 
+
+// ══════════════════════════════════════════════════════════════════════
+// Channel Management (v1.4)
+// ══════════════════════════════════════════════════════════════════════
+
+
+// ── Smalltalk Agent Settings ──────────────────────────────────────────────────
+
+async function loadSmallTalkSettings(s) {
+    if (!s) return;
+    var el;
+    if (s.smalltalk_system_prompt) {
+        el = document.getElementById('smalltalk-system-prompt');
+        if (el) el.value = s.smalltalk_system_prompt;
+    }
+    el = document.getElementById('smalltalk-model');
+    if (el && s.smalltalk_model) el.value = s.smalltalk_model;
+    el = document.getElementById('smalltalk-max-tokens');
+    if (el) el.value = s.smalltalk_max_tokens || 200;
+    el = document.getElementById('smalltalk-temperature');
+    if (el) el.value = s.smalltalk_temperature || 0.8;
+
+    // KB-Kategorien in Dropdown laden
+    var catSel = document.getElementById('smalltalk-kb-category');
+    if (catSel && _allKbCats && _allKbCats.length) {
+        catSel.innerHTML = '<option value="">– Keine –</option>' +
+            _allKbCats.map(function(cat) {
+                return '<option value="'+cat.id+'"'+(s.smalltalk_kb_category_id==cat.id?' selected':'')+'>'+esc(cat.icon||'')+' '+esc(cat.name)+'</option>';
+            }).join('');
+    }
+}
+
+async function saveSmallTalkSettings() {
+    var gv = function(id) { var el=document.getElementById(id); return el?el.value:null; };
+    var catId = gv('smalltalk-kb-category');
+    try {
+        await api.request('/settings', 'POST', {
+            smalltalk_system_prompt:  gv('smalltalk-system-prompt'),
+            smalltalk_model:          gv('smalltalk-model') || 'deepseek-chat',
+            smalltalk_max_tokens:     parseInt(gv('smalltalk-max-tokens')) || 200,
+            smalltalk_temperature:    parseFloat(gv('smalltalk-temperature')) || 0.8,
+            smalltalk_kb_category_id: catId ? parseInt(catId) : null
+        });
+        showToast('✅ Smalltalk-Einstellungen gespeichert!');
+    } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+async function loadChannels() {
+    var el = document.getElementById('channel-list');
+    if (!el) return;
+    try {
+        var channels = await api.request('/channels') || [];
+        if (!channels.length) {
+            el.innerHTML = '<p style="color:#555;font-size:0.85rem;padding:8px;">Noch keine Channels erkannt.<br>Füge den Bot als Admin in deinen Channel/Gruppe ein.</p>';
+            return;
+        }
+        el.innerHTML = channels.map(function(ch) {
+            var modeOpts = ['smalltalk','berater'].map(function(m) {
+                return '<option value="'+m+'"'+(ch.mode===m?' selected':'')+'>'+m+'</option>';
+            }).join('');
+            var activeChecked = ch.is_active ? 'checked' : '';
+            return '<div style="background:#111;border-radius:8px;padding:12px;margin-bottom:8px;border:1px solid #1e1e1e;">'+
+                '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'+
+                    '<span style="font-size:1.1rem;">'+(ch.type==='channel'?'📢':'👥')+'</span>'+
+                    '<span style="font-weight:700;flex:1;">'+esc(ch.title||ch.id)+'</span>'+
+                    '<label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;color:#64748b;">'+
+                        '<input type="checkbox" '+ activeChecked +' onchange="updateChannel('+ch.id+',{is_active:this.checked})" style="width:14px;height:14px;"> Aktiv'+
+                    '</label>'+
+                '</div>'+
+                '<div style="display:flex;gap:8px;align-items:center;">'+
+                    '<select onchange="updateChannel('+ch.id+',{mode:this.value})" style="flex:1;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;">'+modeOpts+'</select>'+
+                    '<input type="text" value="'+esc(ch.ai_command||'/ai')+'" placeholder="/ai" '+
+                        'onblur="updateChannel('+ch.id+',{ai_command:this.value})" '+
+                        'style="width:70px;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;text-align:center;">'+
+                    '<button onclick="deleteChannel('+ch.id+')" class="icon-btn">🗑</button>'+
+                '</div>'+
+                (ch.username ? '<div style="font-size:0.7rem;color:#555;margin-top:4px;">@'+esc(ch.username)+'</div>' : '')+
+            '</div>';
+        }).join('');
+    } catch(e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(e.message)+'</p>'; }
+}
+
+async function updateChannel(id, patch) {
+    try { await api.request('/channels/' + id, 'PUT', patch); showToast('✅ Gespeichert'); }
+    catch(e) { alert('Fehler: ' + e.message); }
+}
+
+async function deleteChannel(id) {
+    if (!confirm('Channel entfernen?')) return;
+    try { await api.request('/channels/' + id, 'DELETE'); loadChannels(); }
+    catch(e) { alert('Fehler: ' + e.message); }
+}
+
 async function delKbEntry(id) {
     if (!confirm('Eintrag löschen?')) return;
     try {
@@ -791,7 +886,9 @@ function _applySettings(s) {
     var pwEl = document.getElementById('widget-powered-by');
     if (pwEl && s.widget_powered_by != null) pwEl.value = s.widget_powered_by;
     // Coupon settings
-    var ceEl = document.getElementById('coupon-enabled'); if(ceEl) ceEl.checked = !!s.coupon_enabled;
+    
+    loadSmallTalkSettings(s);
+var ceEl = document.getElementById('coupon-enabled'); if(ceEl) ceEl.checked = !!s.coupon_enabled;
     var sv2 = function(id, v){ var el=document.getElementById(id); if(el&&v!=null) el.value=v; };
     sv2('coupon-discount', s.coupon_discount || 10);
     sv2('coupon-type', s.coupon_type || 'percentage');
@@ -1242,7 +1339,7 @@ async function hardRefresh() {
     } else {
         clearInterval(_liveInterval);
     }
-            if (id === 'settings')  _safeRun(loadSettings);
+            if (id === 'settings')  { _safeRun(loadSettings); _safeRun(loadChannels); }
         }
         showToast('✅ Daten aktualisiert');
     } catch(e) {

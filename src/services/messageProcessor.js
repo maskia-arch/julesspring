@@ -15,6 +15,7 @@ const embeddingService    = require('./embeddingService');
 const notificationService = require('./notificationService');
 const abuseDetector       = require('./abuseDetector');
 const couponService       = require('./couponService');
+const clarityDetector     = require('./ai/clarityDetector');
 const logger              = require('../utils/logger');
 
 let _settingsCache     = null;
