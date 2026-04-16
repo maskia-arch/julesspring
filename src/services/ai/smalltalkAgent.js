@@ -1,95 +1,157 @@
 /**
- * smalltalkAgent.js  v1.4
+ * smalltalkAgent.js  v1.4.0-2
  *
- * Kosteneffizienter Smalltalk-Agent für Telegram-Channel.
- * - Antwortet auf /ai [Frage] in Channels
- * - Max 3-4 Sätze, locker und gesprächig
- * - Eigener System-Prompt, eigene Token-Limits
- * - Kann bei Bedarf auf den Berater-Modus hinweisen
- * - Zugriff auf separate "Smalltalk" Wissensdatenbank-Kategorie
- * - Bei Beratungsfragen → wechselt automatisch zum Berater-Prompt
+ * Separater Smalltalk-Bot (eigener Bot-Token, eigene Persönlichkeit).
+ * - Jeder Channel muss manuell im Dashboard freigeschaltet werden
+ * - Token/USD-Limits pro Channel
+ * - Bei Limit-Erreichen: Hinweis an @autoacts
  */
 
-const axios    = require('axios');
-const supabase = require('../../config/supabase');
-const logger   = require('../../utils/logger');
+const axios    = require("axios");
+const supabase = require("../../config/supabase");
+const logger   = require("../../utils/logger");
 
-const clarityDetector = require('./clarityDetector');
+// DeepSeek Preise ($/1M Tokens) – günstigstes Modell
+const PRICE_PER_TOKEN = { input: 0.00000027, output: 0.0000011 }; // deepseek-chat
 
-// Keywords die einen Wechsel zum Berater-Modus auslösen
-const BERATER_TRIGGERS = /\b(esim|tarif|preis|gb|daten|roaming|data|kaufen|bestell|sim|laufzeit|anbiet|produkt|angebot|rabatt|coupon|code)/i;
+const DEFAULT_PROMPT = `Du bist ein freundlicher, witziger KI-Assistent.
+Antworte locker und kurz – maximal 3–4 Sätze.
+Wenn jemand nach eSIMs, Tarifen, Preisen oder Produkten fragt, weise ihn an: @ValueShop25Support_bot
+Antworte auf Deutsch, außer der User schreibt auf Englisch.`;
 
-const DEFAULT_SMALLTALK_PROMPT = `Du bist ein freundlicher, witziger KI-Assistent im Telegram-Channel von ValueShop25.
-Antworte auf /ai-Befehle kurz und locker – maximal 3–4 Sätze.
-Du kennst dich mit allgemeinen Themen aus und plauderst gern.
-Wenn jemand nach eSIMs, Tarifen, Preisen oder Produkten fragt, weise ihn an den Support-Bot: @ValueShop25Support_bot
-Antworte auf Deutsch außer der User schreibt auf Englisch.`;
+const BERATER_TRIGGERS = /\b(esim|tarif|preis|gb|daten|roaming|kaufen|bestell|sim|laufzeit|angebot|rabatt|coupon)/i;
 
 const smalltalkAgent = {
 
-  async handle({ chatId, text, from, settings, channelMode = 'smalltalk' }) {
-    const s = settings;
+  async handle({ chatId, text, settings }) {
+    const s = settings || {};
 
-    // Berater-Trigger im Channel → kurze Weiterleitung
+    // 1. Channel-Freischaltung prüfen
+    const channel = await this._getChannel(String(chatId));
+    if (!channel) {
+      // Neuer Channel – in DB eintragen, warten auf Freischaltung
+      await this._registerNewChannel(chatId, text);
+      return { reply: null }; // Keine Antwort, bis freigeschalten
+    }
+    if (!channel.is_approved || !channel.is_active) {
+      return { reply: null }; // Noch nicht freigeschalten
+    }
+
+    // 2. Token/USD-Limit prüfen
+    const limitHit = this._checkLimit(channel);
+    if (limitHit) {
+      const msg = channel.limit_message || "Deine Token sind verbraucht. Melde dich bei @autoacts.";
+      return { reply: msg, limitReached: true };
+    }
+
+    // 3. Berater-Trigger → Weiterleitung
     if (BERATER_TRIGGERS.test(text)) {
-      const referral = `Für eSIM-Beratung bin ich nicht zuständig 😄 Schreib einfach @ValueShop25Support_bot direkt an – der hilft dir mit Tarifen, Preisen und allem rund um eSIMs! 📱`;
-      return { reply: referral, mode: 'smalltalk_referral' };
+      return { reply: "Für eSIM-Fragen bin ich nicht zuständig 😄 Schreib @ValueShop25Support_bot direkt an – der hilft dir mit Tarifen und Preisen! 📱" };
     }
 
-    // Smalltalk-KB laden (eigene Kategorie)
-    let kbContext = '';
-    if (s?.smalltalk_kb_category_id) {
-      kbContext = await this._loadSmallTalkKB(text, s.smalltalk_kb_category_id);
-    }
+    // 4. KI-Antwort generieren
+    const systemPrompt = s.smalltalk_system_prompt || DEFAULT_PROMPT;
+    const model        = s.smalltalk_model     || "deepseek-chat";
+    const maxTokens    = parseInt(s.smalltalk_max_tokens) || 200;
+    const temperature  = parseFloat(s.smalltalk_temperature) || 0.8;
 
-    const systemPrompt = s?.smalltalk_system_prompt || DEFAULT_SMALLTALK_PROMPT;
-    const model        = s?.smalltalk_model     || 'deepseek-chat';
-    const maxTokens    = s?.smalltalk_max_tokens || 200;
-    const temperature  = parseFloat(s?.smalltalk_temperature || 0.8);
+    let kbContext = "";
+    if (s.smalltalk_kb_category_id) {
+      kbContext = await this._loadKB(text, s.smalltalk_kb_category_id);
+    }
 
     const messages = [
-      { role: 'system', content: systemPrompt + (kbContext ? `\n\nKontext:\n${kbContext}` : '') },
-      { role: 'user',   content: text }
+      { role: "system", content: systemPrompt + (kbContext ? "\n\nKontext:\n" + kbContext : "") },
+      { role: "user",   content: text }
     ];
 
-    try {
-      // DeepSeek API (günstigstes Modell, wenig Tokens)
-      const { data: settings_db } = await supabase.from('settings').select('deepseek_api_key, ai_provider').single().catch(() => ({ data: null }));
-      const apiKey = process.env.DEEPSEEK_API_KEY || settings_db?.deepseek_api_key;
+    const apiKey = s.smalltalk_bot_token ? null : process.env.DEEPSEEK_API_KEY;
+    const dsKey  = process.env.DEEPSEEK_API_KEY;
 
+    if (!dsKey) {
+      logger.warn("[Smalltalk] Kein DEEPSEEK_API_KEY konfiguriert");
+      return { reply: null };
+    }
+
+    try {
       const resp = await axios.post(
-        'https://api.deepseek.com/v1/chat/completions',
+        "https://api.deepseek.com/v1/chat/completions",
         { model, max_tokens: maxTokens, temperature, messages },
-        { headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' }, timeout: 20000 }
+        { headers: { Authorization: "Bearer " + dsKey, "Content-Type": "application/json" }, timeout: 20000 }
       );
 
-      const reply = resp.data.choices[0].message.content.trim();
+      const reply  = resp.data.choices[0].message.content.trim();
       const usage  = resp.data.usage || {};
+      const inTok  = usage.prompt_tokens     || 0;
+      const outTok = usage.completion_tokens || 0;
+      const usd    = inTok * PRICE_PER_TOKEN.input + outTok * PRICE_PER_TOKEN.output;
 
-      logger.info(`[Smalltalk] ${chatId}: ${usage.total_tokens || '?'} Tokens`);
+      // 5. Kosten tracken
+      void this._trackUsage(String(chatId), inTok + outTok, usd);
 
-      // Klarheitscheck
-      const ragScore = kbContext ? 0.7 : null;
-      void clarityDetector.evaluate({ chatId, userText: text, aiReply: reply, ragScore, agentMode: 'smalltalk' });
-
-      return { reply, mode: 'smalltalk', tokens: usage.total_tokens || 0 };
+      logger.info(`[Smalltalk] ${chatId}: ${inTok + outTok} Tokens ($${usd.toFixed(5)})`);
+      return { reply, tokens: inTok + outTok, usd };
 
     } catch (e) {
-      logger.error('[Smalltalk] Fehler:', e.message);
-      return { reply: 'Kurze Pause – probier\'s gleich nochmal! 🙂', mode: 'smalltalk_error' };
+      logger.error("[Smalltalk] Fehler:", e.message);
+      return { reply: "Kurze Pause – probier's gleich nochmal! 🙂" };
     }
   },
 
-  async _loadSmallTalkKB(text, categoryId) {
+  _checkLimit(channel) {
+    if (channel.token_limit !== null && channel.token_used >= channel.token_limit) return true;
+    if (channel.usd_limit   !== null && channel.usd_spent  >= channel.usd_limit)   return true;
+    return false;
+  },
+
+  async _getChannel(chatId) {
     try {
-      const embService = require('../embeddingService');
+      const { data } = await supabase.from("bot_channels").select("*").eq("id", chatId).maybeSingle();
+      return data || null;
+    } catch { return null; }
+  },
+
+  async _registerNewChannel(chatId, firstMsg) {
+    try {
+      await supabase.from("bot_channels").upsert([{
+        id:          chatId,
+        title:       String(chatId),
+        type:        "private",
+        bot_type:    "smalltalk",
+        is_active:   false,
+        is_approved: false,
+        added_at:    new Date(),
+        updated_at:  new Date()
+      }], { onConflict: "id", ignoreDuplicates: true });
+      logger.info(`[Smalltalk] Neuer Channel registriert (wartet auf Freischaltung): ${chatId}`);
+    } catch (e) {
+      logger.warn("[Smalltalk] Register-Fehler:", e.message);
+    }
+  },
+
+  async _trackUsage(chatId, tokens, usd) {
+    try {
+      await supabase.rpc("increment_channel_usage", { p_id: chatId, p_tokens: tokens, p_usd: usd });
+    } catch {
+      // Fallback: direktes Update
+      const { data: ch } = await supabase.from("bot_channels").select("token_used, usd_spent").eq("id", chatId).maybeSingle().catch(() => ({ data: null }));
+      if (ch) {
+        await supabase.from("bot_channels").update({
+          token_used:    (ch.token_used || 0) + tokens,
+          usd_spent:     parseFloat(((ch.usd_spent || 0) + usd).toFixed(6)),
+          last_active_at: new Date()
+        }).eq("id", chatId).catch(() => {});
+      }
+    }
+  },
+
+  async _loadKB(text, categoryId) {
+    try {
+      const embService = require("../embeddingService");
       const { embedding } = await embService.generateEmbedding(text);
-      const { data } = await supabase.rpc('match_knowledge', {
-        query_embedding: embedding, match_threshold: 0.55, match_count: 3
-      });
-      const filtered = (data || []).filter(d => d.category_id === categoryId);
-      return filtered.map(d => d.content).join('\n\n').substring(0, 800);
-    } catch { return ''; }
+      const { data } = await supabase.rpc("match_knowledge", { query_embedding: embedding, match_threshold: 0.55, match_count: 3 });
+      return (data || []).filter(d => d.category_id === categoryId).map(d => d.content).join("\n\n").substring(0, 800);
+    } catch { return ""; }
   }
 };
 

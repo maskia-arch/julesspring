@@ -91,8 +91,9 @@ router.get('/traffic/sessions',       ctrl.getSessions);
 
 // ── Channels ──────────────────────────────────────────────────────────────
 const channelCtrl = require('../controllers/channelController');
-router.get('/channels',          channelCtrl.getChannels.bind(channelCtrl));
-router.put('/channels/:id',      channelCtrl.updateChannel.bind(channelCtrl));
-router.delete('/channels/:id',   channelCtrl.deleteChannel.bind(channelCtrl));
+router.get('/channels',                  channelCtrl.getChannels.bind(channelCtrl));
+router.put('/channels/:id',              channelCtrl.updateChannel.bind(channelCtrl));
+router.post('/channels/:id/reset-usage', channelCtrl.resetChannelUsage.bind(channelCtrl));
+router.delete('/channels/:id',           channelCtrl.deleteChannel.bind(channelCtrl));
 
 module.exports = router;

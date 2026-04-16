@@ -612,6 +612,11 @@ async function loadSmallTalkSettings(s) {
     if (el) el.value = s.smalltalk_max_tokens || 200;
     el = document.getElementById('smalltalk-temperature');
     if (el) el.value = s.smalltalk_temperature || 0.8;
+    el = document.getElementById('smalltalk-require-approval');
+    if (el) el.checked = s.smalltalk_require_approval !== false;
+    // Bot-Token nicht vorbelegen aus Sicherheitsgründen (nur Platzhalter wenn gesetzt)
+    el = document.getElementById('smalltalk-bot-token');
+    if (el && s.smalltalk_bot_token) el.placeholder = '●●●●● (gesetzt)';
 
     // KB-Kategorien in Dropdown laden
     var catSel = document.getElementById('smalltalk-kb-category');
@@ -625,14 +630,18 @@ async function loadSmallTalkSettings(s) {
 
 async function saveSmallTalkSettings() {
     var gv = function(id) { var el=document.getElementById(id); return el?el.value:null; };
-    var catId = gv('smalltalk-kb-category');
+    var catId    = gv('smalltalk-kb-category');
+    var botToken = gv('smalltalk-bot-token');
+    var reqApproval = document.getElementById('smalltalk-require-approval')?.checked ?? true;
     try {
         await api.request('/settings', 'POST', {
-            smalltalk_system_prompt:  gv('smalltalk-system-prompt'),
-            smalltalk_model:          gv('smalltalk-model') || 'deepseek-chat',
-            smalltalk_max_tokens:     parseInt(gv('smalltalk-max-tokens')) || 200,
-            smalltalk_temperature:    parseFloat(gv('smalltalk-temperature')) || 0.8,
-            smalltalk_kb_category_id: catId ? parseInt(catId) : null
+            smalltalk_system_prompt:   gv('smalltalk-system-prompt'),
+            smalltalk_model:           gv('smalltalk-model') || 'deepseek-chat',
+            smalltalk_max_tokens:      parseInt(gv('smalltalk-max-tokens')) || 200,
+            smalltalk_temperature:     parseFloat(gv('smalltalk-temperature')) || 0.8,
+            smalltalk_kb_category_id:  catId ? parseInt(catId) : null,
+            smalltalk_bot_token:       botToken || null,
+            smalltalk_require_approval: reqApproval
         });
         showToast('✅ Smalltalk-Einstellungen gespeichert!');
     } catch(e) { alert('Fehler: ' + e.message); }
@@ -644,33 +653,105 @@ async function loadChannels() {
     try {
         var channels = await api.request('/channels') || [];
         if (!channels.length) {
-            el.innerHTML = '<p style="color:#555;font-size:0.85rem;padding:8px;">Noch keine Channels erkannt.<br>Füge den Bot als Admin in deinen Channel/Gruppe ein.</p>';
+            el.innerHTML = '<p style="color:#555;font-size:0.85rem;padding:8px;">Noch keine Channels erkannt.<br>Füge den Bot als Admin hinzugefügt ein.</p>';
             return;
         }
-        el.innerHTML = channels.map(function(ch) {
-            var modeOpts = ['smalltalk','berater'].map(function(m) {
-                return '<option value="'+m+'"'+(ch.mode===m?' selected':'')+'>'+m+'</option>';
-            }).join('');
-            var activeChecked = ch.is_active ? 'checked' : '';
-            return '<div style="background:#111;border-radius:8px;padding:12px;margin-bottom:8px;border:1px solid #1e1e1e;">'+
-                '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">'+
-                    '<span style="font-size:1.1rem;">'+(ch.type==='channel'?'📢':'👥')+'</span>'+
-                    '<span style="font-weight:700;flex:1;">'+esc(ch.title||ch.id)+'</span>'+
-                    '<label style="display:flex;align-items:center;gap:4px;font-size:0.8rem;color:#64748b;">'+
-                        '<input type="checkbox" '+ activeChecked +' onchange="updateChannel('+ch.id+',{is_active:this.checked})" style="width:14px;height:14px;"> Aktiv'+
-                    '</label>'+
-                '</div>'+
-                '<div style="display:flex;gap:8px;align-items:center;">'+
-                    '<select onchange="updateChannel('+ch.id+',{mode:this.value})" style="flex:1;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;">'+modeOpts+'</select>'+
-                    '<input type="text" value="'+esc(ch.ai_command||'/ai')+'" placeholder="/ai" '+
-                        'onblur="updateChannel('+ch.id+',{ai_command:this.value})" '+
-                        'style="width:70px;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;text-align:center;">'+
-                    '<button onclick="deleteChannel('+ch.id+')" class="icon-btn">🗑</button>'+
-                '</div>'+
-                (ch.username ? '<div style="font-size:0.7rem;color:#555;margin-top:4px;">@'+esc(ch.username)+'</div>' : '')+
-            '</div>';
-        }).join('');
+        el.innerHTML = '';
+        channels.forEach(function(ch) {
+            var card = document.createElement('div');
+            card.style.cssText = 'background:#111;border-radius:8px;padding:12px;margin-bottom:8px;border:1px solid '+(ch.is_approved?'#14532d':'#3a1a1a')+';';
+
+            var tokenPct = ch.token_limit ? Math.min(100, Math.round((ch.token_used||0)/ch.token_limit*100)) : 0;
+            var barColor = tokenPct > 85 ? '#ef4444' : tokenPct > 60 ? '#f59e0b' : '#4ade80';
+
+            card.innerHTML =
+                '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
+                    '<span>'+(ch.type==='channel'?'📢':'👥')+'</span>' +
+                    '<span style="font-weight:700;flex:1;">'+esc(ch.title||ch.id)+'</span>' +
+                    (ch.is_approved
+                        ? '<span style="background:#14532d;color:#4ade80;font-size:0.68rem;padding:2px 6px;border-radius:4px;">✅ AKTIV</span>'
+                        : '<span style="background:#3a1a1a;color:#f87171;font-size:0.68rem;padding:2px 6px;border-radius:4px;">⏳ WARTEND</span>') +
+                '</div>' +
+
+                (ch.is_approved ? '' :
+                    '<button class="btn btn-success btn-sm ch-approve" data-id="'+ch.id+'" style="width:100%;margin-bottom:8px;">🔓 Freischalten</button>') +
+
+                '<div style="display:flex;gap:8px;margin-bottom:8px;">' +
+                    '<select class="ch-mode" data-id="'+ch.id+'" style="flex:1;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;">' +
+                        ['smalltalk','berater'].map(function(m){ return '<option value="'+m+'"'+(ch.mode===m?' selected':'')+'>'+m+'</option>'; }).join('') +
+                    '</select>' +
+                    '<input type="text" class="ch-cmd" data-id="'+ch.id+'" value="'+esc(ch.ai_command||'/ai')+'" placeholder="/ai" style="width:70px;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;text-align:center;">' +
+                '</div>' +
+
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;">' +
+                    '<div><label style="font-size:0.7rem;color:#64748b;">Token-Limit</label>' +
+                        '<input type="number" class="ch-tlimit" data-id="'+ch.id+'" value="'+(ch.token_limit||'')+'" placeholder="∞" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
+                    '<div><label style="font-size:0.7rem;color:#64748b;">USD-Limit</label>' +
+                        '<input type="number" step="0.01" class="ch-ulimit" data-id="'+ch.id+'" value="'+(ch.usd_limit||'')+'" placeholder="∞" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
+                '</div>' +
+
+                '<div style="background:#0d1117;border-radius:6px;padding:8px;margin-bottom:8px;font-size:0.75rem;">' +
+                    '<div style="display:flex;justify-content:space-between;margin-bottom:4px;">' +
+                        '<span style="color:#64748b;">Tokens:</span>' +
+                        '<span>'+((ch.token_used||0)).toLocaleString()+(ch.token_limit ? ' / '+ch.token_limit.toLocaleString() : '')+'</span></div>' +
+                    (ch.token_limit ? '<div style="height:4px;background:#1e1e1e;border-radius:2px;margin-bottom:4px;"><div style="height:100%;width:'+tokenPct+'%;background:'+barColor+';border-radius:2px;"></div></div>' : '') +
+                    '<div style="display:flex;justify-content:space-between;">' +
+                        '<span style="color:#64748b;">Kosten:</span>' +
+                        '<span style="color:#f59e0b;">$'+parseFloat(ch.usd_spent||0).toFixed(5)+(ch.usd_limit ? ' / $'+ch.usd_limit : '')+'</span></div>' +
+                '</div>' +
+
+                '<input type="text" class="ch-limitmsg" data-id="'+ch.id+'" value="'+esc(ch.limit_message||'')+'" placeholder="Limit-Meldung..." style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.75rem;margin-bottom:8px;">' +
+
+                '<div style="display:flex;gap:6px;">' +
+                    '<button class="btn btn-secondary btn-sm ch-reset" data-id="'+ch.id+'" style="flex:1;">↺ Reset</button>' +
+                    '<button class="icon-btn ch-delete" data-id="'+ch.id+'">🗑</button>' +
+                '</div>' +
+                (ch.username ? '<div style="font-size:0.68rem;color:#555;margin-top:4px;">@'+esc(ch.username)+'</div>' : '');
+
+            el.appendChild(card);
+        });
+
+        // Event delegation
+        el.addEventListener('click', function(e) {
+            var approve = e.target.closest('.ch-approve');
+            var reset   = e.target.closest('.ch-reset');
+            var del     = e.target.closest('.ch-delete');
+            if (approve) approveChannel(approve.dataset.id);
+            if (reset)   resetChannelUsage(reset.dataset.id);
+            if (del)     deleteChannel(del.dataset.id);
+        });
+        el.addEventListener('change', function(e) {
+            var mode = e.target.closest('.ch-mode');
+            if (mode) updateChannel(mode.dataset.id, { mode: mode.value });
+        });
+        el.addEventListener('blur', function(e) {
+            var cmd  = e.target.closest('.ch-cmd');
+            var tl   = e.target.closest('.ch-tlimit');
+            var ul   = e.target.closest('.ch-ulimit');
+            var lm   = e.target.closest('.ch-limitmsg');
+            if (cmd) updateChannel(cmd.dataset.id,  { ai_command:    cmd.value });
+            if (tl)  updateChannel(tl.dataset.id,   { token_limit:   tl.value  });
+            if (ul)  updateChannel(ul.dataset.id,   { usd_limit:     ul.value  });
+            if (lm)  updateChannel(lm.dataset.id,   { limit_message: lm.value  });
+        }, true);
+
     } catch(e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(e.message)+'</p>'; }
+}
+async function approveChannel(id) {
+    try {
+        await api.request('/channels/' + id, 'PUT', { is_approved: true, is_active: true });
+        showToast('✅ Channel freigeschaltet!');
+        loadChannels();
+    } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+async function resetChannelUsage(id) {
+    if (!confirm('Verbrauch zurücksetzen?')) return;
+    try {
+        await api.request('/channels/' + id + '/reset-usage', 'POST');
+        showToast('✅ Verbrauch zurückgesetzt');
+        loadChannels();
+    } catch(e) { alert('Fehler: ' + e.message); }
 }
 
 async function updateChannel(id, patch) {

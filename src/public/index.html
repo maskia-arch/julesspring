@@ -513,6 +513,15 @@
                       </div>
                     </div>
                     <div class="form-group">
+                      <label>Smalltalk Bot Token (von BotFather)</label>
+                      <input type="password" id="smalltalk-bot-token" placeholder="1234567890:AAF..." style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.875rem;">
+                      <p class="hint">Erstelle einen neuen Bot via @BotFather und trage den Token hier ein. Webhook wird automatisch registriert.</p>
+                    </div>
+                    <div class="form-group">
+                      <label><input type="checkbox" id="smalltalk-require-approval" style="margin-right:6px;">Manuelle Freischaltung erforderlich</label>
+                      <p class="hint">Wenn aktiv: jeder neue Chat/Channel muss im Dashboard freigeschaltet werden bevor die KI antwortet.</p>
+                    </div>
+                    <div class="form-group">
                       <label>Smalltalk Wissenskategorie</label>
                       <select id="smalltalk-kb-category" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
                         <option value="">– Keine –</option>
@@ -529,8 +538,8 @@
     </div>
 </div>
 
-<script src="js/api.js?v=140"></script>
-<script src="js/dashboard.js?v=140"></script>
+<script src="js/api.js?v=140b"></script>
+<script src="js/dashboard.js?v=140b"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });

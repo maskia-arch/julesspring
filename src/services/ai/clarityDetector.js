@@ -11,8 +11,8 @@
  *  - Themen-Mismatch: Frage enthält Begriff X, Antwort handelt von Y
  */
 
-const supabase = require('../config/supabase');
-const logger   = require('../utils/logger');
+const supabase = require('../../config/supabase');
+const logger   = require('../../utils/logger');
 
 // Phrasen die auf Unsicherheit hindeuten
 const HEDGE_PATTERNS = [
