@@ -96,6 +96,9 @@ router.post('/telegram', (req, res) => {
         return;
       }
 
+      // Typing-Indikator sofort zeigen (UX)
+      telegramService.sendTypingAction(chatId).catch(() => {});
+
       await messageProcessor.handle({
         platform: 'telegram',
         chatId,
@@ -107,7 +110,12 @@ router.post('/telegram', (req, res) => {
         }
       });
     } catch (err) {
-      console.error('[Webhook/Telegram]', err.message);
+      logger.error('[Webhook/Telegram]', err.message);
+      // Fehler dem User mitteilen damit er weiß dass er es nochmal versuchen soll
+      try {
+        await telegramService.sendMessage(chatId,
+          'Es gab einen kurzen Fehler. Bitte versuche es in einem Moment erneut.');
+      } catch (_) {}
     }
   });
 });

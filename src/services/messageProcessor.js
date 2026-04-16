@@ -121,9 +121,9 @@ const messageProcessor = {
       new Promise((_, reject) => setTimeout(() => reject(new Error('KI-Timeout')), 60000))
     ]);
 
-    // 9. Telegram senden
+    // 9. Antwort zuverlässig zustellen (mit Retry + Cache)
     if (platform === 'telegram') {
-      await telegramService.sendMessage(chatId, aiResult.text);
+      await this._sendReliable(chatId, aiResult.text);
     }
 
     logger.info(`[MP] Gesamt: ${Date.now()-t0}ms | in:${aiResult.promptTokens} out:${aiResult.completionTokens} cached:${aiResult.cachedTokens||0}`);
@@ -307,6 +307,46 @@ const messageProcessor = {
         dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1]
           : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
     return dp[m][n];
+  },
+
+  // ── Zuverlässige Zustellung: Retry-Logik + Deduplizierung ──────────────
+  _pendingDeliveries: new Map(),  // chatId → { text, attempts, ts }
+
+  async _sendReliable(chatId, text, maxAttempts = 3) {
+    const key = chatId;
+
+    // Deduplizierung: gleiche Antwort nicht doppelt senden (< 5s)
+    const prev = this._pendingDeliveries.get(key);
+    if (prev && prev.text === text && Date.now() - prev.ts < 5000) {
+      logger.info(`[MP] Delivery dedup für ${chatId}`);
+      return;
+    }
+
+    this._pendingDeliveries.set(key, { text, attempts: 0, ts: Date.now() });
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await telegramService.sendMessage(chatId, text);
+        this._pendingDeliveries.delete(key);
+        return; // Erfolgreich
+      } catch (e) {
+        const isRetryable = !e.message?.includes('blocked') &&
+                            !e.message?.includes('deactivated') &&
+                            !e.message?.includes('chat not found');
+
+        logger.warn(`[MP] Telegram-Zustellung Versuch ${attempt}/${maxAttempts} fehlgeschlagen (${chatId}): ${e.message}`);
+
+        if (!isRetryable || attempt === maxAttempts) {
+          // Nicht wiederholbar oder letzter Versuch → pending entry für Monitoring
+          this._pendingDeliveries.set(key, { text, attempts: attempt, ts: Date.now(), failed: true });
+          logger.error(`[MP] Zustellung endgültig fehlgeschlagen für ${chatId}`);
+          return;
+        }
+
+        // Exponentielles Backoff: 1s, 2s
+        await new Promise(r => setTimeout(r, attempt * 1000));
+      }
+    }
   },
 
   _updateChatPreview(chatId, message, role) {

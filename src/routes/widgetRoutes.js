@@ -246,7 +246,7 @@ router.post('/message', async (req, res) => {
       }
     });
 
-    res.json({ reply: reply || 'Ich verarbeite deine Anfrage...', type: 'ai' });
+    res.json({ reply: reply || 'Bitte sende deine Nachricht erneut.', type: 'ai' });
   } catch (err) {
     logger.error('[Widget/message]', err.message);
     res.status(500).json({ error: 'Nachricht konnte nicht verarbeitet werden' });
