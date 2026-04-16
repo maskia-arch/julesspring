@@ -23,11 +23,11 @@ const BERATER_TRIGGERS = /\b(esim|tarif|preis|gb|daten|roaming|kaufen|bestell|si
 
 const smalltalkAgent = {
 
-  async handle({ chatId, text, settings }) {
+  async handle({ chatId, text, settings, channelRecord = null }) {
     const s = settings || {};
 
     // 1. Channel-Freischaltung prüfen
-    const channel = await this._getChannel(String(chatId));
+    const channel = channelRecord || await this._getChannel(String(chatId));
     if (!channel) {
       // Neuer Channel – in DB eintragen, warten auf Freischaltung
       await this._registerNewChannel(chatId, text);
@@ -50,15 +50,19 @@ const smalltalkAgent = {
     }
 
     // 4. KI-Antwort generieren
-    const systemPrompt = s.smalltalk_system_prompt || DEFAULT_PROMPT;
+    // Channel-spezifischer System-Prompt hat Vorrang vor globalem
+    const systemPrompt = channel?.system_prompt || s.smalltalk_system_prompt || DEFAULT_PROMPT;
     const model        = s.smalltalk_model     || "deepseek-chat";
     const maxTokens    = parseInt(s.smalltalk_max_tokens) || 200;
     const temperature  = parseFloat(s.smalltalk_temperature) || 0.8;
 
+    // Per-Channel KB laden (semantische Suche in channel_knowledge Tabelle)
     let kbContext = "";
-    if (s.smalltalk_kb_category_id) {
-      kbContext = await this._loadKB(text, s.smalltalk_kb_category_id);
-    }
+    try {
+      const channelKB = require("./channelKnowledgeEnricher");
+      const results = await channelKB.search(String(chatId), text, 0.50, 4);
+      if (results.length) kbContext = results.join("\n\n").substring(0, 1000);
+    } catch (_) {}
 
     const messages = [
       { role: "system", content: systemPrompt + (kbContext ? "\n\nKontext:\n" + kbContext : "") },
@@ -145,13 +149,9 @@ const smalltalkAgent = {
     }
   },
 
-  async _loadKB(text, categoryId) {
-    try {
-      const embService = require("../embeddingService");
-      const { embedding } = await embService.generateEmbedding(text);
-      const { data } = await supabase.rpc("match_knowledge", { query_embedding: embedding, match_threshold: 0.55, match_count: 3 });
-      return (data || []).filter(d => d.category_id === categoryId).map(d => d.content).join("\n\n").substring(0, 800);
-    } catch { return ""; }
+  async _loadKB(channelId) {
+    // Per-channel KB laden (isoliert vom Berater)
+    return ""; // Wird in handle() via channelKnowledgeEnricher geladen
   }
 };
 

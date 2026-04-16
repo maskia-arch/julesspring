@@ -683,6 +683,11 @@ async function loadChannels() {
                     '<input type="text" class="ch-cmd" data-id="'+ch.id+'" value="'+esc(ch.ai_command||'/ai')+'" placeholder="/ai" style="width:70px;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;text-align:center;">' +
                 '</div>' +
 
+                '<div style="margin-bottom:8px;">'+
+                    '<label style="font-size:0.7rem;color:#64748b;display:block;margin-bottom:3px;">Channel System-Prompt (leer = global)</label>'+
+                    '<textarea class="ch-sysprompt" data-id="'+ch.id+'" rows="3" placeholder="Du bist [Name], der freundliche Bot von [Channel]…" style="width:100%;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.75rem;resize:vertical;">'+esc(ch.system_prompt||'')+'</textarea>'+
+                '</div>'+
+                '<button class="btn btn-secondary btn-sm ch-kb" data-id="'+ch.id+'" style="width:100%;margin-bottom:8px;">📚 Wissen verwalten ('+(ch.kb_entry_count||0)+' Einträge)</button>'+
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;">' +
                     '<div><label style="font-size:0.7rem;color:#64748b;">Token-Limit</label>' +
                         '<input type="number" class="ch-tlimit" data-id="'+ch.id+'" value="'+(ch.token_limit||'')+'" placeholder="∞" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
@@ -716,27 +721,134 @@ async function loadChannels() {
             var approve = e.target.closest('.ch-approve');
             var reset   = e.target.closest('.ch-reset');
             var del     = e.target.closest('.ch-delete');
+            var kb      = e.target.closest('.ch-kb');
             if (approve) approveChannel(approve.dataset.id);
             if (reset)   resetChannelUsage(reset.dataset.id);
             if (del)     deleteChannel(del.dataset.id);
+            if (kb)      openChannelKB(kb.dataset.id, kb.textContent);
         });
         el.addEventListener('change', function(e) {
             var mode = e.target.closest('.ch-mode');
             if (mode) updateChannel(mode.dataset.id, { mode: mode.value });
         });
         el.addEventListener('blur', function(e) {
-            var cmd  = e.target.closest('.ch-cmd');
-            var tl   = e.target.closest('.ch-tlimit');
-            var ul   = e.target.closest('.ch-ulimit');
-            var lm   = e.target.closest('.ch-limitmsg');
-            if (cmd) updateChannel(cmd.dataset.id,  { ai_command:    cmd.value });
-            if (tl)  updateChannel(tl.dataset.id,   { token_limit:   tl.value  });
-            if (ul)  updateChannel(ul.dataset.id,   { usd_limit:     ul.value  });
-            if (lm)  updateChannel(lm.dataset.id,   { limit_message: lm.value  });
+            var cmd = e.target.closest('.ch-cmd');
+            var tl  = e.target.closest('.ch-tlimit');
+            var ul  = e.target.closest('.ch-ulimit');
+            var lm  = e.target.closest('.ch-limitmsg');
+            var sp  = e.target.closest('.ch-sysprompt');
+            if (cmd) updateChannel(cmd.dataset.id, { ai_command:    cmd.value });
+            if (tl)  updateChannel(tl.dataset.id,  { token_limit:   tl.value  });
+            if (ul)  updateChannel(ul.dataset.id,  { usd_limit:     ul.value  });
+            if (lm)  updateChannel(lm.dataset.id,  { limit_message: lm.value  });
+            if (sp)  updateChannel(sp.dataset.id,  { system_prompt: sp.value  });
+        }, true);
+
+        // KB Button click
+        el.addEventListener('click', function(e) {
+            var kb = e.target.closest('.ch-kb');
+            if (kb) openChannelKB(kb.dataset.id, kb.closest('[data-id]')?.querySelector('.ch-kb')?.textContent || '');
         }, true);
 
     } catch(e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(e.message)+'</p>'; }
 }
+
+// ── Channel KB Management ─────────────────────────────────────────────────────
+
+var _currentKBChannel = null;
+
+function closeChannelKB() { var m=document.getElementById('channel-kb-modal'); if(m) m.style.display='none'; }
+
+async function openChannelKB(channelId, btnText) {
+    _currentKBChannel = channelId;
+    var modal = document.getElementById('channel-kb-modal');
+    if (!modal) {
+        modal = document.createElement('div');
+        modal.id = 'channel-kb-modal';
+        modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+        document.body.appendChild(modal);
+    }
+
+    modal.innerHTML =
+        '<div style="background:#0d1117;border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:600px;max-height:85vh;overflow-y:auto;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+                '<h3 style="color:white;font-size:1rem;margin:0;">📚 Channel Wissen</h3>' +
+                '<button onclick="closeChannelKB()" style="background:#333;border:none;color:white;border-radius:5px;padding:4px 10px;cursor:pointer;">✕</button>' +
+            '</div>' +
+            '<div style="margin-bottom:12px;">' +
+                '<textarea id="ch-kb-new-content" rows="4" placeholder="Neues Wissen eingeben (wird von OpenAI aufbereitet und kategorisiert)…" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.85rem;resize:vertical;"></textarea>' +
+                '<button onclick="addChannelKBEntry()" class="btn btn-success btn-sm" style="width:100%;margin-top:6px;">🤖 Hinzufügen (via OpenAI)</button>' +
+            '</div>' +
+            '<div id="ch-kb-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>' +
+        '</div>';
+
+    modal.style.display = 'flex';
+    await loadChannelKBEntries(channelId);
+}
+
+async function loadChannelKBEntries(channelId) {
+    var list = document.getElementById('ch-kb-list');
+    if (!list) return;
+    try {
+        var entries = await api.request('/channels/' + channelId + '/kb') || [];
+        if (!entries.length) {
+            list.innerHTML = '<p style="color:#555;font-size:0.85rem;">Keine Einträge. Füge Wissen über das Formular hinzu.</p>';
+            return;
+        }
+        // Gruppiert nach Kategorie
+        var byCat = {};
+        entries.forEach(function(e) {
+            if (!byCat[e.category]) byCat[e.category] = [];
+            byCat[e.category].push(e);
+        });
+        list.innerHTML = Object.keys(byCat).map(function(cat) {
+            return '<div style="margin-bottom:12px;">' +
+                '<div style="font-size:0.7rem;color:#60a5fa;text-transform:uppercase;letter-spacing:1px;margin-bottom:4px;">📁 ' + esc(cat) + '</div>' +
+                byCat[cat].map(function(e) {
+                    return '<div style="background:#111;border-radius:6px;padding:8px;margin-bottom:4px;display:flex;gap:8px;align-items:flex-start;">' +
+                        '<div style="flex:1;">' +
+                            (e.title ? '<div style="font-size:0.78rem;font-weight:700;color:#e2e8f0;margin-bottom:2px;">'+esc(e.title)+'</div>' : '') +
+                            '<div style="font-size:0.72rem;color:#94a3b8;">' + esc((e.content||'').substring(0,120)) + (e.content.length > 120 ? '…' : '') + '</div>' +
+                        '</div>' +
+                        '<button class="ch-kb-del-entry icon-btn" data-cid="'+channelId+'" data-eid="'+e.id+'" style="flex-shrink:0;font-size:0.7rem;">🗑</button>' +
+                    '</div>';
+                }).join('') +
+            '</div>';
+        }).join('');
+    } catch(e) { list.innerHTML = '<p style="color:#ef4444;">'+esc(e.message)+'</p>'; }
+
+    // Event delegation for delete buttons
+    if (list) {
+        list.onclick = function(e) {
+            var btn = e.target.closest('.ch-kb-del-entry');
+            if (btn) deleteChannelKBEntry(btn.dataset.cid, btn.dataset.eid);
+        };
+    }
+}
+
+async function addChannelKBEntry() {
+    var ta = document.getElementById('ch-kb-new-content');
+    if (!ta || !ta.value.trim()) return;
+    var content = ta.value.trim();
+    showToast('⏳ OpenAI verarbeitet Eintrag…');
+    try {
+        await api.request('/channels/' + _currentKBChannel + '/kb', 'POST', { content });
+        ta.value = '';
+        showToast('✅ Eintrag hinzugefügt!');
+        await loadChannelKBEntries(_currentKBChannel);
+        loadChannels(); // KB-Zähler aktualisieren
+    } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+async function deleteChannelKBEntry(channelId, entryId) {
+    if (!confirm('Eintrag löschen?')) return;
+    try {
+        await api.request('/channels/' + channelId + '/kb/' + entryId, 'DELETE');
+        await loadChannelKBEntries(channelId);
+        loadChannels();
+    } catch(e) { alert('Fehler: ' + e.message); }
+}
+
 async function approveChannel(id) {
     try {
         await api.request('/channels/' + id, 'PUT', { is_approved: true, is_active: true });

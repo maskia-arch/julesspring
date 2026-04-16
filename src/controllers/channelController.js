@@ -73,6 +73,33 @@ const channelController = {
     } catch (e) { logger.warn("[Channel] Register:", e.message); }
   },
 
+  // ── Channel-KB Endpoints ─────────────────────────────────────────────────
+  async getChannelKB(req, res, next) {
+    try {
+      const channelKB = require("../services/ai/channelKnowledgeEnricher");
+      const entries = await channelKB.getEntries(req.params.id);
+      res.json(entries);
+    } catch (e) { next(e); }
+  },
+
+  async addChannelKBEntry(req, res, next) {
+    try {
+      const { content, source } = req.body;
+      if (!content) return res.status(400).json({ error: "Inhalt fehlt" });
+      const channelKB = require("../services/ai/channelKnowledgeEnricher");
+      const saved = await channelKB.addEntry(req.params.id, content, source || "manual");
+      res.json({ success: true, saved });
+    } catch (e) { next(e); }
+  },
+
+  async deleteChannelKBEntry(req, res, next) {
+    try {
+      const channelKB = require("../services/ai/channelKnowledgeEnricher");
+      await channelKB.deleteEntry(req.params.id, req.params.entryId);
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
   _channelCache: {},
   async getChannelSettings(chatId) {
     const c = this._channelCache[chatId];
