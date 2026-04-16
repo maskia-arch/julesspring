@@ -97,6 +97,14 @@ router.post('/channels/:id/reset-usage',         channelCtrl.resetChannelUsage.b
 router.get('/channels/:id/kb',                   channelCtrl.getChannelKB.bind(channelCtrl));
 router.post('/channels/:id/kb',                  channelCtrl.addChannelKBEntry.bind(channelCtrl));
 router.delete('/channels/:id/kb/:entryId',       channelCtrl.deleteChannelKBEntry.bind(channelCtrl));
-router.delete('/channels/:id',           channelCtrl.deleteChannel.bind(channelCtrl));
+router.delete('/channels/:id',              channelCtrl.deleteChannel.bind(channelCtrl));
+router.put('/channels/:id/ai',              channelCtrl.toggleAI.bind(channelCtrl));
+// Scheduled Messages
+router.get('/channels/:id/schedule',        channelCtrl.getScheduledMessages.bind(channelCtrl));
+router.post('/channels/:id/schedule',       channelCtrl.createScheduledMessage.bind(channelCtrl));
+router.delete('/channels/:id/schedule/:msgId', channelCtrl.deleteScheduledMessage.bind(channelCtrl));
+// Safelist
+router.get('/safelist',                     channelCtrl.getSafelistReviews.bind(channelCtrl));
+router.post('/safelist/:id/review',         channelCtrl.reviewSafelist.bind(channelCtrl));
 
 module.exports = router;

@@ -707,7 +707,29 @@ async function loadChannels() {
 
                 '<input type="text" class="ch-limitmsg" data-id="'+ch.id+'" value="'+esc(ch.limit_message||'')+'" placeholder="Limit-Meldung..." style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.75rem;margin-bottom:8px;">' +
 
-                '<div style="display:flex;gap:6px;">' +
+                // AI-Feature-Sektion (ausgegraut bis aktiviert)
+                '<div style="border-top:1px solid #1e3a5f;margin-top:10px;padding-top:10px;">' +
+                    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
+                        '<span style="font-size:0.75rem;font-weight:700;color:'+(ch.ai_enabled?'#60a5fa':'#64748b')+';">' +
+                            (ch.ai_enabled ? '🤖 KI-Features AKTIV' : '🔒 KI-Features (gesperrt)') +
+                        '</span>' +
+                        '<button class="btn btn-sm ch-ai-toggle" data-id="'+ch.id+'" data-ai="'+(ch.ai_enabled?'1':'0')+'" ' +
+                            'style="padding:3px 8px;font-size:0.7rem;background:'+(ch.ai_enabled?'#14532d':'#1e3a5f')+';color:'+(ch.ai_enabled?'#4ade80':'#94a3b8')+';border:none;border-radius:4px;cursor:pointer;">' +
+                            (ch.ai_enabled ? '✅ Deaktivieren' : '🔓 Aktivieren') +
+                        '</button>' +
+                    '</div>' +
+                    '<div style="opacity:'+(ch.ai_enabled?'1':'0.35')+';pointer-events:'+(ch.ai_enabled?'auto':'none')+'">' +
+                        '<button class="btn btn-secondary btn-sm ch-kb" data-id="'+ch.id+'" style="width:100%;margin-bottom:5px;">📚 Wissen ('+(ch.kb_entry_count||0)+' Einträge)</button>' +
+                    '</div>' +
+                '</div>' +
+
+                // Scheduled Messages + Safelist
+                '<div style="display:flex;gap:6px;margin-top:6px;">' +
+                    '<button class="btn btn-secondary btn-sm ch-schedule" data-id="'+ch.id+'" style="flex:1;">⏰ Geplant</button>' +
+                    '<button class="btn btn-secondary btn-sm ch-safelist" data-id="'+ch.id+'" style="flex:1;opacity:'+(ch.ai_enabled?'1':'0.4')+';pointer-events:'+(ch.ai_enabled?'auto':'none')+';">🛡 Safelist</button>' +
+                '</div>' +
+
+                '<div style="display:flex;gap:6px;margin-top:6px;">' +
                     '<button class="btn btn-secondary btn-sm ch-reset" data-id="'+ch.id+'" style="flex:1;">↺ Reset</button>' +
                     '<button class="icon-btn ch-delete" data-id="'+ch.id+'">🗑</button>' +
                 '</div>' +
@@ -718,6 +740,18 @@ async function loadChannels() {
 
         // Event delegation
         el.addEventListener('click', function(e) {
+            var aiTog   = e.target.closest('.ch-ai-toggle');
+            var sched   = e.target.closest('.ch-schedule');
+            var safeEl  = e.target.closest('.ch-safelist');
+            if (aiTog) {
+                var enable = aiTog.dataset.ai !== '1';
+                if (!confirm(enable ? 'KI-Features aktivieren?' : 'KI-Features deaktivieren?')) return;
+                api.request('/channels/' + aiTog.dataset.id + '/ai', 'PUT', { ai_enabled: enable })
+                   .then(function(){ showToast(enable ? '🤖 KI aktiviert!' : '🔒 KI deaktiviert'); loadChannels(); })
+                   .catch(function(e){ alert(e.message); });
+            }
+            if (sched)  openScheduleModal(sched.dataset.id);
+            if (safeEl) openSafelistModal(safeEl.dataset.id);
             var approve = e.target.closest('.ch-approve');
             var reset   = e.target.closest('.ch-reset');
             var del     = e.target.closest('.ch-delete');
@@ -756,6 +790,147 @@ async function loadChannels() {
 // ── Channel KB Management ─────────────────────────────────────────────────────
 
 var _currentKBChannel = null;
+
+
+// ── Scheduled Messages Modal ──────────────────────────────────────────────────
+
+async function openScheduleModal(channelId) {
+    var modal = _getOrCreateModal('schedule-modal');
+    modal.innerHTML =
+        '<div style="background:#0d1117;border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:600px;max-height:85vh;overflow-y:auto;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+                '<h3 style="color:white;font-size:1rem;margin:0;">⏰ Geplante Nachrichten</h3>' +
+                '<button onclick="_closeModal(\"schedule-modal\")" style="background:#333;border:none;color:white;border-radius:5px;padding:4px 10px;cursor:pointer;">✕</button>' +
+            '</div>' +
+            '<div style="background:#111;border-radius:8px;padding:12px;margin-bottom:12px;">' +
+                '<textarea id="sched-msg" rows="3" placeholder="Nachricht…" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.85rem;resize:vertical;margin-bottom:6px;"></textarea>' +
+                '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">' +
+                    '<div><label style="font-size:0.7rem;color:#64748b;">Datum/Zeit</label>' +
+                        '<input type="datetime-local" id="sched-dt" style="width:100%;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
+                    '<div><label style="font-size:0.7rem;color:#64748b;">Cron (Wdh.)</label>' +
+                        '<input type="text" id="sched-cron" placeholder="0 9 * * 1 = Mo 09:00" style="width:100%;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
+                '</div>' +
+                '<input type="text" id="sched-photo" placeholder="Foto-URL oder Telegram file_id (optional)" style="width:100%;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;margin-bottom:6px;">' +
+                '<label style="display:flex;align-items:center;gap:6px;font-size:0.8rem;color:#94a3b8;margin-bottom:8px;">' +
+                    '<input type="checkbox" id="sched-repeat"> Wiederholen (benötigt Cron)</label>' +
+                '<button onclick="addScheduledMsg(\''+channelId+'\')" class="btn btn-success btn-sm" style="width:100%;">+ Hinzufügen</button>' +
+            '</div>' +
+            '<div id="sched-list-' + channelId + '"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>' +
+        '</div>';
+    modal.style.display = 'flex';
+    await loadScheduledMsgs(channelId);
+}
+
+async function loadScheduledMsgs(channelId) {
+    var list = document.getElementById('sched-list-' + channelId);
+    if (!list) return;
+    var msgs = await api.request('/channels/' + channelId + '/schedule').catch(function(){ return []; });
+    if (!msgs.length) { list.innerHTML = '<p style="color:#555;font-size:0.85rem;">Keine geplanten Nachrichten.</p>'; return; }
+    // Delegation for delete buttons
+    list.onclick = function(e) {
+        var btn = e.target.closest('.sched-del-btn');
+        if (btn) delScheduledMsg(btn.dataset.cid, btn.dataset.mid);
+    };
+    list.innerHTML = msgs.map(function(m) {
+        var dt = m.next_run_at ? new Date(m.next_run_at).toLocaleString('de-DE') : '–';
+        return '<div style="background:#111;border-radius:6px;padding:8px;margin-bottom:4px;display:flex;gap:8px;align-items:flex-start;">' +
+            '<div style="flex:1;">' +
+                '<div style="font-size:0.78rem;color:#e2e8f0;">' + esc(m.message.substring(0,80)) + (m.message.length>80?'…':'') + '</div>' +
+                '<div style="font-size:0.68rem;color:#64748b;">📅 ' + dt + (m.repeat?' · 🔁 '+esc(m.cron_expr||''):'') + '</div>' +
+            '</div>' +
+            '<button class="sched-del-btn icon-btn" data-cid="'+channelId+'" data-mid="'+m.id+'" style="font-size:0.7rem;">🗑</button>' +
+        '</div>';
+    }).join('');
+}
+
+async function addScheduledMsg(channelId) {
+    var msg = document.getElementById('sched-msg')?.value.trim();
+    var dt  = document.getElementById('sched-dt')?.value;
+    var cron = document.getElementById('sched-cron')?.value.trim();
+    var photo = document.getElementById('sched-photo')?.value.trim();
+    var repeat = document.getElementById('sched-repeat')?.checked;
+    if (!msg) { alert('Nachricht eingeben'); return; }
+    try {
+        await api.request('/channels/' + channelId + '/schedule', 'POST', {
+            message: msg, cron_expr: cron || null, repeat,
+            next_run_at: dt ? new Date(dt).toISOString() : null,
+            photo_url: photo || null
+        });
+        showToast('✅ Geplant!');
+        document.getElementById('sched-msg').value = '';
+        await loadScheduledMsgs(channelId);
+    } catch(e) { alert(e.message); }
+}
+
+async function delScheduledMsg(channelId, msgId) {
+    if (!confirm('Löschen?')) return;
+    await api.request('/channels/'+channelId+'/schedule/'+msgId, 'DELETE').catch(function(){});
+    await loadScheduledMsgs(channelId);
+}
+
+// ── Safelist Modal ────────────────────────────────────────────────────────────
+
+async function openSafelistModal(channelId) {
+    var modal = _getOrCreateModal('safelist-modal');
+    var reviews = await api.request('/safelist?channel_id=' + channelId).catch(function(){ return []; });
+
+    modal.innerHTML =
+        '<div style="background:#0d1117;border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:600px;max-height:85vh;overflow-y:auto;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+                '<h3 style="color:white;font-size:1rem;margin:0;">🛡 Safelist Reviews</h3>' +
+                '<button onclick="_closeModal(\"safelist-modal\")" style="background:#333;border:none;color:white;border-radius:5px;padding:4px 10px;cursor:pointer;">✕</button>' +
+            '</div>' +
+            (!reviews.length
+                ? '<p style="color:#555;font-size:0.85rem;">Keine offenen Reviews.</p>'
+                : reviews.map(function(r) {
+                    var emoji = r.list_type==='safe' ? '✅' : '⚠️';
+                    return '<div style="background:#111;border-radius:8px;padding:12px;margin-bottom:8px;">' +
+                        '<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">' +
+                            emoji + ' <b style="color:#e2e8f0;">@' + esc(r.username||r.user_id||'?') + '</b>' +
+                            '<span style="background:#1e3a5f;color:#60a5fa;font-size:0.65rem;padding:1px 5px;border-radius:3px;margin-left:auto;">' + esc(r.list_type) + '</span>' +
+                        '</div>' +
+                        '<div style="font-size:0.78rem;color:#94a3b8;margin-bottom:8px;">' + esc(r.summary||r.feedback_text||'') + '</div>' +
+                        '<div style="display:flex;gap:6px;">' +
+                            '<button class="safe-approve-btn btn btn-success btn-sm" data-id="'+r.id+'" data-lt="'+r.list_type+'" style="flex:1;">✅ Bestätigen</button>' +
+                            '<button class="safe-reject-btn btn btn-secondary btn-sm" data-id="'+r.id+'" style="flex:1;">❌ Ablehnen</button>' +
+                        '</div>' +
+                    '</div>';
+                }).join('')) +
+        '</div>';
+    modal.style.display = 'flex';
+    // Event delegation
+    modal.onclick = function(e) {
+        var approveBtn = e.target.closest('.safe-approve-btn');
+        var rejectBtn  = e.target.closest('.safe-reject-btn');
+        if (approveBtn) reviewSafelist(approveBtn.dataset.id, 'approve', approveBtn.dataset.lt);
+        if (rejectBtn)  reviewSafelist(rejectBtn.dataset.id, 'reject', null);
+    };
+}
+
+async function reviewSafelist(id, action, listType) {
+    try {
+        await api.request('/safelist/' + id + '/review', 'POST', { action, list_type: listType });
+        showToast(action === 'approve' ? '✅ Bestätigt!' : '❌ Abgelehnt');
+        document.getElementById('safelist-modal').style.display = 'none';
+    } catch(e) { alert(e.message); }
+}
+
+function _getOrCreateModal(id) {
+    var m = document.getElementById(id);
+    if (!m) {
+        m = document.createElement('div');
+        m.id = id;
+        m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:99999;display:flex;align-items:flex-end;justify-content:center;';
+        document.body.appendChild(m);
+    }
+    m.style.display = 'flex';
+    return m;
+}
+
+function _closeModal(id) {
+    var m = document.getElementById(id);
+    if (m) m.style.display = 'none';
+}
 
 function closeChannelKB() { var m=document.getElementById('channel-kb-modal'); if(m) m.style.display='none'; }
 

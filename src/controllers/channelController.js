@@ -73,6 +73,78 @@ const channelController = {
     } catch (e) { logger.warn("[Channel] Register:", e.message); }
   },
 
+  // ── Safelist Endpoints ───────────────────────────────────────────────────
+  async getSafelistReviews(req, res, next) {
+    try {
+      const safelistService = require("../services/adminHelper/safelistService");
+      const data = await safelistService.getPendingReviews(req.query.channel_id || null);
+      res.json(data);
+    } catch (e) { next(e); }
+  },
+
+  async reviewSafelist(req, res, next) {
+    try {
+      const { action, list_type } = req.body;
+      const safelistService = require("../services/adminHelper/safelistService");
+      if (action === "approve") {
+        const data = await safelistService.approve(req.params.id, req.user?.id || 0, list_type);
+        res.json({ success: true, data });
+      } else {
+        await safelistService.reject(req.params.id, req.user?.id || 0);
+        res.json({ success: true });
+      }
+    } catch (e) { next(e); }
+  },
+
+  // ── Scheduled Messages ─────────────────────────────────────────────────────
+  async getScheduledMessages(req, res, next) {
+    try {
+      const { data } = await require("../config/supabase").from("scheduled_messages")
+        .select("*").eq("channel_id", req.params.id).order("next_run_at");
+      res.json(data || []);
+    } catch (e) { next(e); }
+  },
+
+  async createScheduledMessage(req, res, next) {
+    try {
+      const { message, cron_expr, repeat, next_run_at, photo_url } = req.body;
+      if (!message) return res.status(400).json({ error: "Nachricht fehlt" });
+      const { data } = await require("../config/supabase").from("scheduled_messages").insert([{
+        channel_id:  req.params.id,
+        message,     cron_expr: cron_expr || null,
+        repeat:      !!repeat,
+        next_run_at: next_run_at || null,
+        photo_url:   photo_url || null,
+        is_active:   true
+      }]).select().single();
+      res.json(data);
+    } catch (e) { next(e); }
+  },
+
+  async deleteScheduledMessage(req, res, next) {
+    try {
+      await require("../config/supabase").from("scheduled_messages")
+        .delete().eq("id", req.params.msgId).eq("channel_id", req.params.id);
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  // ── AI Toggle ─────────────────────────────────────────────────────────────
+  async toggleAI(req, res, next) {
+    try {
+      const { ai_enabled, safelist_enabled, welcome_msg, goodbye_msg } = req.body;
+      const patch = { updated_at: new Date() };
+      if (ai_enabled         !== undefined) patch.ai_enabled        = ai_enabled;
+      if (safelist_enabled   !== undefined) patch.safelist_enabled  = safelist_enabled;
+      if (welcome_msg        !== undefined) patch.welcome_msg       = welcome_msg;
+      if (goodbye_msg        !== undefined) patch.goodbye_msg       = goodbye_msg;
+      const { data } = await require("../config/supabase").from("bot_channels")
+        .update(patch).eq("id", req.params.id).select().single();
+      this._channelCache[req.params.id] = null;
+      res.json(data);
+    } catch (e) { next(e); }
+  },
+
   // ── Channel-KB Endpoints ─────────────────────────────────────────────────
   async getChannelKB(req, res, next) {
     try {
