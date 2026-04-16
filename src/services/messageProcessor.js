@@ -15,7 +15,6 @@ const embeddingService    = require('./embeddingService');
 const notificationService = require('./notificationService');
 const abuseDetector       = require('./abuseDetector');
 const couponService       = require('./couponService');
-const clarityDetector     = require('./ai/clarityDetector');
 const logger              = require('../utils/logger');
 
 let _settingsCache     = null;
@@ -116,14 +115,22 @@ const messageProcessor = {
 
     const fullSummary = [chatSummary, couponContext].filter(Boolean).join('\n\n') || null;
 
+    // Wenn Produkt-Query ohne ausreichende KB-Abdeckung → Safety-Kontext vorschalten
+    let finalContext = context;
+    if (typeof _ragProductMiss !== 'undefined' && _ragProductMiss) {
+      finalContext = [{
+        content: '⚠️ WICHTIG: Diese Anfrage hat KEINE ausreichenden Produkt-Treffer in der Wissensdatenbank. KEIN Produkt oder Link erfinden! Weise stattdessen auf @autoacts für individuelle Tarifberatung hin.'
+      }, ...(context || [])];
+    }
+
     const aiResult = await Promise.race([
-      deepseekService.generateResponse(text, recentHistory, context, chat.id, settings, fullSummary),
+      deepseekService.generateResponse(text, recentHistory, finalContext, chat.id, settings, fullSummary),
       new Promise((_, reject) => setTimeout(() => reject(new Error('KI-Timeout')), 60000))
     ]);
 
-    // 9. Antwort zuverlässig zustellen (mit Retry + Cache)
+    // 9. Telegram senden
     if (platform === 'telegram') {
-      await this._sendReliable(chatId, aiResult.text);
+      await telegramService.sendMessage(chatId, aiResult.text);
     }
 
     logger.info(`[MP] Gesamt: ${Date.now()-t0}ms | in:${aiResult.promptTokens} out:${aiResult.completionTokens} cached:${aiResult.cachedTokens||0}`);
@@ -207,7 +214,8 @@ const messageProcessor = {
       // Sehr guter Treffer: Top-Ergebnis hat hohe Ähnlichkeit → maximal 2 Dokumente
       if (topScore >= 0.82) {
         const exact = probe.filter(r => r.similarity >= 0.75);
-        logger.info(`[RAG] Hohe Konfidenz (${topScore.toFixed(3)}) → ${exact.length} Dok.`);
+        let _ragProductMiss = false;
+      logger.info(`[RAG] Hohe Konfidenz (${topScore.toFixed(3)}) → ${exact.length} Dok.`);
         return exact.slice(0, 2);
       }
 
@@ -226,6 +234,12 @@ const messageProcessor = {
 
       const result = full?.length ? full : (probe || []);
       logger.info(`[RAG] Niedrige Konfidenz (${topScore.toFixed(3)}) → ${result.length} Dok.`);
+      // Bei Produktanfragen ohne passende DB-Einträge: Safety-Flag setzen
+      const isProductQuery = /(esim|tarif|preis|gb|land|country|sim|daten|data|reise|travel|paket|kaufen|bestellen|angebot)/i.test(text);
+      if (isProductQuery && topScore < 0.45) {
+        _ragProductMiss = true;
+        logger.info('[RAG] Produkt-Query ohne ausreichende KB-Abdeckung – @autoacts-Fallback aktiv');
+      }
       return result;
 
     } catch (err) {
@@ -307,46 +321,6 @@ const messageProcessor = {
         dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1]
           : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
     return dp[m][n];
-  },
-
-  // ── Zuverlässige Zustellung: Retry-Logik + Deduplizierung ──────────────
-  _pendingDeliveries: new Map(),  // chatId → { text, attempts, ts }
-
-  async _sendReliable(chatId, text, maxAttempts = 3) {
-    const key = chatId;
-
-    // Deduplizierung: gleiche Antwort nicht doppelt senden (< 5s)
-    const prev = this._pendingDeliveries.get(key);
-    if (prev && prev.text === text && Date.now() - prev.ts < 5000) {
-      logger.info(`[MP] Delivery dedup für ${chatId}`);
-      return;
-    }
-
-    this._pendingDeliveries.set(key, { text, attempts: 0, ts: Date.now() });
-
-    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        await telegramService.sendMessage(chatId, text);
-        this._pendingDeliveries.delete(key);
-        return; // Erfolgreich
-      } catch (e) {
-        const isRetryable = !e.message?.includes('blocked') &&
-                            !e.message?.includes('deactivated') &&
-                            !e.message?.includes('chat not found');
-
-        logger.warn(`[MP] Telegram-Zustellung Versuch ${attempt}/${maxAttempts} fehlgeschlagen (${chatId}): ${e.message}`);
-
-        if (!isRetryable || attempt === maxAttempts) {
-          // Nicht wiederholbar oder letzter Versuch → pending entry für Monitoring
-          this._pendingDeliveries.set(key, { text, attempts: attempt, ts: Date.now(), failed: true });
-          logger.error(`[MP] Zustellung endgültig fehlgeschlagen für ${chatId}`);
-          return;
-        }
-
-        // Exponentielles Backoff: 1s, 2s
-        await new Promise(r => setTimeout(r, attempt * 1000));
-      }
-    }
   },
 
   _updateChatPreview(chatId, message, role) {

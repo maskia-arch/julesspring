@@ -198,17 +198,20 @@ const adminController = {
         coupon_description:   body.coupon_description   ?? undefined,
         coupon_max_uses:      body.coupon_max_uses      !== undefined ? parseInt(body.coupon_max_uses)||null: undefined,
         coupon_schedule_hour: body.coupon_schedule_hour !== undefined ? parseInt(body.coupon_schedule_hour): undefined,
-        // Smalltalk-Agent Einstellungen
-        smalltalk_system_prompt:  body.smalltalk_system_prompt   ?? undefined,
-        smalltalk_model:          body.smalltalk_model           ?? undefined,
-        smalltalk_max_tokens:     body.smalltalk_max_tokens      !== undefined ? parseInt(body.smalltalk_max_tokens)     : undefined,
-        smalltalk_temperature:    body.smalltalk_temperature     !== undefined ? parseFloat(body.smalltalk_temperature)  : undefined,
-        smalltalk_kb_category_id: body.smalltalk_kb_category_id !== undefined ? parseInt(body.smalltalk_kb_category_id)||null : undefined,
         // Widget-Einstellungen
         widget_powered_by:    body.widget_powered_by    ?? undefined,
         max_history_msgs:     body.max_history_msgs     !== undefined ? parseInt(body.max_history_msgs)    : undefined,
         summary_interval:     body.summary_interval     !== undefined ? parseInt(body.summary_interval)    : undefined,
         ai_max_input_tokens:  body.ai_max_input_tokens  !== undefined ? parseInt(body.ai_max_input_tokens) : undefined,
+        // Smalltalk-Bot Einstellungen
+        smalltalk_system_prompt:   body.smalltalk_system_prompt   ?? undefined,
+        smalltalk_model:           body.smalltalk_model           ?? undefined,
+        smalltalk_max_tokens:      body.smalltalk_max_tokens      !== undefined ? parseInt(body.smalltalk_max_tokens)     : undefined,
+        smalltalk_temperature:     body.smalltalk_temperature     !== undefined ? parseFloat(body.smalltalk_temperature)  : undefined,
+        smalltalk_kb_category_id:  body.smalltalk_kb_category_id !== undefined ? (parseInt(body.smalltalk_kb_category_id)||null) : undefined,
+        smalltalk_bot_token:       body.smalltalk_bot_token       !== undefined ? (body.smalltalk_bot_token || null)      : undefined,
+        smalltalk_bot_username:    body.smalltalk_bot_username    ?? undefined,
+        smalltalk_require_approval: body.smalltalk_require_approval !== undefined ? Boolean(body.smalltalk_require_approval) : undefined,
       };
 
       // undefined-Felder entfernen (nicht überschreiben wenn nicht gesendet)

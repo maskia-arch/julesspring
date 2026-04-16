@@ -88,9 +88,21 @@ const deepseekService = {
     if (neg) p += `\n\nVERBOTENE VERHALTENSWEISEN:\n${neg}`;
 
     // 2. RAG-Kontext (semi-statisch – ändert sich nur bei DB-Updates)
+    const PRODUCT_RULES = `\n\n${'▶'.repeat(3)} PRODUKT-REGELN (STRIKT) ${'◀'.repeat(3)}
+VERBOTEN: Produkte, Tarife, Links oder Preise ERFINDEN oder SCHÄTZEN.
+VERBOTEN: URLs erfinden – nur Links aus der Wissensdatenbank verwenden.
+ERLAUBT: Nur Produkte empfehlen die EXPLIZIT in der Wissensdatenbank stehen.
+Kein passendes Produkt gefunden → Antworte: "Für diesen speziellen Tarif/Land haben wir aktuell kein passendes Angebot. Für individuelle Beratung wende dich bitte an @autoacts."
+[UNKLAR] → wird als Wissenslücke gespeichert, NIEMALS erfinden!`;
+
     if (contextDocs && contextDocs.length > 0) {
       const ctx = contextDocs.map((d, i) => `[${i+1}] ${d.content}`).join('\n\n---\n\n');
-      p += `\n\n${'═'.repeat(38)}\nWISSENSDATENBANK:\n${'═'.repeat(38)}\n${ctx}\n${'═'.repeat(38)}\nRegeln: Kauflink + Preis immer nennen. Nicht vorhanden → [UNKLAR].`;
+      p += `\n\n${'═'.repeat(38)}\nWISSENSDATENBANK:\n${'═'.repeat(38)}\n${ctx}\n${'═'.repeat(38)}\nNur diese Produkte empfehlen. Kauflink + Preis IMMER aus DB übernehmen.`;
+      p += PRODUCT_RULES;
+    } else {
+      // KEINE RAG-Docs → explizit kein Produkt empfehlen
+      p += PRODUCT_RULES;
+      p += `\n\nFÜR DIESE ANFRAGE: Keine passenden Produkte in der Datenbank. Verweise an @autoacts.`;
     }
 
     // 3. Chat-Zusammenfassung (pro Chat, aber stabil zwischen Updates)
@@ -153,15 +165,9 @@ const deepseekService = {
   async processLearningResponse(adminAnswer, questionId) {
     const { data: q } = await supabase.from('learning_queue').select('*').eq('id', questionId).single();
     if (!q) throw new Error('Frage nicht gefunden');
-
-    const rawContent = `Frage: ${q.unanswered_question}\nAntwort: ${adminAnswer}`;
-
-    // KI-Vorarbeiter: strukturieren + kategorisieren via OpenAI
-    const knowledgeEnricher = require('./knowledgeEnricher');
-    await knowledgeEnricher.enrichAndStore(rawContent, 'learning_chat', null, {
-      original_question: q.unanswered_question
-    });
-
+    const content    = `Frage: ${q.unanswered_question}\nAntwort: ${adminAnswer}`;
+    const { embedding } = await this.generateEmbedding(content);
+    await supabase.from('knowledge_base').insert([{ content, embedding, source: 'learning_chat' }]);
     await supabase.from('learning_queue').update({ status: 'resolved' }).eq('id', questionId);
     return true;
   }
