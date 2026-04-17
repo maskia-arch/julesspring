@@ -224,6 +224,45 @@ const adminController = {
         return res.status(500).json({ error: 'Einstellungen konnten nicht gespeichert werden: ' + error.message });
       }
 
+      // Wenn neuer Smalltalk-Bot-Token gesetzt → sofort verbinden
+      if (body.smalltalk_bot_token && body.smalltalk_bot_token.trim()) {
+        setImmediate(async () => {
+          try {
+            const axios   = require('axios');
+            const token   = body.smalltalk_bot_token.trim();
+            const baseUrl = `https://api.telegram.org/bot${token}`;
+
+            // 1. Bot-Info abrufen
+            const meResp  = await axios.get(`${baseUrl}/getMe`, { timeout: 8000 });
+            const botInfo = meResp.data?.result || {};
+            const username  = botInfo.username  || '';
+            const firstName = botInfo.first_name || '';
+
+            // 2. Webhook registrieren
+            const appUrl = process.env.APP_URL || '';
+            if (appUrl) {
+              const webhookUrl = `${appUrl}/api/webhooks/smalltalk`;
+              const whResp = await axios.post(`${baseUrl}/setWebhook`, {
+                url:             webhookUrl,
+                allowed_updates: ['message','callback_query','my_chat_member','channel_post']
+              }, { timeout: 8000 });
+              logger.info(`[SmallTalk] Webhook registriert: ${webhookUrl} → ${whResp.data?.ok ? 'OK' : 'FEHLER'}`);
+            }
+
+            // 3. Bot-Info in DB speichern
+            await supabase.from('settings').update({
+              smalltalk_bot_username: username,
+              smalltalk_bot_firstname: firstName,
+              updated_at: new Date()
+            }).eq('id', 1).catch(() => {});
+
+            logger.info(`[SmallTalk] Bot verbunden: @${username} (${firstName})`);
+          } catch (e) {
+            logger.warn('[SmallTalk] Bot-Verbindung fehlgeschlagen:', e.message);
+          }
+        });
+      }
+
       // Geladene Settings zurückgeben damit Frontend sync bleibt
       const { data: fresh } = await supabase.from('settings').select('*').eq('id', 1).single();
       res.json(fresh || data?.[0] || {});
@@ -232,6 +271,40 @@ const adminController = {
 
   // ── Telegram Webhook ──────────────────────────────────────────────────────
   // FIX: Webhook-URL wird in settings.webhook_url gespeichert
+  async testSmallTalkBot(req, res, next) {
+    try {
+      const { data: s } = await supabase.from('settings').select('smalltalk_bot_token, smalltalk_bot_username').single();
+      const token = s?.smalltalk_bot_token;
+      if (!token) return res.status(400).json({ ok: false, error: 'Kein Bot-Token konfiguriert' });
+
+      const axios = require('axios');
+      const meResp = await axios.get(`https://api.telegram.org/bot${token}/getMe`, { timeout: 6000 });
+      const bot = meResp.data?.result || {};
+
+      // Webhook-Status prüfen
+      const whResp = await axios.get(`https://api.telegram.org/bot${token}/getWebhookInfo`, { timeout: 6000 });
+      const wh = whResp.data?.result || {};
+
+      // Webhook setzen falls fehlend
+      if (!wh.url && process.env.APP_URL) {
+        const webhookUrl = `${process.env.APP_URL}/api/webhooks/smalltalk`;
+        await axios.post(`https://api.telegram.org/bot${token}/setWebhook`, {
+          url: webhookUrl, allowed_updates: ['message','callback_query','my_chat_member','channel_post']
+        }, { timeout: 6000 });
+        wh.url = webhookUrl;
+      }
+
+      // Bot-Username in DB aktualisieren
+      if (bot.username) {
+        await supabase.from('settings').update({ smalltalk_bot_username: bot.username }).eq('id', 1);
+      }
+
+      res.json({ ok: true, bot, webhook: wh.url || null });
+    } catch (e) {
+      res.json({ ok: false, error: e.response?.data?.description || e.message });
+    }
+  },
+
   async lookupInvoice(req, res, next) {
     try {
       const { invoiceId } = req.params;

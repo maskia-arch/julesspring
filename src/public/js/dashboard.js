@@ -644,7 +644,28 @@ async function saveSmallTalkSettings() {
             smalltalk_require_approval: reqApproval
         });
         showToast('✅ Smalltalk-Einstellungen gespeichert!');
+        // Wenn Token gesetzt: sofort Verbindung testen
+        if (botToken) {
+            setTimeout(function() { loadSmallTalkStatus(); }, 1500);
+        }
     } catch(e) { alert('Fehler: ' + e.message); }
+}
+
+async function loadSmallTalkStatus() {
+    var statusEl = document.getElementById('smalltalk-bot-status');
+    if (!statusEl) return;
+    statusEl.innerHTML = '<span style="color:#94a3b8;font-size:0.78rem;">⏳ Verbinde...</span>';
+    try {
+        var result = await api.request('/smalltalk/status');
+        if (result.ok && result.bot) {
+            statusEl.innerHTML = '<span style="color:#4ade80;font-size:0.78rem;">✅ Verbunden: @' + esc(result.bot.username || '') +
+                (result.webhook ? ' · Webhook: ✅' : ' · Webhook: ⚠️ nicht gesetzt') + '</span>';
+        } else {
+            statusEl.innerHTML = '<span style="color:#ef4444;font-size:0.78rem;">❌ ' + esc(result.error || 'Verbindungsfehler') + '</span>';
+        }
+    } catch(e) {
+        statusEl.innerHTML = '<span style="color:#ef4444;font-size:0.78rem;">❌ ' + esc(e.message) + '</span>';
+    }
 }
 
 async function loadChannels() {

@@ -509,7 +509,9 @@
                       </div>
                     </div>
                     <div class="form-group"><label>Bot Token (von BotFather)</label>
-                      <input type="password" id="smalltalk-bot-token" placeholder="●●●●● (gesetzt)" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.875rem;">
+                      <input type="password" id="smalltalk-bot-token" placeholder="Neuen Token eingeben…" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.875rem;margin-bottom:6px;">
+                      <div id="smalltalk-bot-status" style="margin-bottom:4px;"></div>
+                      <button onclick="loadSmallTalkStatus()" class="btn btn-secondary btn-sm" style="margin-top:4px;">🔍 Verbindung testen</button>
                     </div>
                     <div class="form-group">
                       <label><input type="checkbox" id="smalltalk-require-approval" style="margin-right:6px;"> Manuelle Freischaltung erforderlich</label>
@@ -527,8 +529,8 @@
     </div>
 </div>
 
-<script src="js/api.js?v=145"></script>
-<script src="js/dashboard.js?v=145"></script>
+<script src="js/api.js?v=147"></script>
+<script src="js/dashboard.js?v=147"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });
@@ -566,10 +568,8 @@ function showSettingsTab(tab, btn) {
     if (tab === 'channel-cfg'  && typeof loadChannels       === 'function') loadChannels();
     if (tab === 'smalltalk-cfg') {
         if (typeof loadKbCategories === 'function') loadKbCategories();
-        // Re-populate smalltalk fields from cached settings
-        if (typeof loadSettings === 'function') {
-            api.request('/settings').then(function(s){ if (s && typeof loadSmallTalkSettings === 'function') loadSmallTalkSettings(s); }).catch(function(){});
-        }
+        if (typeof loadSmallTalkStatus === 'function') loadSmallTalkStatus();
+        api.request('/settings').then(function(s){ if (s && typeof loadSmallTalkSettings === 'function') loadSmallTalkSettings(s); }).catch(function(){});
     }
 }
 
