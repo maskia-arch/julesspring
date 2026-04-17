@@ -72,18 +72,48 @@ router.post("/smalltalk", (req, res) => {
       if (update.my_chat_member) {
         const mcm = update.my_chat_member;
         if (["administrator","creator"].includes(mcm.new_chat_member?.status)) {
-          const chat = mcm.chat;
+          const chat     = mcm.chat;
+          const addedBy  = mcm.from;   // Der User der den Bot hinzugefügt hat
+          const settingsToken = require('crypto').randomBytes(16).toString('hex');
+
           await supabase.from("bot_channels").upsert([{
-            id:          chat.id, title: chat.title || String(chat.id),
-            username:    chat.username || null, type: chat.type,
-            bot_type:    "smalltalk", is_active: false, is_approved: false,
-            ai_enabled:  false, updated_at: new Date()
+            id:               chat.id,
+            title:            chat.title || String(chat.id),
+            username:         chat.username || null,
+            type:             chat.type,
+            bot_type:         "smalltalk",
+            is_active:        false,
+            is_approved:      false,
+            ai_enabled:       false,
+            added_by_user_id: addedBy?.id   || null,
+            added_by_username:addedBy?.username || null,
+            settings_token:   settingsToken,
+            updated_at:       new Date()
           }], { onConflict: "id" });
 
+          const appUrl   = process.env.APP_URL || "";
+          const settingsLink = appUrl ? `\n\n🔧 Dein persönlicher Einstellungs-Link:\n${appUrl}/admin?channel=${chat.id}&token=${settingsToken}` : "";
+
+          // Nachricht an den Channel
           await tg.send(chat.id,
-            `✅ Bot erfolgreich hinzugefügt!\n\nUm die Einrichtung abzuschließen und alle Funktionen freizuschalten, wende dich bitte an <b>@autoacts</b>.\n\nKostenlose Basis-Tools sind bereits aktiv.`
+            `✅ <b>TG Admin-Helper aktiv!</b>\n\nFüge den Bot als Admin in deiner Gruppe/Channel hinzu.\nSchreibe <b>/admin</b> oder <b>/menu</b> für alle Verwaltungstools.\n\n🔒 Für AI-Features: @autoacts kontaktieren.`
           );
-          logger.info(`[SmallTalk-Bot] Channel registriert: ${chat.title}`);
+
+          // Private Nachricht an den Admin der den Bot hinzugefügt hat
+          if (addedBy?.id) {
+            await tg.send(String(addedBy.id),
+              `✅ <b>Bot wurde zu "${chat.title}" hinzugefügt!</b>\n\n` +
+              `📋 Verfügbare Befehle:\n` +
+              `• /admin – Verwaltungsmenü öffnen\n` +
+              `• /settings – Channel-Einstellungen\n` +
+              `• /clean – Gelöschte Accounts entfernen\n\n` +
+              `🤖 <b>Kostenlose Tools sind sofort aktiv.</b>\n` +
+              `Für AI-Features wende dich an @autoacts.` +
+              settingsLink
+            ).catch(() => {}); // User könnte Bot geblockt haben
+          }
+
+          logger.info(`[SmallTalk-Bot] Channel registriert: ${chat.title} (von @${addedBy?.username || addedBy?.id})`);
         }
         return;
       }
@@ -148,6 +178,22 @@ router.post("/smalltalk", (req, res) => {
       if (adminCmds.some(cmd => text.startsWith(cmd))) {
         if (await isGroupAdmin(token, chatId, from.id)) {
           await tgAdminHelper.sendAdminMenu(token, chatId, msg.message_id);
+        }
+        return;
+      }
+
+      // /settings – Channel-Einstellungen für Admins
+      if (text === "/settings" || text.startsWith("/settings@")) {
+        if (!await isGroupAdmin(token, chatId, from.id)) return;
+        // Settings-Token aus DB holen
+        const { data: chData } = await supabase.from("bot_channels")
+          .select("settings_token, added_by_user_id").eq("id", chatId).maybeSingle().catch(() => ({ data: null }));
+        const appUrl = process.env.APP_URL || "";
+        if (appUrl && chData?.settings_token) {
+          const link = `${appUrl}/admin?channel=${chatId}&token=${chData.settings_token}`;
+          await tg.send(chatId, `⚙️ <b>Channel-Einstellungen</b>\n\n🔗 ${link}\n\n<i>Dieser Link ist nur für Channel-Admins bestimmt.</i>`);
+        } else {
+          await tg.send(chatId, "⚙️ Für Channel-Einstellungen wende dich an @autoacts.");
         }
         return;
       }

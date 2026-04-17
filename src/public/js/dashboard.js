@@ -668,6 +668,17 @@ async function loadSmallTalkStatus() {
     }
 }
 
+async function scanAndLoadChannels() {
+    showToast('⏳ Scanne Telegram-Chats...');
+    try {
+        var result = await api.request('/channels/scan', 'POST');
+        showToast('✅ Scan abgeschlossen: ' + (result.registered || 0) + ' neue Channels');
+    } catch(e) {
+        showToast('Scan: ' + e.message);
+    }
+    await loadChannels();
+}
+
 async function loadChannels() {
     var el = document.getElementById('channel-list');
     if (!el) return;
@@ -691,7 +702,11 @@ async function loadChannels() {
             card.innerHTML =
                 '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
                     '<span>'+(ch.type==='channel'?'📢':'👥')+'</span>' +
-                    '<span style="font-weight:700;flex:1;">'+esc(ch.title||ch.id)+'</span>' +
+                    '<div style="flex:1;">' +
+                        '<div style="font-weight:700;">'+esc(ch.title||ch.id)+'</div>' +
+                        (ch.added_by_username ? '<div style="font-size:0.68rem;color:#64748b;">Admin: @'+esc(ch.added_by_username)+'</div>' :
+                         ch.added_by_user_id  ? '<div style="font-size:0.68rem;color:#64748b;">Admin ID: '+ch.added_by_user_id+'</div>' : '') +
+                    '</div>' +
                     (ch.is_approved
                         ? '<span style="background:#14532d;color:#4ade80;font-size:0.68rem;padding:2px 6px;border-radius:4px;">✅ AKTIV</span>'
                         : '<span style="background:#3a1a1a;color:#f87171;font-size:0.68rem;padding:2px 6px;border-radius:4px;">⏳ WARTEND</span>') +

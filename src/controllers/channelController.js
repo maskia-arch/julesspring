@@ -73,78 +73,6 @@ const channelController = {
     } catch (e) { logger.warn("[Channel] Register:", e.message); }
   },
 
-  // ── Safelist Endpoints ───────────────────────────────────────────────────
-  async getSafelistReviews(req, res, next) {
-    try {
-      const safelistService = require("../services/adminHelper/safelistService");
-      const data = await safelistService.getPendingReviews(req.query.channel_id || null);
-      res.json(data);
-    } catch (e) { next(e); }
-  },
-
-  async reviewSafelist(req, res, next) {
-    try {
-      const { action, list_type } = req.body;
-      const safelistService = require("../services/adminHelper/safelistService");
-      if (action === "approve") {
-        const data = await safelistService.approve(req.params.id, req.user?.id || 0, list_type);
-        res.json({ success: true, data });
-      } else {
-        await safelistService.reject(req.params.id, req.user?.id || 0);
-        res.json({ success: true });
-      }
-    } catch (e) { next(e); }
-  },
-
-  // ── Scheduled Messages ─────────────────────────────────────────────────────
-  async getScheduledMessages(req, res, next) {
-    try {
-      const { data } = await require("../config/supabase").from("scheduled_messages")
-        .select("*").eq("channel_id", req.params.id).order("next_run_at");
-      res.json(data || []);
-    } catch (e) { next(e); }
-  },
-
-  async createScheduledMessage(req, res, next) {
-    try {
-      const { message, cron_expr, repeat, next_run_at, photo_url } = req.body;
-      if (!message) return res.status(400).json({ error: "Nachricht fehlt" });
-      const { data } = await require("../config/supabase").from("scheduled_messages").insert([{
-        channel_id:  req.params.id,
-        message,     cron_expr: cron_expr || null,
-        repeat:      !!repeat,
-        next_run_at: next_run_at || null,
-        photo_url:   photo_url || null,
-        is_active:   true
-      }]).select().single();
-      res.json(data);
-    } catch (e) { next(e); }
-  },
-
-  async deleteScheduledMessage(req, res, next) {
-    try {
-      await require("../config/supabase").from("scheduled_messages")
-        .delete().eq("id", req.params.msgId).eq("channel_id", req.params.id);
-      res.json({ success: true });
-    } catch (e) { next(e); }
-  },
-
-  // ── AI Toggle ─────────────────────────────────────────────────────────────
-  async toggleAI(req, res, next) {
-    try {
-      const { ai_enabled, safelist_enabled, welcome_msg, goodbye_msg } = req.body;
-      const patch = { updated_at: new Date() };
-      if (ai_enabled         !== undefined) patch.ai_enabled        = ai_enabled;
-      if (safelist_enabled   !== undefined) patch.safelist_enabled  = safelist_enabled;
-      if (welcome_msg        !== undefined) patch.welcome_msg       = welcome_msg;
-      if (goodbye_msg        !== undefined) patch.goodbye_msg       = goodbye_msg;
-      const { data } = await require("../config/supabase").from("bot_channels")
-        .update(patch).eq("id", req.params.id).select().single();
-      this._channelCache[req.params.id] = null;
-      res.json(data);
-    } catch (e) { next(e); }
-  },
-
   // ── Channel-KB Endpoints ─────────────────────────────────────────────────
   async getChannelKB(req, res, next) {
     try {
@@ -169,6 +97,63 @@ const channelController = {
       const channelKB = require("../services/ai/channelKnowledgeEnricher");
       await channelKB.deleteEntry(req.params.id, req.params.entryId);
       res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  // ── Active Scan: Prüft für alle bekannten Channels ob Bot noch Admin ist ──
+  async scanChannels(req, res, next) {
+    try {
+      const supabase_local = require("../config/supabase");
+      const { data: s } = await supabase_local.from("settings")
+        .select("smalltalk_bot_token").maybeSingle();
+      const token = s?.smalltalk_bot_token;
+      if (!token) return res.status(400).json({ error: "Kein Bot-Token konfiguriert" });
+
+      const axios = require("axios");
+      const base  = `https://api.telegram.org/bot${token}`;
+
+      // getUpdates um recent my_chat_member events zu holen (falls verpasst)
+      const updResp = await axios.get(`${base}/getUpdates`, {
+        params: { allowed_updates: ["my_chat_member"], limit: 100, timeout: 5 },
+        timeout: 10000
+      }).catch(() => ({ data: { result: [] } }));
+
+      const updates = updResp.data?.result || [];
+      let registered = 0;
+
+      for (const upd of updates) {
+        const mcm = upd.my_chat_member;
+        if (!mcm) continue;
+        const isAdmin = ["administrator","creator"].includes(mcm.new_chat_member?.status);
+        if (!isAdmin) continue;
+        const chat = mcm.chat;
+        if (!["channel","supergroup","group"].includes(chat.type)) continue;
+
+        const addedBy = mcm.from;
+        const token2  = require("crypto").randomBytes(16).toString("hex");
+
+        await supabase_local.from("bot_channels").upsert([{
+          id:               chat.id,
+          title:            chat.title || String(chat.id),
+          username:         chat.username || null,
+          type:             chat.type,
+          bot_type:         "smalltalk",
+          is_active:        false,
+          is_approved:      false,
+          ai_enabled:       false,
+          added_by_user_id: addedBy?.id   || null,
+          added_by_username:addedBy?.username || null,
+          settings_token:   token2,
+          updated_at:       new Date()
+        }], { onConflict: "id" });
+        registered++;
+      }
+
+      // Dann alle gespeicherten Channels neu laden
+      const { data: channels } = await supabase_local.from("bot_channels").select("*")
+        .order("added_at", { ascending: false });
+
+      res.json({ scanned: updates.length, registered, channels: channels || [] });
     } catch (e) { next(e); }
   },
 
