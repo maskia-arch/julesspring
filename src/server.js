@@ -5,9 +5,10 @@ const { port } = require('./config/env');
 const logger  = require('./utils/logger');
 const errorHandler = require('./middleware/errorHandler');
 
-const adminRoutes   = require('./routes/adminRoutes');
-const webhookRoutes = require('./routes/webhookRoutes');
-const widgetRoutes  = require('./routes/widgetRoutes');
+const adminRoutes        = require('./routes/adminRoutes');
+const webhookRoutes      = require('./routes/webhookRoutes');
+const widgetRoutes       = require('./routes/widgetRoutes');
+const smalltalkBotRoutes = require('./routes/smalltalkBotRoutes');
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/api/admin',    adminRoutes);
 app.use('/api/webhooks', webhookRoutes);
+app.use('/api/webhooks', smalltalkBotRoutes); // Smalltalk Bot: POST /api/webhooks/smalltalk
 app.use('/api/widget',   widgetRoutes);
 
 app.get('/admin',    (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
@@ -38,6 +40,21 @@ const server = app.listen(port, () => {
       const couponService = require('./services/couponService');
       couponService.startDailyScheduler();
     } catch(e) { logger.warn('[Server] Coupon Scheduler:', e.message); }
+
+    // Smalltalk Bot: Geplante Nachrichten alle 60s prüfen
+    try {
+      const { tgAdminHelper } = require('./services/adminHelper/tgAdminHelper');
+      const supabase = require('./config/supabase');
+      setInterval(async () => {
+        try {
+          const { data: s } = await supabase.from('settings').select('smalltalk_bot_token').single();
+          if (s?.smalltalk_bot_token) {
+            await tgAdminHelper.fireScheduled(s.smalltalk_bot_token);
+          }
+        } catch (_) {}
+      }, 60000);
+      logger.info('[Server] Smalltalk scheduled messages: aktiv');
+    } catch(e) { logger.warn('[Server] Smalltalk Scheduler:', e.message); }
   }, 5000);
 });
 
