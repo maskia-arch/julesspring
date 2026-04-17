@@ -671,12 +671,15 @@ async function loadSmallTalkStatus() {
 async function loadChannels() {
     var el = document.getElementById('channel-list');
     if (!el) return;
+    // Invalidate cache to force fresh data
+    if (api.invalidate) api.invalidate('/channels');
     try {
         var channels = await api.request('/channels') || [];
         if (!channels.length) {
             el.innerHTML = '<p style="color:#555;font-size:0.85rem;padding:8px;">Noch keine Channels erkannt.<br>Füge den Bot als Admin hinzugefügt ein.</p>';
             return;
         }
+        el.innerHTML = '<p style="color:#555;font-size:0.85rem;padding:8px;">Lade...</p>';
         el.innerHTML = '';
         channels.forEach(function(ch) {
             var card = document.createElement('div');

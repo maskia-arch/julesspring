@@ -33,13 +33,17 @@ Ich helfe dir dabei, deinen Telegram-Channel oder deine Gruppe effizienter zu ve
 Fragen? → @autoacts`;
 
 async function getSettings() {
-  const { data } = await supabase.from("settings").select("*").single().catch(() => ({ data: null }));
-  return data;
+  try {
+    const { data } = await supabase.from("settings").select("*").maybeSingle();
+    return data || null;
+  } catch { return null; }
 }
 
 async function getChannel(chatId) {
-  const { data } = await supabase.from("bot_channels").select("*").eq("id", String(chatId)).maybeSingle().catch(() => ({ data: null }));
-  return data;
+  try {
+    const { data } = await supabase.from("bot_channels").select("*").eq("id", String(chatId)).maybeSingle();
+    return data || null;
+  } catch { return null; }
 }
 
 async function isGroupAdmin(token, chatId, userId) {
@@ -58,7 +62,10 @@ router.post("/smalltalk", (req, res) => {
       if (!update)  return;
       const settings = await getSettings();
       const token    = settings?.smalltalk_bot_token;
-      if (!token)    return;
+      if (!token) {
+        logger.info("[SmallTalk-Bot] Kein Bot-Token konfiguriert – Update ignoriert");
+        return;
+      }
       const tg = tgApi(token);
 
       // ── Bot als Admin hinzugefügt ──────────────────────────────────────────
@@ -219,7 +226,8 @@ router.post("/smalltalk", (req, res) => {
       }
 
     } catch (e) {
-      logger.error("[SmallTalk-Bot]", e.message);
+      logger.error("[SmallTalk-Bot] Fehler:", e?.message || String(e));
+      if (e?.stack) logger.error("[SmallTalk-Bot] Stack:", e.stack.split('\n').slice(0,3).join(' | '));
     }
   });
 });
