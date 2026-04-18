@@ -60,17 +60,26 @@ async function isGroupAdmin(token, chatId, userId) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 async function sendSettingsMenu(tg, sendTo, channelId, ch) {
-  const aiActive    = ch?.ai_enabled    ? "✅ Aktiv"     : "❌ Inaktiv";
-  const safeActive  = ch?.safelist_enabled ? "✅ Aktiv"  : "❌ Inaktiv";
-  const approved    = ch?.is_approved   ? "🟢 Freigeschaltet" : "🔴 Ausstehend";
+  // Resolve language first — everything depends on it
+  const lang      = ch?.bot_language || "de";
+  const aiActive  = t("ai_active",        lang);
+  const aiOff     = t("ai_inactive",      lang);
+  const safeOn    = t("ai_active",        lang);
+  const safeOff   = t("ai_inactive",      lang);
+  const approved  = t("status_approved",  lang);
+  const pending   = t("status_pending",   lang);
+
+  const statusText  = ch?.is_approved      ? approved : pending;
+  const aiText      = ch?.ai_enabled       ? aiActive : aiOff;
+  const safeText    = ch?.safelist_enabled ? safeOn   : safeOff;
 
   return await tg.call("sendMessage", {
     chat_id: sendTo,
-    text: `⚙️ <b>Einstellungen für: ${(ch?.title || channelId)}</b>\n\n` +
-          `Status: ${approved}\n` +
-          `KI-Features: ${aiActive}\n` +
-          `Safelist: ${safeActive}\n\n` +
-          `Wähle was du verwalten möchtest:`,
+    text: t("settings_header", lang, ch?.title || channelId) + "\n\n" +
+          `Status: ${statusText}\n` +
+          `KI-Features: ${aiText}\n` +
+          `Safelist: ${safeText}\n\n` +
+          t("choose_action", lang),
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: [
       [{ text: t("btn_welcome",  lang), callback_data: `cfg_welcome_${channelId}` },
