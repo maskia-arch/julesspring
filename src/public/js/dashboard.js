@@ -68,6 +68,7 @@ async function initDashboard() {
     setTimeout(function() { _safeRun(loadKbCategories); }, 3000);
     // Channel-Liste vorladen
     setTimeout(function() { _safeRun(loadChannels); }, 3500);
+    setTimeout(function() { _safeRun(loadChannelCosts); }, 4000);
 
     // Intervalle
     clearInterval(window._statsInterval);
@@ -138,8 +139,21 @@ async function updateStats() {
         sv('s-chats',    d.stats.totalChats);
         sv('s-manual',   d.stats.activeManual);
         sv('s-knowledge',d.stats.knowledgeEntries);
-        sv('s-cost',     d.stats.totalCost);
-        sv('s-tokens',   (d.stats.totalTokens||0).toLocaleString() + ' Token');
+        // Add channel AI costs to main cost display
+        var baseCost   = parseFloat((d.stats.totalCost||'0').toString().replace(/[^0-9.]/g,'')) || 0;
+        var baseTokens = parseInt(d.stats.totalTokens||0) || 0;
+        try {
+            var channels = await api.request('/channels').catch(function(){ return []; }) || [];
+            var chanCost   = channels.reduce(function(s,ch){ return s + parseFloat(ch.usd_spent||0); }, 0);
+            var chanTokens = channels.reduce(function(s,ch){ return s + parseInt(ch.token_used||0); }, 0);
+            var combinedCost   = (baseCost + chanCost).toFixed(4) + ' $';
+            var combinedTokens = (baseTokens + chanTokens).toLocaleString() + ' Token';
+            sv('s-cost',   combinedCost);
+            sv('s-tokens', combinedTokens);
+        } catch(_) {
+            sv('s-cost',   d.stats.totalCost);
+            sv('s-tokens', baseTokens.toLocaleString() + ' Token');
+        }
         sv('version-tag','v' + d.version);
         var badge = document.getElementById('learning-badge');
         if (badge) {

@@ -228,20 +228,33 @@ const tgAdminHelper = {
       for (const msg of (due || [])) {
         const tg = tgApi(token);
         try {
-          if (msg.photo_file_id || msg.photo_url) {
-            await tg.sendPhoto(msg.channel_id, msg.photo_file_id || msg.photo_url, msg.message);
-          } else {
-            await tg.send(msg.channel_id, msg.message);
+          // Vorherige Nachricht löschen wenn gewünscht
+          if (msg.delete_previous && msg.last_sent_msg_id) {
+            await tg.call("deleteMessage", { chat_id: msg.channel_id, message_id: msg.last_sent_msg_id }).catch(() => {});
           }
 
-          if (msg.repeat && msg.cron_expr) {
-            const next = this._nextCronRun(msg.cron_expr);
-            await supabase.from("scheduled_messages")
-              .update({ next_run_at: next, run_count: (msg.run_count || 0) + 1 }).eq("id", msg.id);
+          let sentMsg = null;
+          if (msg.photo_file_id || msg.photo_url) {
+            sentMsg = await tg.sendPhoto(msg.channel_id, msg.photo_file_id || msg.photo_url, msg.message);
           } else {
-            await supabase.from("scheduled_messages")
-              .update({ is_active: false, run_count: (msg.run_count || 0) + 1 }).eq("id", msg.id);
+            sentMsg = await tg.send(msg.channel_id, msg.message);
           }
+
+          // Anpinnen wenn gewünscht
+          if (msg.pin_after_send && sentMsg?.message_id) {
+            await tg.pinMessage(msg.channel_id, sentMsg.message_id).catch(() => {});
+          }
+
+          const updatePatch = {
+            run_count: (msg.run_count || 0) + 1,
+            last_sent_msg_id: sentMsg?.message_id || null
+          };
+          if (msg.repeat && msg.cron_expr) {
+            updatePatch.next_run_at = this._nextCronRun(msg.cron_expr);
+          } else {
+            updatePatch.is_active = false;
+          }
+          await supabase.from("scheduled_messages").update(updatePatch).eq("id", msg.id);
         } catch (e) {
           logger.warn(`[AdminHelper] Scheduled send fehlgeschlagen (${msg.id}): ${e.message}`);
         }
