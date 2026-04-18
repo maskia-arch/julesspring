@@ -221,20 +221,30 @@ router.post("/smalltalk", (req, res) => {
           const addedBy  = mcm.from;   // Der User der den Bot hinzugefügt hat
           const settingsToken = require('crypto').randomBytes(16).toString('hex');
 
-          await supabase.from("bot_channels").upsert([{
-            id:               chat.id,
-            title:            chat.title || String(chat.id),
-            username:         chat.username || null,
-            type:             chat.type,
-            bot_type:         "smalltalk",
-            is_active:        false,
-            is_approved:      false,
-            ai_enabled:       false,
-            added_by_user_id: addedBy?.id   || null,
-            added_by_username:addedBy?.username || null,
-            settings_token:   settingsToken,
-            updated_at:       new Date()
+          // Basis-Felder zuerst (funktioniert auch ohne schema_v18/v19)
+          const { error: upsertErr } = await supabase.from("bot_channels").upsert([{
+            id:          chat.id,
+            title:       chat.title || String(chat.id),
+            username:    chat.username || null,
+            type:        chat.type,
+            bot_type:    "smalltalk",
+            is_active:   false,
+            is_approved: false,
+            updated_at:  new Date()
           }], { onConflict: "id" });
+
+          if (upsertErr) {
+            logger.error("[SmallTalk-Bot] Upsert Fehler:", upsertErr.message);
+          } else {
+            // Erweiterte Felder (schema_v18/v19) separat updaten - ignoriert wenn Spalten fehlen
+            await supabase.from("bot_channels").update({
+              ai_enabled:        false,
+              added_by_user_id:  addedBy?.id   || null,
+              added_by_username: addedBy?.username || null,
+              settings_token:    settingsToken
+            }).eq("id", chat.id).catch(e => logger.warn("[SmallTalk-Bot] Extended update:", e.message));
+          }
+          logger.info(`[SmallTalk-Bot] Channel gespeichert: ${chat.title} (${chat.id}), Fehler: ${upsertErr?.message || "keine"}`);
 
           // Nachricht an den Channel
           await tg.send(chat.id,
@@ -380,6 +390,9 @@ router.post("/smalltalk", (req, res) => {
       if (adminCmds.some(cmd => text.startsWith(cmd))) {
         if (await isGroupAdmin(token, chatId, from.id)) {
           await tgAdminHelper.sendAdminMenu(token, chatId, msg.message_id);
+        } else {
+          // Nicht-Admin bekommt neutrale Meldung
+          await tg.send(chatId, "🔧 Hier wird gerade gearbeitet.");
         }
         return;
       }
