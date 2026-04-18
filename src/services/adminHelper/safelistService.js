@@ -145,20 +145,69 @@ const safelistService = {
   },
 
   // Kontext für /ai
-  async saveContextMsg(channelId, userId, username, message) {
-    if (!message?.trim()) return;
-    try { await supabase.from("channel_context").upsert([{ channel_id: String(channelId), user_id: userId, username: username||null, message: message.substring(0, 500), msg_date: new Date() }], { onConflict: "channel_id,user_id,message" }); } catch (_) {}
+  // ── Per-User Conversation History ────────────────────────────────────────
+
+  async saveUserMessage(channelId, userId, content, msgId) {
+    if (!content?.trim()) return;
     try {
-      const { data: all } = await supabase.from("channel_context").select("id").eq("channel_id", String(channelId)).eq("user_id", userId).order("msg_date", { ascending: false });
-      if (all?.length > 3) { await supabase.from("channel_context").delete().in("id", all.slice(3).map(r => r.id)); }
+      await supabase.from("channel_chat_history").insert([{
+        channel_id: String(channelId), user_id: userId,
+        role: "user", content: content.substring(0, 1000), msg_id: msgId || null
+      }]);
+      await this._pruneHistory(channelId, userId);
     } catch (_) {}
   },
 
-  async getContextMsgs(channelId, userId) {
-    const { data } = await supabase.from("channel_context").select("message, username, msg_date")
-      .eq("channel_id", String(channelId)).eq("user_id", userId).order("msg_date", { ascending: false }).limit(3);
-    return (data || []).reverse();
+  async saveAssistantMessage(channelId, userId, content, msgId) {
+    if (!content?.trim()) return;
+    try {
+      await supabase.from("channel_chat_history").insert([{
+        channel_id: String(channelId), user_id: userId,
+        role: "assistant", content: content.substring(0, 2000), msg_id: msgId || null
+      }]);
+    } catch (_) {}
   },
+
+  async getConversationHistory(channelId, userId, maxPairs) {
+    maxPairs = maxPairs || 5;
+    try {
+      const { data } = await supabase.from("channel_chat_history")
+        .select("role, content")
+        .eq("channel_id", String(channelId)).eq("user_id", userId)
+        .order("created_at", { ascending: false }).limit(maxPairs * 2);
+      return (data || []).reverse().map(function(m) { return { role: m.role, content: m.content }; });
+    } catch (_) { return []; }
+  },
+
+  async isBotMessage(channelId, msgId) {
+    if (!msgId) return false;
+    try {
+      const { data } = await supabase.from("channel_chat_history")
+        .select("id").eq("channel_id", String(channelId)).eq("msg_id", msgId).eq("role", "assistant").maybeSingle();
+      return !!data;
+    } catch (_) { return false; }
+  },
+
+  async _pruneHistory(channelId, userId) {
+    try {
+      const { data: all } = await supabase.from("channel_chat_history")
+        .select("id").eq("channel_id", String(channelId)).eq("user_id", userId)
+        .order("created_at", { ascending: false });
+      if (all?.length > 20) {
+        await supabase.from("channel_chat_history").delete().in("id", all.slice(20).map(function(r){ return r.id; }));
+      }
+    } catch (_) {}
+  },
+
+  // Legacy compat
+  async saveContextMsg(channelId, userId, username, message) {
+    await this.saveUserMessage(channelId, userId, message, null);
+  },
+  async getContextMsgs(channelId, userId) {
+    const hist = await this.getConversationHistory(channelId, userId, 3);
+    return hist.filter(function(m){ return m.role === "user"; }).map(function(m){ return { message: m.content }; });
+  },
+
 
   async _fetchTgProfile(userId, token) {
     if (!token || !userId) return {};

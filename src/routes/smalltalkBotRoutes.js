@@ -1246,20 +1246,30 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
         return;
       }
 
-      // /ai [Frage] – Nur wenn AI freigeschaltet
+      // Reply auf Bot-Nachricht → impliziter /ai Befehl
+      const isReplyToBot = msg.reply_to_message && from?.id
+        ? await safelistService.isBotMessage(chatId, msg.reply_to_message.message_id)
+        : false;
+
+      // /ai [Frage] oder Reply auf Bot-Nachricht
       const aiMatch = text.match(/^\/ai\s+(.*)/i);
-      if (aiMatch && ch?.is_approved && ch?.ai_enabled) {
-        const question = aiMatch[1].trim();
-        // Kontext: letzte 3 Nachrichten des Users
-        const ctxMsgs = from?.id ? await safelistService.getContextMsgs(chatId, from.id) : [];
-        const ctxText = ctxMsgs.length ? "\nKontext (letzte Nachrichten):\n" + ctxMsgs.map(m => `${m.username||"User"}: ${m.message}`).join("\n") : "";
-        const enrichedQuestion = question + ctxText;
+      const aiQuestion = aiMatch ? aiMatch[1].trim() : (isReplyToBot && !text.startsWith("/") ? text : null);
+
+      if (aiQuestion && ch?.is_approved && ch?.ai_enabled) {
+        // Kontext: vollständiger Gesprächsverlauf mit diesem User
+        const history = from?.id ? await safelistService.getConversationHistory(chatId, from.id, 5) : [];
+
+        // User-Nachricht vorab speichern
+        if (from?.id) void safelistService.saveUserMessage(chatId, from.id, aiQuestion, msg.message_id);
 
         const smalltalkAgent = require("../services/ai/smalltalkAgent");
-        const result = await smalltalkAgent.handle({ chatId, text: enrichedQuestion, settings, channelRecord: ch });
+        const result = await smalltalkAgent.handle({ chatId, text: aiQuestion, settings, channelRecord: ch, history });
         if (result.reply) {
-          // AI-Antworten bleiben dauerhaft
-          await tg.send(chatId, result.reply);
+          const sentAiMsg = await tg.send(chatId, result.reply);
+          // AI-Antwort speichern für Gesprächskontext
+          if (from?.id && sentAiMsg?.message_id) {
+            void safelistService.saveAssistantMessage(chatId, from.id, result.reply, sentAiMsg.message_id);
+          }
         }
       } else if (aiMatch && ch && ch.token_budget_exhausted) {
         const sent = await tg.send(chatId, "⚠️ KI aktuell nicht verfügbar. Richte dich an den Channel-Admin für mehr Informationen.");

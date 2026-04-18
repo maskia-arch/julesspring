@@ -27,7 +27,7 @@ const BERATER_TRIGGERS = /\b(esim|e-sim|e sim|tarif|preis|€|eur|dollar|\$|gb|g
 
 const smalltalkAgent = {
 
-  async handle({ chatId, text, settings, channelRecord = null }) {
+  async handle({ chatId, text, settings, channelRecord = null, history = [] }) {
     const s = settings || {};
 
     // 1. Channel-Freischaltung prüfen
@@ -77,8 +77,12 @@ const smalltalkAgent = {
       if (results.length) kbContext = results.join("\n\n").substring(0, 1000);
     } catch (_) {}
 
+    // Gesprächsverlauf: max letzte 5 Paare einbauen (ohne aktuelle Frage die noch nicht gespeichert ist)
+    const historyMessages = (history || []).filter(m => m.content && m.role);
+
     const messages = [
       { role: "system", content: systemPrompt + (kbContext ? "\n\nKontext:\n" + kbContext : "") },
+      ...historyMessages,
       { role: "user",   content: text }
     ];
 
