@@ -713,27 +713,48 @@ async function loadChannels() {
         el.innerHTML = '';
         channels.forEach(function(ch) {
             var card = document.createElement('div');
-            card.style.cssText = 'background:#111;border-radius:8px;padding:12px;margin-bottom:8px;border:1px solid '+(ch.is_approved?'#14532d':'#3a1a1a')+';';
+            var borderColor = ch.is_approved ? '#14532d' : '#3a1a1a';
+            card.style.cssText = 'background:#111;border-radius:8px;margin-bottom:6px;border:1px solid '+borderColor+';overflow:hidden;';
+            card.dataset.chid = ch.id;
 
             var tokenPct = ch.token_limit ? Math.min(100, Math.round((ch.token_used||0)/ch.token_limit*100)) : 0;
             var barColor = tokenPct > 85 ? '#ef4444' : tokenPct > 60 ? '#f59e0b' : '#4ade80';
 
-            card.innerHTML =
-                '<div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">' +
-                    '<span>'+(ch.type==='channel'?'📢':'👥')+'</span>' +
-                    '<div style="flex:1;">' +
-                        '<div style="font-weight:700;">'+esc(ch.title||ch.id)+'</div>' +
-                        (ch.added_by_username ? '<div style="font-size:0.68rem;color:#64748b;">Admin: @'+esc(ch.added_by_username)+'</div>' :
-                         ch.added_by_user_id  ? '<div style="font-size:0.68rem;color:#64748b;">Admin ID: '+ch.added_by_user_id+'</div>' : '') +
+            // ── Collapsed Header (immer sichtbar) ─────────────────────────────
+            var header = document.createElement('div');
+            header.style.cssText = 'display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;user-select:none;';
+            header.innerHTML =
+                '<span style="font-size:1.05rem;">'+(ch.type==='channel'?'📢':'👥')+'</span>' +
+                '<div style="flex:1;min-width:0;">' +
+                    '<div style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'+esc(ch.title||ch.id)+'</div>' +
+                    '<div style="font-size:0.68rem;color:#64748b;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">' +
+                        (ch.type||'group') +
+                        (ch.username ? ' · @'+esc(ch.username) : '') +
+                        (ch.added_by_username ? ' · Admin: @'+esc(ch.added_by_username) : '') +
                     '</div>' +
-                    (ch.is_approved
-                        ? '<span style="background:#14532d;color:#4ade80;font-size:0.68rem;padding:2px 6px;border-radius:4px;">✅ AKTIV</span>'
-                        : '<span style="background:#3a1a1a;color:#f87171;font-size:0.68rem;padding:2px 6px;border-radius:4px;">⏳ WARTEND</span>') +
                 '</div>' +
+                // Badges
+                '<div style="display:flex;gap:4px;align-items:center;flex-shrink:0;">' +
+                    '<span style="font-size:0.65rem;background:#1e3a5f;color:#60a5fa;padding:1px 5px;border-radius:3px;">📚 '+(ch.kb_entry_count||0)+'</span>' +
+                    (ch.is_approved
+                        ? '<span style="font-size:0.65rem;background:#14532d;color:#4ade80;padding:1px 5px;border-radius:3px;">✅</span>'
+                        : '<span style="font-size:0.65rem;background:#3a1a1a;color:#f87171;padding:1px 5px;border-radius:3px;">⏳</span>') +
+                    (ch.ai_enabled
+                        ? '<span style="font-size:0.65rem;background:#1e3a5f;color:#818cf8;padding:1px 5px;border-radius:3px;">🤖</span>'
+                        : '') +
+                    '<span style="color:#64748b;font-size:0.8rem;margin-left:2px;" class="ch-toggle-icon">▾</span>' +
+                '</div>';
 
-                (ch.is_approved ? '' :
-                    '<button class="btn btn-success btn-sm ch-approve" data-id="'+ch.id+'" style="width:100%;margin-bottom:8px;">🔓 Freischalten</button>') +
+            // ── Expanded Body (initial hidden) ─────────────────────────────────
+            var body = document.createElement('div');
+            body.style.cssText = 'display:none;padding:0 12px 12px;border-top:1px solid #1e1e1e;';
+            body.innerHTML =
+                // Approve button
+                (!ch.is_approved
+                    ? '<button class="btn btn-success btn-sm ch-approve" data-id="'+ch.id+'" style="width:100%;margin:10px 0 6px;">🔓 Freischalten</button>'
+                    : '<div style="margin-top:10px;"></div>') +
 
+                // Mode + command
                 '<div style="display:flex;gap:8px;margin-bottom:8px;">' +
                     '<select class="ch-mode" data-id="'+ch.id+'" style="flex:1;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;">' +
                         ['smalltalk','berater'].map(function(m){ return '<option value="'+m+'"'+(ch.mode===m?' selected':'')+'>'+m+'</option>'; }).join('') +
@@ -741,40 +762,62 @@ async function loadChannels() {
                     '<input type="text" class="ch-cmd" data-id="'+ch.id+'" value="'+esc(ch.ai_command||'/ai')+'" placeholder="/ai" style="width:70px;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;text-align:center;">' +
                 '</div>' +
 
-                '<div style="margin-bottom:8px;">'+
-                    '<label style="font-size:0.7rem;color:#64748b;display:block;margin-bottom:3px;">Channel System-Prompt (leer = global)</label>'+
-                    '<textarea class="ch-sysprompt" data-id="'+ch.id+'" rows="3" placeholder="Du bist [Name], der freundliche Bot von [Channel]…" style="width:100%;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.75rem;resize:vertical;">'+esc(ch.system_prompt||'')+'</textarea>'+
-                '</div>'+
-                '<button class="btn btn-secondary btn-sm ch-kb" data-id="'+ch.id+'" style="width:100%;margin-bottom:8px;">📚 Wissen verwalten ('+(ch.kb_entry_count||0)+' Einträge)</button>'+
+                // System prompt
+                '<div style="margin-bottom:8px;">' +
+                    '<label style="font-size:0.7rem;color:#64748b;display:block;margin-bottom:3px;">System-Prompt</label>' +
+                    '<textarea class="ch-sysprompt" data-id="'+ch.id+'" rows="2" placeholder="Eigene Persönlichkeit…" style="width:100%;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.75rem;resize:vertical;">'+esc(ch.system_prompt||'')+'</textarea>' +
+                '</div>' +
+
+                // Token limits
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;">' +
-                    '<div><label style="font-size:0.7rem;color:#64748b;">Token-Limit</label>' +
-                        '<input type="number" class="ch-tlimit" data-id="'+ch.id+'" value="'+(ch.token_limit||'')+'" placeholder="∞" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
-                    '<div><label style="font-size:0.7rem;color:#64748b;">USD-Limit</label>' +
-                        '<input type="number" step="0.01" class="ch-ulimit" data-id="'+ch.id+'" value="'+(ch.usd_limit||'')+'" placeholder="∞" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
+                    '<div><label style="font-size:0.7rem;color:#64748b;">Token-Limit</label><input type="number" class="ch-tlimit" data-id="'+ch.id+'" value="'+(ch.token_limit||'')+'" placeholder="∞" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
+                    '<div><label style="font-size:0.7rem;color:#64748b;">USD-Limit</label><input type="number" step="0.01" class="ch-ulimit" data-id="'+ch.id+'" value="'+(ch.usd_limit||'')+'" placeholder="∞" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
                 '</div>' +
 
+                // Cost display
                 '<div style="background:#0d1117;border-radius:6px;padding:8px;margin-bottom:8px;font-size:0.75rem;">' +
-                    '<div style="display:flex;justify-content:space-between;margin-bottom:4px;">' +
-                        '<span style="color:#64748b;">Tokens:</span>' +
-                        '<span>'+((ch.token_used||0)).toLocaleString()+(ch.token_limit ? ' / '+ch.token_limit.toLocaleString() : '')+'</span></div>' +
+                    '<div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span style="color:#64748b;">Tokens:</span><span>'+((ch.token_used||0)).toLocaleString()+(ch.token_limit?' / '+ch.token_limit.toLocaleString():'')+'</span></div>' +
                     (ch.token_limit ? '<div style="height:4px;background:#1e1e1e;border-radius:2px;margin-bottom:4px;"><div style="height:100%;width:'+tokenPct+'%;background:'+barColor+';border-radius:2px;"></div></div>' : '') +
-                    '<div style="display:flex;justify-content:space-between;">' +
-                        '<span style="color:#64748b;">Kosten:</span>' +
-                        '<span style="color:#f59e0b;">$'+parseFloat(ch.usd_spent||0).toFixed(5)+(ch.usd_limit ? ' / $'+ch.usd_limit : '')+'</span></div>' +
+                    '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;">Kosten:</span><span style="color:#f59e0b;">$'+parseFloat(ch.usd_spent||0).toFixed(5)+(ch.usd_limit?' / $'+ch.usd_limit:'')+'</span></div>' +
                 '</div>' +
 
-                '<input type="text" class="ch-limitmsg" data-id="'+ch.id+'" value="'+esc(ch.limit_message||'')+'" placeholder="Limit-Meldung..." style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.75rem;margin-bottom:8px;">' +
+                // Limit message
+                '<input type="text" class="ch-limitmsg" data-id="'+ch.id+'" value="'+esc(ch.limit_message||'')+'" placeholder="Limit-Meldung…" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.75rem;margin-bottom:8px;">' +
 
+                // AI toggle
+                '<div style="border-top:1px solid #1e3a5f;padding-top:8px;margin-bottom:8px;">' +
+                    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">' +
+                        '<span style="font-size:0.75rem;font-weight:700;color:'+(ch.ai_enabled?'#60a5fa':'#64748b')+';">'+(ch.ai_enabled?'🤖 KI aktiv':'🔒 KI gesperrt')+'</span>' +
+                        '<button class="btn btn-sm ch-ai-toggle" data-id="'+ch.id+'" data-ai="'+(ch.ai_enabled?'1':'0')+'" style="padding:3px 8px;font-size:0.7rem;background:'+(ch.ai_enabled?'#14532d':'#1e3a5f')+';color:'+(ch.ai_enabled?'#4ade80':'#94a3b8')+';border:none;border-radius:4px;cursor:pointer;">'+(ch.ai_enabled?'✅ Deaktivieren':'🔓 Aktivieren')+'</button>' +
+                    '</div>' +
+                    '<div style="opacity:'+(ch.ai_enabled?'1':'0.35')+';pointer-events:'+(ch.ai_enabled?'auto':'none')+'">' +
+                        '<button class="btn btn-secondary btn-sm ch-kb" data-id="'+ch.id+'" style="width:100%;margin-bottom:5px;">📚 Wissen ('+ch.kb_entry_count+' Einträge)</button>' +
+                    '</div>' +
+                '</div>' +
+
+                // Action buttons
+                '<div style="display:flex;gap:6px;margin-bottom:6px;">' +
+                    '<button class="btn btn-secondary btn-sm ch-schedule" data-id="'+ch.id+'" style="flex:1;">⏰ Geplant</button>' +
+                    '<button class="btn btn-secondary btn-sm ch-safelist" data-id="'+ch.id+'" style="flex:1;opacity:'+(ch.ai_enabled?'1':'0.4')+';pointer-events:'+(ch.ai_enabled?'auto':'none')+';">🛡 Safelist</button>' +
+                '</div>' +
                 '<div style="display:flex;gap:6px;">' +
                     '<button class="btn btn-secondary btn-sm ch-reset" data-id="'+ch.id+'" style="flex:1;">↺ Reset</button>' +
                     '<button class="icon-btn ch-delete" data-id="'+ch.id+'">🗑</button>' +
-                '</div>' +
-                (ch.username ? '<div style="font-size:0.68rem;color:#555;margin-top:4px;">@'+esc(ch.username)+'</div>' : '');
+                '</div>';
 
+            // Toggle logic
+            header.onclick = function() {
+                var isOpen = body.style.display !== 'none';
+                body.style.display = isOpen ? 'none' : 'block';
+                var icon = header.querySelector('.ch-toggle-icon');
+                if (icon) icon.textContent = isOpen ? '▾' : '▴';
+            };
+
+            card.appendChild(header);
+            card.appendChild(body);
             el.appendChild(card);
         });
 
-        // Event delegation
         el.addEventListener('click', function(e) {
             var approve = e.target.closest('.ch-approve');
             var reset   = e.target.closest('.ch-reset');
