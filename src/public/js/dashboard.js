@@ -888,7 +888,7 @@ async function loadChannels() {
 
                 // Token limits
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;">' +
-                    '<div><label style="font-size:0.7rem;color:#64748b;">Token-Limit</label><input type="number" class="ch-tlimit" data-id="'+ch.id+'" value="'+(ch.token_limit||'')+'" placeholder="∞" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
+                    '<div><label style="font-size:0.7rem;color:#64748b;">Token-Budget (Volumen)</label><input type="number" class="ch-tlimit" data-id="'+ch.id+'" value="'+(ch.token_limit||'')+'" placeholder="∞" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
                     '<div><label style="font-size:0.7rem;color:#64748b;">USD-Limit</label><input type="number" step="0.01" class="ch-ulimit" data-id="'+ch.id+'" value="'+(ch.usd_limit||'')+'" placeholder="∞" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
                 '</div>' +
 

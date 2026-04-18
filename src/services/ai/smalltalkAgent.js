@@ -33,8 +33,13 @@ const smalltalkAgent = {
       await this._registerNewChannel(chatId, text);
       return { reply: null }; // Keine Antwort, bis freigeschalten
     }
-    if (!channel.is_approved || !channel.is_active) {
-      return { reply: null }; // Noch nicht freigeschalten
+    // is_active kann false sein wenn Bot als Admin entfernt wurde –
+    // AI läuft trotzdem solange is_approved && ai_enabled gesetzt sind
+    if (!channel.is_approved) {
+      return { reply: null }; // Nicht freigeschaltet
+    }
+    if (!channel.ai_enabled) {
+      return { reply: null }; // AI nicht aktiviert
     }
 
     // 2. Token/USD-Limit prüfen

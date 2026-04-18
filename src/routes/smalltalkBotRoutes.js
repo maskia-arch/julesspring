@@ -261,60 +261,97 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     case "ai": {
       if (!ch?.ai_enabled) {
         await tg.call("sendMessage", { chat_id: String(userId),
-          text: `🤖 <b>KI-Features</b>\n\nStatus: ❌ Inaktiv\n\nFür Aktivierung wende dich an @autoacts.`,
+          text: "🤖 <b>KI-Features</b>\n\nStatus: ❌ Inaktiv\n\nFür Aktivierung wende dich an @autoacts.",
           parse_mode: "HTML" });
         break;
       }
-      // AI Dashboard
-      const usedTok = ch?.output_tokens_used || 0;
-      const limitTok = ch?.token_limit;
-      const pct = limitTok ? Math.round(usedTok / limitTok * 100) : null;
-      const tokenInfo = limitTok
-        ? `${usedTok.toLocaleString()} / ${limitTok.toLocaleString()} Output-Tokens (${pct}%)`
-        : `${usedTok.toLocaleString()} Output-Tokens (unbegrenzt)`;
+      const tokenInfo = ch.token_limit
+        ? `🔋 Token-Budget: ${ch.token_used||0} / ${ch.token_limit} (${Math.round((ch.token_used||0)/ch.token_limit*100)}%)`
+        : "🔋 Token-Budget: unbegrenzt";
+      const lastSumm = ch.last_summary_at
+        ? `Letzte Zusammenfassung: ${new Date(ch.last_summary_at).toLocaleDateString("de-DE")}`
+        : "Noch keine Zusammenfassung erstellt";
 
       await tg.call("sendMessage", {
         chat_id: String(userId),
-        text: `🤖 <b>KI-Features Dashboard</b>\n\nChannel: ${ch?.title||channelId}\nStatus: ✅ Aktiv\nToken-Verbrauch: ${tokenInfo}\n\nWas möchtest du verwalten?`,
+        text: `🤖 <b>KI-Features Dashboard</b>\n\n${tokenInfo}\n${lastSumm}\n\nWas möchtest du einstellen?`,
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [
-          [{ text: "✏️ System-Prompt",     callback_data: `cfg_ai_prompt_${channelId}` },
-           { text: "📊 Tageszusammenfassung", callback_data: `cfg_ai_summary_${channelId}` }],
-          [{ text: "↺ Token zurücksetzen",  callback_data: `cfg_ai_reset_${channelId}` }]
+          [{ text: "✏️ System-Prompt",       callback_data: `cfg_ai_prompt_${channelId}` }],
+          [{ text: "📰 Tageszusammenfassung", callback_data: `cfg_ai_summary_${channelId}` }],
+          [{ text: "📊 Mein Token-Verbrauch", callback_data: `cfg_ai_stats_${channelId}` }]
         ]}
       });
       break;
     }
     case "ai_prompt": {
-      pendingInputs[String(userId)] = { action: "set_system_prompt", channelId };
-      const cur = ch?.system_prompt || "(nicht gesetzt)";
+      pendingInputs[String(userId)] = { action: "set_ai_prompt", channelId };
       await tg.call("sendMessage", { chat_id: String(userId),
-        text: `✏️ <b>System-Prompt</b>\n\nAktuell:\n<i>${cur.substring(0,200)}</i>\n\nSende den neuen System-Prompt oder /cancel:`,
+        text: `✏️ <b>System-Prompt</b>\n\nAktuell:\n<i>${(ch?.system_prompt||"(kein)").substring(0,200)}</i>\n\nSende den neuen System-Prompt:\n/cancel zum Abbrechen`,
+        parse_mode: "HTML" });
+      break;
+    }
+    case "ai_stats": {
+      const tUsed  = ch?.token_used  || 0;
+      const tLimit = ch?.token_limit;
+      const exhausted = ch?.token_budget_exhausted || false;
+      const pct = tLimit ? Math.round(tUsed / tLimit * 100) : 0;
+      const bar = tLimit ? `[${"█".repeat(Math.min(10, Math.round(pct/10)))}${"░".repeat(Math.max(0, 10 - Math.round(pct/10)))}] ${pct}%` : "";
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `📊 <b>Token-Verbrauch</b>\n\n` +
+              `🔋 ${tUsed.toLocaleString()} / ${tLimit ? tLimit.toLocaleString() : "∞"} Token\n` +
+              (bar ? `${bar}\n` : "") +
+              `\nStatus: ${exhausted ? "⛔ Budget erschöpft" : "✅ Aktiv"}\n\n` +
+              (exhausted
+                ? "⚠️ Dein Token-Budget ist aufgebraucht. Kontaktiere @autoacts um Token aufzuladen."
+                : `Für Token-Aufladung: @autoacts`),
         parse_mode: "HTML" });
       break;
     }
     case "ai_summary": {
-      await tg.call("sendMessage", { chat_id: String(userId), text: "⏳ Erstelle Tageszusammenfassung…", parse_mode: "HTML" });
-      const channelAiSvc = require("../services/ai/channelAiService");
-      const settings2 = await getSettings();
-      const result = await channelAiSvc.generateDailySummary(channelId, userId, settings2?.smalltalk_bot_token);
-      if (result.error) {
-        await tg.call("sendMessage", { chat_id: String(userId), text: "❌ " + result.error, parse_mode: "HTML" });
-      } else if (result.cached) {
+      // Check 24h cooldown
+      const lastSummaryAt = ch?.last_summary_at ? new Date(ch.last_summary_at) : null;
+      const hoursSince = lastSummaryAt ? (Date.now() - lastSummaryAt.getTime()) / 3600000 : 99;
+      if (hoursSince < 24) {
+        const nextAt = new Date(lastSummaryAt.getTime() + 86400000).toLocaleTimeString("de-DE");
         await tg.call("sendMessage", { chat_id: String(userId),
-          text: `📊 <b>Heutiger Tagesbericht</b> (bereits erstellt)\n\n${result.summary}`,
-          parse_mode: "HTML" });
-      } else {
-        await tg.call("sendMessage", { chat_id: String(userId),
-          text: `📊 <b>Tagesbericht</b>\n\n👥 +${result.newCount} neu · -${result.leftCount} ausgetreten · ${result.msgCount} Nachrichten\n\n${result.summary}`,
-          parse_mode: "HTML" });
+          text: `⏳ Tageszusammenfassung nur 1x pro 24h.\nNächste möglich um ${nextAt}.` });
+        break;
       }
+      // Kosten-Schätzung: ~400 Output-Token für Zusammenfassung
+      const SUMMARY_TOKEN_COST = 400;
+      const tUsed2  = ch?.token_used  || 0;
+      const tLimit2 = ch?.token_limit;
+      const remaining = tLimit2 ? tLimit2 - tUsed2 : Infinity;
+      const willGoNeg = tLimit2 && (tUsed2 + SUMMARY_TOKEN_COST) > tLimit2;
+
+      if (willGoNeg) {
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: `⚠️ <b>Achtung!</b> Diese Zusammenfassung kostet ca. <b>${SUMMARY_TOKEN_COST} Token</b>.\n` +
+                `Dein verbleibendes Budget: <b>${remaining.toLocaleString()} Token</b>.\n\n` +
+                `Nach der Zusammenfassung wird dein Token-Konto ins Minus gehen und die KI vorübergehend deaktiviert.\n\nTrotzdem erstellen?`,
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [[
+            { text: "✅ Ja, erstellen",   callback_data: `cfg_ai_summary_confirm_${channelId}` },
+            { text: "❌ Abbrechen",       callback_data: `cfg_ai_abort_${channelId}` }
+          ]]}
+        });
+        break;
+      }
+
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `⏳ Erstelle Tageszusammenfassung… (~${SUMMARY_TOKEN_COST} Token)` });
+      await _runDailySummary(supabase_db, channelId, userId, tg, ch, SUMMARY_TOKEN_COST);
       break;
     }
-    case "ai_reset": {
-      await supabase_db.from("bot_channels").update({ output_tokens_used: 0, token_notified: false, ai_enabled: true }).eq("id", channelId);
-      await tg.call("sendMessage", { chat_id: String(userId),
-        text: "✅ Token-Zähler zurückgesetzt und AI-Features reaktiviert.", parse_mode: "HTML" });
+    case "ai_summary_confirm": {
+      const SUMMARY_TOKEN_COST2 = 400;
+      await tg.call("sendMessage", { chat_id: String(userId), text: "⏳ Erstelle Zusammenfassung…" });
+      await _runDailySummary(supabase_db, channelId, userId, tg, ch, SUMMARY_TOKEN_COST2);
+      break;
+    }
+    case "ai_abort": {
+      await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Abgebrochen." });
       break;
     }
   }
@@ -393,37 +430,36 @@ async function handlePendingInput(tg, supabase_db, userId, text, settings, msg) 
     const freeCount = await _getRepeatCount(channelId);
     const freeMode = pending.freeMode || !pending.aiOn;
     const atLimit = freeMode && freeCount >= 3;
+    const pinOpt    = "📌 Anpinnen: " + (pending.pinAfterSend ? "✅" : "❌");
+    const delPrevOpt = "🔄 Vorherige löschen: " + (pending.deletePrevious ? "✅" : "❌");
     await tg.call("sendMessage", {
       chat_id: String(userId),
-      text: "🔁 <b>Schritt 4/4: Wiederholen?</b>\n\n" +
-            (atLimit ? "⚠️ Free-Limit erreicht (3/3 Wiederholungen). Einmalig möglich.\n\n" : "") +
-            (pending.aiOn ? "Wähle die Wiederholung:" : "Wähle (max. 3 Wiederholungen im Free-Plan):"),
+      text: "🔁 <b>Schritt 4/4: Wiederholung & Optionen</b>\n\n" +
+            (atLimit ? "⚠️ Free-Limit: max. 3 Wiederholungs-Nachrichten ohne KI-Erweiterung.\n\n" : "") +
+            (pending.aiOn ? "Unbegrenzte Wiederholungen verfügbar:" : "Free-Plan (max 3):"),
       parse_mode: "HTML",
       reply_markup: { inline_keyboard: [
-        [{ text: "1x – Einmalig",      callback_data: "sched_repeat_once_" + channelId },
-         { text: "Täglich",             callback_data: atLimit ? "sched_noop" : "sched_repeat_daily_" + channelId }],
-        [{ text: "Wöchentlich",         callback_data: atLimit ? "sched_noop" : "sched_repeat_weekly_" + channelId },
-         { text: "Monatlich",           callback_data: atLimit ? "sched_noop" : "sched_repeat_monthly_" + channelId }]
+        [{ text: "1x – Einmalig",  callback_data: "sched_repeat_once_" + channelId },
+         { text: "Täglich",        callback_data: atLimit ? "sched_noop" : "sched_repeat_daily_" + channelId }],
+        [{ text: "Wöchentlich",    callback_data: atLimit ? "sched_noop" : "sched_repeat_weekly_" + channelId },
+         { text: "Monatlich",      callback_data: atLimit ? "sched_noop" : "sched_repeat_monthly_" + channelId }],
+        [{ text: pinOpt,           callback_data: "sched_opt_pin_" + channelId },
+         { text: delPrevOpt,       callback_data: "sched_opt_delprev_" + channelId }]
       ]}
     });
     return true;
   }
 
-  // ── Welcome/Goodbye Nachricht setzen ──────────────────────────────────────
-  if (action === "set_system_prompt") {
+  // ── Welcome/Goodbye + AI Prompt setzen ──────────────────────────────────────
+  if (action === "set_welcome" || action === "set_goodbye" || action === "set_ai_prompt") {
     delete pendingInputs[String(userId)];
-    await supabase_db.from("bot_channels").update({ system_prompt: text, updated_at: new Date() }).eq("id", channelId);
-    await tg.call("sendMessage", { chat_id: String(userId),
-      text: "✅ System-Prompt gespeichert!", parse_mode: "HTML" });
-    return true;
-  }
-
-  if (action === "set_welcome" || action === "set_goodbye") {
-    delete pendingInputs[String(userId)];
-    const field = action === "set_welcome" ? "welcome_msg" : "goodbye_msg";
+    let field, label;
+    if (action === "set_welcome")   { field = "welcome_msg";   label = "Willkommensnachricht"; }
+    if (action === "set_goodbye")   { field = "goodbye_msg";   label = "Abschiedsnachricht"; }
+    if (action === "set_ai_prompt") { field = "system_prompt"; label = "System-Prompt"; }
     await supabase_db.from("bot_channels").update({ [field]: text, updated_at: new Date() }).eq("id", channelId);
     await tg.call("sendMessage", { chat_id: String(userId),
-      text: `✅ ${action === "set_welcome" ? "Willkommens" : "Abschied"}snachricht gespeichert!`, parse_mode: "HTML" });
+      text: `✅ <b>${label}</b> gespeichert!`, parse_mode: "HTML" });
     return true;
   }
 
@@ -509,6 +545,119 @@ async function handlePendingInput(tg, supabase_db, userId, text, settings, msg) 
   return false;
 }
 
+
+// ── Token-Budget prüfen und ggf. AI deaktivieren ──────────────────────────────
+async function _checkTokenBudget(supabase_db, channel, tg, token) {
+  if (!channel?.token_limit || channel?.token_budget_exhausted) return;
+  if ((channel.token_used || 0) >= channel.token_limit) {
+    // Budget erschöpft → AI deaktivieren
+    await supabase_db.from("bot_channels").update({
+      ai_enabled: false, token_budget_exhausted: true
+    }).eq("id", String(channel.id)).catch(() => {});
+
+    // Admin benachrichtigen
+    if (channel.added_by_user_id && token) {
+      await tg.call("sendMessage", { chat_id: String(channel.added_by_user_id),
+        text: `⚠️ <b>Token-Budget für "${channel.title}" erschöpft!</b>\n\n` +
+              `Verbraucht: ${channel.token_used.toLocaleString()} / ${channel.token_limit.toLocaleString()} Token\n\n` +
+              `KI-Features wurden deaktiviert. Alle anderen Features laufen weiter.\n` +
+              `Token aufladen: @autoacts`,
+        parse_mode: "HTML" }).catch(() => {});
+    }
+    return true; // Budget exhausted
+  }
+  return false;
+}
+
+// ── Tages-Zusammenfassung ──────────────────────────────────────────────────────
+async function _createDailySummary(supabase_db, channelId, tg, adminChatId) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) return null;
+
+  const since = new Date(Date.now() - 86400000).toISOString();
+
+  // Channel-Kontext der letzten 24h laden (nutzt channel_context Tabelle)
+  try {
+    const { data: ctxMsgs } = await supabase_db.from("channel_context")
+      .select("username, message, msg_date")
+      .eq("channel_id", String(channelId))
+      .gte("msg_date", since)
+      .order("msg_date", { ascending: true })
+      .limit(200);
+
+    const { data: members } = await supabase_db.from("channel_members")
+      .select("is_deleted").eq("channel_id", String(channelId));
+
+    const joins  = (members || []).filter(m => !m.is_deleted).length;
+    const leaves = (members || []).filter(m =>  m.is_deleted).length;
+
+    if (!ctxMsgs?.length) return `📰 <b>Tageszusammenfassung</b>\n\nKeine Nachrichten in den letzten 24h.\n👥 Eintritte: ${joins} · Austritte: ${leaves}`;
+
+    // Datensparsam: nur anonymisierter Inhalt (keine user_ids oder usernames)
+    const msgTexts = ctxMsgs.map(m => m.message).filter(Boolean).join("\n").substring(0, 4000);
+
+    const axios = require("axios");
+    const resp = await axios.post("https://api.openai.com/v1/chat/completions",
+      { model: "gpt-4o-mini", max_tokens: 400, temperature: 0.3,
+        messages: [{
+          role: "system",
+          content: "Du fasst Telegram-Gruppennachrichten zusammen. Zensiere Beleidigungen mit ***. Erwähne keine Usernamen. Erstelle einen Tagesbericht in 5-8 Stichpunkten."
+        },{
+          role: "user",
+          content: `Nachrichten der letzten 24h:\n${msgTexts}`
+        }]},
+      { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, timeout: 30000 }
+    );
+
+    const summary = resp.data.choices[0].message.content.trim();
+    return `📰 <b>Tageszusammenfassung</b>\n\n${summary}\n\n` +
+           `👥 Mitglieder: ~${joins} aktiv · ${leaves} ausgetreten`;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ── _runDailySummary: Zusammenfassung ausführen + Token abrechnen ─────────────
+async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch, tokenCost) {
+  const summary = await _createDailySummary(supabase_db, channelId, tg, String(adminUserId));
+  if (!summary) {
+    await tg.call("sendMessage", { chat_id: String(adminUserId),
+      text: "❌ Fehler bei der Zusammenfassung. Bitte später erneut versuchen." });
+    return;
+  }
+
+  // Token abrechnen (Output-Token)
+  try {
+    const result = await supabase_db.rpc("increment_channel_usage",
+      { p_id: String(channelId), p_tokens: tokenCost, p_usd: tokenCost * 0.0000011 });
+    if (result.error) throw result.error;
+  } catch {
+    const { data: cur } = await supabase_db.from("bot_channels")
+      .select("token_used, usd_spent").eq("id", String(channelId)).maybeSingle();
+    if (cur) {
+      await supabase_db.from("bot_channels").update({
+        token_used: (cur.token_used || 0) + tokenCost,
+        usd_spent:  parseFloat(((cur.usd_spent || 0) + tokenCost * 0.0000011).toFixed(6))
+      }).eq("id", String(channelId)).catch(() => {});
+    }
+  }
+
+  await supabase_db.from("bot_channels")
+    .update({ last_summary_at: new Date() }).eq("id", String(channelId)).catch(() => {});
+
+  // Prüfen ob Budget überschritten
+  const { data: updated } = await supabase_db.from("bot_channels")
+    .select("token_used, token_limit").eq("id", String(channelId)).maybeSingle();
+  let note = "";
+  if (updated?.token_limit && updated.token_used > updated.token_limit) {
+    await supabase_db.from("bot_channels")
+      .update({ ai_enabled: false, token_budget_exhausted: true }).eq("id", String(channelId)).catch(() => {});
+    note = "\n\n⚠️ Token-Budget überschritten. KI vorübergehend deaktiviert. Token aufladen: @autoacts";
+  }
+
+  await tg.call("sendMessage", { chat_id: String(adminUserId),
+    text: summary + note, parse_mode: "HTML" });
+}
 
 async function _getRepeatCount(channelId) {
   try {
@@ -662,46 +811,6 @@ router.post("/smalltalk", (req, res) => {
           return;
         }
 
-        // Schedule options callbacks (pin/delete_prev)
-        if (data.startsWith("sched_opt_")) {
-          const optParts = data.split("_");
-          const optType  = optParts[2]; // pin / del / both / none
-          const optChanId = optParts[3];
-          const wiz = pendingInputs[String(qUserId)];
-          if (!wiz) { await tg.call("answerCallbackQuery", { callback_query_id: q.id }); return; }
-          delete pendingInputs[String(qUserId)];
-
-          const pinMsg  = optType === "pin"  || optType === "both";
-          const delPrev = optType === "del"  || optType === "both";
-          const cronMap2 = { daily: "0 9 * * *", weekly: "0 9 * * 1", monthly: "0 9 1 * *" };
-
-          try {
-            await supabase.from("scheduled_messages").insert([{
-              channel_id:      optChanId,
-              message:         wiz.msgText || "",
-              photo_file_id:   wiz.fileId || null,
-              photo_url:       null,
-              cron_expr:       wiz.cronExpr || null,
-              next_run_at:     wiz.nextRunAt || new Date().toISOString(),
-              repeat:          wiz.isRepeat || false,
-              is_active:       true,
-              pin_message:     pinMsg,
-              delete_previous: delPrev
-            }]);
-            const rLabel = { once: "einmalig", daily: "täglich", weekly: "wöchentlich", monthly: "monatlich" }[wiz.repeatType] || "–";
-            const dt = wiz.nextRunAt ? new Date(wiz.nextRunAt).toLocaleString("de-DE") : "sofort";
-            const opts = [pinMsg ? "📌 Anpinnen" : null, delPrev ? "🔄 Vorherige löschen" : null].filter(Boolean).join(", ") || "–";
-            await tg.call("sendMessage", { chat_id: String(qUserId),
-              text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n` +
-                    `📝 ${(wiz.msgText||"").substring(0,80)}${wiz.fileId ? " 📎" : ""}\n` +
-                    `📅 ${dt} · 🔁 ${rLabel}\n⚙️ ${opts}`,
-              parse_mode: "HTML" });
-          } catch (e3) {
-            await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Fehler: " + e3.message });
-          }
-          return;
-        }
-
         // Schedule repeat selection callbacks
         if (data.startsWith("sched_repeat_") || data === "sched_noop") {
           if (data === "sched_noop") {
@@ -718,26 +827,65 @@ router.post("/smalltalk", (req, res) => {
           }
           delete pendingInputs[String(qUserId)];
 
+          // Toggle pin/delprev options (keeps wizard state)
+          if (repeatType === "opt") {
+            const subOpt = parts2[3]; // pin or delprev
+            const key = String(qUserId);
+            if (pendingInputs[key]) {
+              if (subOpt === "pin")     pendingInputs[key].pinAfterSend   = !pendingInputs[key].pinAfterSend;
+              if (subOpt === "delprev") pendingInputs[key].deletePrevious = !pendingInputs[key].deletePrevious;
+            }
+            // Re-show the same step
+            await tg.call("answerCallbackQuery", {
+              callback_query_id: q.id,
+              text: subOpt === "pin" ? "📌 Anpinnen geändert" : "🔄 Löschen geändert"
+            });
+            // Re-render options
+            const p2 = pendingInputs[key] || {};
+            const pinOpt2    = "📌 Anpinnen: " + (p2.pinAfterSend ? "✅" : "❌");
+            const delPrevOpt2 = "🔄 Vorherige löschen: " + (p2.deletePrevious ? "✅" : "❌");
+            await tg.call("editMessageReplyMarkup", {
+              chat_id: String(qUserId),
+              message_id: q.message?.message_id,
+              reply_markup: { inline_keyboard: [
+                [{ text: "1x – Einmalig",  callback_data: "sched_repeat_once_" + chanId2 },
+                 { text: "Täglich",        callback_data: "sched_repeat_daily_" + chanId2 }],
+                [{ text: "Wöchentlich",    callback_data: "sched_repeat_weekly_" + chanId2 },
+                 { text: "Monatlich",      callback_data: "sched_repeat_monthly_" + chanId2 }],
+                [{ text: pinOpt2,          callback_data: "sched_opt_pin_" + chanId2 },
+                 { text: delPrevOpt2,      callback_data: "sched_opt_delprev_" + chanId2 }]
+              ]}
+            }).catch(() => {});
+            return;
+          }
+
           const cronMap = { daily: "0 9 * * *", weekly: "0 9 * * 1", monthly: "0 9 1 * *" };
           const isRepeat = repeatType !== "once";
           const cronExpr = isRepeat ? cronMap[repeatType] || null : null;
 
-          // Ask about pin + delete_previous options before saving
-          pendingInputs[String(qUserId)] = {
-            ...wizard, action: "sched_wizard_opts",
-            repeatType, cronExpr, isRepeat, chanId: chanId2
-          };
-          await tg.call("sendMessage", {
-            chat_id: String(qUserId),
-            text: "⚙️ <b>Optionen</b>\n\nMöchtest du zusätzliche Optionen?",
-            parse_mode: "HTML",
-            reply_markup: { inline_keyboard: [
-              [{ text: "📌 Anpinnen",                     callback_data: "sched_opt_pin_" + chanId2 },
-               { text: "🔄 Vorherige löschen",            callback_data: "sched_opt_del_" + chanId2 }],
-              [{ text: "📌 Anpinnen + Vorherige löschen", callback_data: "sched_opt_both_" + chanId2 }],
-              [{ text: "▶️ Ohne Optionen speichern",      callback_data: "sched_opt_none_" + chanId2 }]
-            ]}
-          });
+          try {
+            await supabase.from("scheduled_messages").insert([{
+              channel_id:      chanId2,
+              message:         wizard.msgText || "",
+              photo_file_id:   wizard.fileId || null,
+              photo_url:       null,
+              cron_expr:       cronExpr,
+              next_run_at:     wizard.nextRunAt || new Date().toISOString(),
+              repeat:          isRepeat,
+              is_active:       true,
+              pin_after_send:  wizard.pinAfterSend  || false,
+              delete_previous: wizard.deletePrevious || false
+            }]);
+            const repeatLabel = { once: "einmalig", daily: "täglich", weekly: "wöchentlich", monthly: "monatlich" }[repeatType] || repeatType;
+            const dt = wizard.nextRunAt ? new Date(wizard.nextRunAt).toLocaleString("de-DE") : "sofort";
+            await tg.call("sendMessage", { chat_id: String(qUserId),
+              text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n` +
+                    `📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n` +
+                    `📅 Zeit: ${dt}\n🔁 Wiederholung: ${repeatLabel}`,
+              parse_mode: "HTML" });
+          } catch (e2) {
+            await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Fehler beim Speichern: " + e2.message });
+          }
           return;
         }
 
@@ -863,29 +1011,6 @@ router.post("/smalltalk", (req, res) => {
       if (!text) return;
 
       // ── Admin-Befehle ─────────────────────────────────────────────────────
-
-      // /ban [Grund] – Reply auf eine Nachricht (Admin only)
-      if (msg.reply_to_message && (text === "/ban" || text.startsWith("/ban "))) {
-        if (!await isGroupAdmin(token, chatId, from.id)) return;
-        const banTarget = msg.reply_to_message.from;
-        if (!banTarget?.id) return;
-        const reason = text.replace(/^\/ban\s*/i, "").trim() || "Kein Grund angegeben";
-        try {
-          await tg.call("banChatMember", { chat_id: chatId, user_id: banTarget.id });
-          await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
-          const banMsg = await tg.send(chatId,
-            "\u26d4 @" + (banTarget.username || banTarget.first_name || banTarget.id) +
-            " wurde gebannt.\n<i>Grund: " + reason + "</i>");
-          if (banMsg?.message_id) {
-            void safelistService.trackBotMessage(chatId, banMsg.message_id, "temp", 5 * 60 * 1000);
-          }
-        } catch (e) {
-          const errMsg = await tg.send(chatId, "\u274c Bann fehlgeschlagen: " + e.message);
-          if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 10000);
-        }
-        return;
-      }
-
       const adminCmds = ["/admin", "/menu", "/help"];
       if (adminCmds.some(cmd => text.startsWith(cmd))) {
         if (await isGroupAdmin(token, chatId, from.id)) {
@@ -1069,17 +1194,31 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
         return;
       }
 
+      // /ban – Reply auf Nachricht zum Bannen (nur Admins)
+      if ((text === "/ban" || text.startsWith("/ban ") || text.startsWith("/ban@")) && msg.reply_to_message) {
+        if (!await isGroupAdmin(token, chatId, from.id)) return;
+        const banTarget = msg.reply_to_message.from;
+        if (!banTarget?.id) return;
+        const banReason = text.replace(/^\/ban(@\w+)?\s*/i, "").trim() || "Kein Grund angegeben";
+        try {
+          await tg.call("banChatMember", { chat_id: chatId, user_id: banTarget.id, revoke_messages: false });
+          const banMsg = await tg.send(chatId,
+            `🚫 @${banTarget.username || banTarget.first_name || banTarget.id} wurde gebannt.\nGrund: ${banReason.substring(0,100)}`
+          );
+          // Auto-delete Bestätigung nach 5 Minuten
+          if (banMsg?.message_id) {
+            void safelistService.trackBotMessage(chatId, banMsg.message_id, "temp", 5 * 60 * 1000);
+          }
+          // Original-Nachricht löschen
+          await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+        } catch (e2) {
+          logger.warn("[Ban] Fehler:", e2.message);
+        }
+        return;
+      }
+
       // /ai [Frage] – Nur wenn AI freigeschaltet
       const aiMatch = text.match(/^\/ai\s+(.*)/i);
-      if (aiMatch && ch?.is_approved) {
-        // Check token limit
-        const channelAiSvc = require("../services/ai/channelAiService");
-        const aiOk = await channelAiSvc.checkAiAvailable(chatId);
-        if (!aiOk) {
-          await tg.send(chatId, "🤖 KI aktuell nicht verfügbar – wende dich an den Channel Admin für mehr Informationen.");
-          return;
-        }
-      }
       if (aiMatch && ch?.is_approved && ch?.ai_enabled) {
         const question = aiMatch[1].trim();
         // Kontext: letzte 3 Nachrichten des Users
@@ -1093,6 +1232,9 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
           // AI-Antworten bleiben dauerhaft
           await tg.send(chatId, result.reply);
         }
+      } else if (aiMatch && ch && ch.token_budget_exhausted) {
+        const sent = await tg.send(chatId, "⚠️ KI aktuell nicht verfügbar. Richte dich an den Channel-Admin für mehr Informationen.");
+        if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 15000);
       } else if (aiMatch && ch && !ch.ai_enabled) {
         const sent = await tg.send(chatId, "🔒 AI-Features sind für diesen Channel noch nicht freigeschaltet.\n\nWende dich an @autoacts für die Aktivierung.");
         if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 15000);
