@@ -59,6 +59,12 @@ async function isGroupAdmin(token, chatId, userId) {
 // Bot-Einstellungsmenü (nur für Channel-Admins, kein Dashboard-Zugriff nötig)
 // ══════════════════════════════════════════════════════════════════════════════
 
+function backBtn(channelId, lang) {
+  const labels = { de: "◀️ Zurück", en: "◀️ Back", es: "◀️ Volver",
+                   zh: "◀️ 返回", ar: "◀️ عودة", fr: "◀️ Retour" };
+  return [{ text: labels[lang] || "◀️ Zurück", callback_data: `cfg_back_${channelId}` }];
+}
+
 async function sendSettingsMenu(tg, sendTo, channelId, ch) {
   // Resolve language first — everything depends on it
   const lang      = ch?.bot_language || "de";
@@ -164,7 +170,8 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
           [{ text: slEnabled ? "🔴 Safelist deaktivieren" : "🟢 Safelist aktivieren",
              callback_data: `cfg_sl_toggle_${channelId}` }],
           [{ text: "📋 Offene Reviews", callback_data: `cfg_sl_reviews_${channelId}` },
-           { text: "📊 Übersicht",      callback_data: `cfg_sl_overview_${channelId}` }]
+           { text: "📊 Übersicht",      callback_data: `cfg_sl_overview_${channelId}` }],
+          [backBtn(channelId, ch?.bot_language||"de")]
         ]}
       });
       break;
@@ -237,7 +244,8 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         chat_id: String(userId), text: txt, parse_mode: "HTML",
         reply_markup: { inline_keyboard: [
           [{ text: "➕ Neue Nachricht erstellen", callback_data: `cfg_sched_new_${channelId}` }],
-          ...(schedMsgs?.length ? [[{ text: "🗑 Nachricht löschen", callback_data: `cfg_sched_del_${channelId}` }]] : [])
+          ...(schedMsgs?.length ? [[{ text: "🗑 Nachricht löschen", callback_data: `cfg_sched_del_${channelId}` }]] : []),
+          [backBtn(channelId, ch?.bot_language||"de")]
         ]}
       });
       break;
@@ -297,7 +305,8 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
           [{ text: "✏️ System-Prompt",       callback_data: `cfg_ai_prompt_${channelId}` }],
           [{ text: "📰 Tageszusammenfassung", callback_data: `cfg_ai_summary_${channelId}` }],
           [{ text: "📊 Mein Token-Verbrauch", callback_data: `cfg_ai_stats_${channelId}` }],
-          [{ text: "🔇 Gesperrte Themen",    callback_data: `cfg_ai_threads_${channelId}` }]
+          [{ text: "🔇 Gesperrte Themen",    callback_data: `cfg_ai_threads_${channelId}` }],
+          [backBtn(channelId, ch?.bot_language||"de")]
         ]}
       });
       break;
@@ -355,7 +364,8 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
           reply_markup: { inline_keyboard: [[
             { text: "✅ Ja, erstellen",   callback_data: `cfg_ai_summary_confirm_${channelId}` },
             { text: "❌ Abbrechen",       callback_data: `cfg_ai_abort_${channelId}` }
-          ]]}
+          ],[backBtn(channelId, ch?.bot_language||"de")]]
+          }
         });
         break;
       }
@@ -400,8 +410,13 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
           ? `🌐 <b>Bot-Sprache</b> | <b>Bot Language</b>\n\nAktuell: ${SUPPORTED_LANGUAGES[currentLang]}`
           : "🌐 Sprache wählen",
         parse_mode: "HTML",
-        reply_markup: { inline_keyboard: langButtons }
+        reply_markup: { inline_keyboard: [...langButtons, [backBtn(channelId, currentLang)]] }
       });
+      break;
+    }
+    case "back": {
+      // Back to main settings menu
+      await sendSettingsMenu(tg, String(userId), channelId, ch);
       break;
     }
     case "setlang": {
@@ -695,10 +710,21 @@ async function _createDailySummary(supabase_db, channelId) {
     };
   }
 
-  // Format: [Zeit] User-ID/Username: Nachricht
+  // Build username lookup from channel_members
+  let userNames = {};
+  try {
+    const { data: memberList } = await supabase_db.from("channel_members")
+      .select("user_id, username, first_name").eq("channel_id", String(channelId));
+    (memberList || []).forEach(m => {
+      userNames[String(m.user_id)] = m.username ? "@" + m.username : (m.first_name || String(m.user_id));
+    });
+  } catch (_) {}
+
+  // Format: [Zeit] @Username: Nachricht
   const lines = ctxMsgs.map(m => {
-    const t = new Date(m.created_at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-    return `[${t}] User${m.user_id}: ${(m.content || "").substring(0, 200)}`;
+    const ts = new Date(m.created_at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    const who = userNames[String(m.user_id)] || String(m.user_id);
+    return `[${ts}] ${who}: ${(m.content || "").substring(0, 200)}`;
   }).join("\n").substring(0, 5000);
 
   try {
@@ -810,7 +836,7 @@ async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch, lan
 
   // Zusammenfassung senden (erst nach Abrechnung → zeigt korrekten Verbrauch)
   await tg.call("sendMessage", { chat_id: String(adminUserId),
-    text: result.text + `\n\n<i>📊 ${billedTokens} Token berechnet (${rawOutTokens} × 2)</i>` + note,
+    text: result.text + `\n\n<i>📊 Dir wurden ${billedTokens} Token berechnet.</i>` + note,
     parse_mode: "HTML" });
 }
 
