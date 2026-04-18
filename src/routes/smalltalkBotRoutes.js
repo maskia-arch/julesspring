@@ -347,13 +347,13 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
 
       await tg.call("sendMessage", { chat_id: String(userId),
         text: `⏳ Erstelle Tageszusammenfassung… (~${SUMMARY_TOKEN_COST} Token)` });
-      await _runDailySummary(supabase_db, channelId, userId, tg, ch, SUMMARY_TOKEN_COST);
+      await _runDailySummary(supabase_db, channelId, userId, tg, ch);
       break;
     }
     case "ai_summary_confirm": {
       const SUMMARY_TOKEN_COST2 = 400;
       await tg.call("sendMessage", { chat_id: String(userId), text: "⏳ Erstelle Zusammenfassung…" });
-      await _runDailySummary(supabase_db, channelId, userId, tg, ch, SUMMARY_TOKEN_COST2);
+      await _runDailySummary(supabase_db, channelId, userId, tg, ch);
       break;
     }
     case "ai_abort": {
@@ -557,9 +557,11 @@ async function _checkTokenBudget(supabase_db, channel, tg, token) {
   if (!channel?.token_limit || channel?.token_budget_exhausted) return;
   if ((channel.token_used || 0) >= channel.token_limit) {
     // Budget erschöpft → AI deaktivieren
-    await supabase_db.from("bot_channels").update({
-      ai_enabled: false, token_budget_exhausted: true
-    }).eq("id", String(channel.id)).catch(() => {});
+    try {
+      await supabase_db.from("bot_channels").update({
+        ai_enabled: false, token_budget_exhausted: true
+      }).eq("id", String(channel.id));
+    } catch (_) {}
 
     // Admin benachrichtigen
     if (channel.added_by_user_id && token) {
@@ -615,54 +617,78 @@ async function _createDailySummary(supabase_db, channelId, tg, adminChatId) {
       { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, timeout: 30000 }
     );
 
-    const summary = resp.data.choices[0].message.content.trim();
-    return `📰 <b>Tageszusammenfassung</b>\n\n${summary}\n\n` +
-           `👥 Mitglieder: ~${joins} aktiv · ${leaves} ausgetreten`;
+    const usage     = resp.data.usage || {};
+    const outTokens = usage.completion_tokens || 0;
+    const inTokens  = usage.prompt_tokens     || 0;
+    const summaryText = resp.data.choices[0].message.content.trim();
+    return {
+      text:      `📰 <b>Tageszusammenfassung</b>\n\n${summaryText}\n\n` +
+                 `👥 Mitglieder: ~${joins} aktiv · ${leaves} ausgetreten`,
+      outTokens,
+      inTokens,
+      usd: inTokens * 0.00000015 + outTokens * 0.0000006 // gpt-4o-mini Preise
+    };
   } catch (e) {
+    logger.error("[DailySummary] Fehler:", e.message);
     return null;
   }
 }
 
-// ── _runDailySummary: Zusammenfassung ausführen + Token abrechnen ─────────────
-async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch, tokenCost) {
-  const summary = await _createDailySummary(supabase_db, channelId, tg, String(adminUserId));
-  if (!summary) {
+// ── _runDailySummary: Zusammenfassung ausführen + exakte Token abrechnen ────────
+async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch) {
+  const result = await _createDailySummary(supabase_db, channelId, tg, String(adminUserId));
+  if (!result) {
     await tg.call("sendMessage", { chat_id: String(adminUserId),
       text: "❌ Fehler bei der Zusammenfassung. Bitte später erneut versuchen." });
     return;
   }
 
-  // Token abrechnen (Output-Token)
+  // Exakte Token abrechnen (nur Output-Token für Kanal-Volumen)
+  const actualOutTokens = result.outTokens || 0;
+  const actualUsd       = result.usd       || 0;
+
   try {
-    const result = await supabase_db.rpc("increment_channel_usage",
-      { p_id: String(channelId), p_tokens: tokenCost, p_usd: tokenCost * 0.0000011 });
-    if (result.error) throw result.error;
+    const rpcResult = await supabase_db.rpc("increment_channel_usage",
+      { p_id: String(channelId), p_tokens: actualOutTokens, p_usd: actualUsd });
+    if (rpcResult.error) throw rpcResult.error;
   } catch {
-    const { data: cur } = await supabase_db.from("bot_channels")
-      .select("token_used, usd_spent").eq("id", String(channelId)).maybeSingle();
-    if (cur) {
-      await supabase_db.from("bot_channels").update({
-        token_used: (cur.token_used || 0) + tokenCost,
-        usd_spent:  parseFloat(((cur.usd_spent || 0) + tokenCost * 0.0000011).toFixed(6))
-      }).eq("id", String(channelId)).catch(() => {});
+    try {
+      const { data: cur } = await supabase_db.from("bot_channels")
+        .select("token_used, usd_spent").eq("id", String(channelId)).maybeSingle();
+      if (cur) {
+        await supabase_db.from("bot_channels").update({
+          token_used: (cur.token_used || 0) + actualOutTokens,
+          usd_spent:  parseFloat(((cur.usd_spent || 0) + actualUsd).toFixed(6))
+        }).eq("id", String(channelId));
+      }
+    } catch (fallbackErr) {
+      logger.warn("[DailySummary] Token-Tracking Fallback fehlgeschlagen:", fallbackErr.message);
     }
   }
 
-  await supabase_db.from("bot_channels")
-    .update({ last_summary_at: new Date() }).eq("id", String(channelId)).catch(() => {});
+  // last_summary_at setzen
+  try {
+    await supabase_db.from("bot_channels").update({ last_summary_at: new Date() }).eq("id", String(channelId));
+  } catch (_) {}
 
-  // Prüfen ob Budget überschritten
-  const { data: updated } = await supabase_db.from("bot_channels")
-    .select("token_used, token_limit").eq("id", String(channelId)).maybeSingle();
+  // Budget-Check nach Abrechnung
   let note = "";
-  if (updated?.token_limit && updated.token_used > updated.token_limit) {
-    await supabase_db.from("bot_channels")
-      .update({ ai_enabled: false, token_budget_exhausted: true }).eq("id", String(channelId)).catch(() => {});
-    note = "\n\n⚠️ Token-Budget überschritten. KI vorübergehend deaktiviert. Token aufladen: @autoacts";
-  }
+  try {
+    const { data: updated } = await supabase_db.from("bot_channels")
+      .select("token_used, token_limit").eq("id", String(channelId)).maybeSingle();
+    if (updated?.token_limit && updated.token_used > updated.token_limit) {
+      try {
+        await supabase_db.from("bot_channels")
+          .update({ ai_enabled: false, token_budget_exhausted: true }).eq("id", String(channelId));
+      } catch (_) {}
+      note = "\n\n⚠️ Token-Budget überschritten. KI vorübergehend deaktiviert. Token aufladen: @autoacts";
+    }
+  } catch (_) {}
 
+  // Zusammenfassung senden (erst nach Abrechnung → zeigt korrekten Verbrauch)
   await tg.call("sendMessage", { chat_id: String(adminUserId),
-    text: summary + note, parse_mode: "HTML" });
+    text: result.text + `\n\n<i>📊 ${actualOutTokens} Output-Token berechnet ($${actualUsd.toFixed(5)})</i>` + note,
+    parse_mode: "HTML" });
 }
 
 async function _getRepeatCount(channelId) {
@@ -1092,7 +1118,7 @@ router.post("/smalltalk", (req, res) => {
 
       // ── Kontext-Tracking: alle User-Nachrichten speichern ─────────────────
       if (text && from?.id && !text.startsWith("/")) {
-        void safelistService.saveContextMsg(chatId, from.id, from.username, text).catch(() => {});
+        void safelistService.saveContextMsg(chatId, from.id, from.username, text);
       }
 
       // ── Safelist/Scamlist: nur wenn aktiviert ────────────────────────────
