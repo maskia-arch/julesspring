@@ -63,7 +63,7 @@ async function sendSettingsMenu(tg, sendTo, channelId, ch) {
   const safeActive  = ch?.safelist_enabled ? "✅ Aktiv"  : "❌ Inaktiv";
   const approved    = ch?.is_approved   ? "🟢 Freigeschaltet" : "🔴 Ausstehend";
 
-  await tg.call("sendMessage", {
+  return await tg.call("sendMessage", {
     chat_id: sendTo,
     text: `⚙️ <b>Einstellungen für: ${(ch?.title || channelId)}</b>\n\n` +
           `Status: ${approved}\n` +
@@ -84,9 +84,15 @@ async function sendSettingsMenu(tg, sendTo, channelId, ch) {
 }
 
 async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
-  const parts     = data.split("_");
-  const action    = parts[1];
-  const channelId = parts[2];
+  // Smart parse: cfg_{action}_{channelId}
+  // channelId = last segment that is a number (or -number for groups)
+  // action = everything between "cfg_" and "_{channelId}"
+  const withoutPrefix = data.replace(/^cfg_/, ""); // "ai_summary_-100xxx"
+  const chanMatch = withoutPrefix.match(/_(-?\d+)$/);
+  const channelId = chanMatch ? chanMatch[1] : withoutPrefix.split("_").pop();
+  const action    = chanMatch
+    ? withoutPrefix.slice(0, withoutPrefix.length - chanMatch[0].length)
+    : withoutPrefix.split("_").slice(0, -1).join("_");
 
   // Admin-Check bereits beim settings_* callback durchgeführt
 
@@ -817,9 +823,10 @@ router.post("/smalltalk", (req, res) => {
             await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "⚠️ Free-Limit erreicht", show_alert: true });
             return;
           }
-          const parts2 = data.split("_");
-          const repeatType = parts2[2]; // once / daily / weekly / monthly
-          const chanId2 = parts2[3];
+          // Parse sched_repeat_{type}_{channelId}
+          const rMatch = data.match(/^sched_repeat_([a-z]+)_(-?\d+)$/);
+          const repeatType = rMatch ? rMatch[1] : "once";
+          const chanId2    = rMatch ? rMatch[2] : data.split("_").pop();
           const wizard = pendingInputs[String(qUserId)];
           if (!wizard || !wizard.action.startsWith("sched_wizard")) {
             await tg.call("answerCallbackQuery", { callback_query_id: q.id });
@@ -951,8 +958,30 @@ router.post("/smalltalk", (req, res) => {
           await handlePendingInput(tg, supabase, from.id, "/cancel", settings, null);
           return;
         }
-        if (text === "/start" || text.startsWith("/start ")) {
-          await tg.send(chatId, WELCOME_INTRO);
+        // All navigation commands → smart channel picker
+        if (/^\/(?:start|menu|settings|dashboard|help)(@\w+)?/i.test(text)) {
+          const { data: myChannels2 } = await supabase.from("bot_channels")
+            .select("id, title, type, is_approved, ai_enabled").eq("added_by_user_id", String(from.id));
+
+          if (!myChannels2?.length) {
+            const s2 = await tg.send(chatId, WELCOME_INTRO);
+            if (s2?.message_id) void safelistService.trackBotMessage(chatId, s2.message_id, "temp", 10 * 60 * 1000);
+            return;
+          }
+
+          if (myChannels2.length === 1) {
+            const ch2 = await getChannel(String(myChannels2[0].id));
+            const s2 = await sendSettingsMenu(tg, chatId, String(myChannels2[0].id), ch2);
+            if (s2?.message_id) void safelistService.trackBotMessage(chatId, s2.message_id, "temp", 10 * 60 * 1000);
+            return;
+          }
+
+          const keyboard = myChannels2.map(ch2 => [{
+            text: (ch2.type === "channel" ? "📢" : "👥") + " " + (ch2.title || ch2.id),
+            callback_data: "sel_channel_" + ch2.id
+          }]);
+          const s2 = await tg.call("sendMessage", { chat_id: chatId, text: "⚙️ Wähle deinen Channel:", reply_markup: { inline_keyboard: keyboard } });
+          if (s2?.message_id) void safelistService.trackBotMessage(chatId, s2.message_id, "temp", 10 * 60 * 1000);
           return;
         }
 

@@ -909,6 +909,14 @@ async function loadChannels() {
                         '<button class="btn btn-sm ch-ai-toggle" data-id="'+ch.id+'" data-ai="'+(ch.ai_enabled?'1':'0')+'" style="padding:3px 8px;font-size:0.7rem;background:'+(ch.ai_enabled?'#14532d':'#1e3a5f')+';color:'+(ch.ai_enabled?'#4ade80':'#94a3b8')+';border:none;border-radius:4px;cursor:pointer;">'+(ch.ai_enabled?'✅ Deaktivieren':'🔓 Aktivieren')+'</button>' +
                     '</div>' +
                     '<div style="opacity:'+(ch.ai_enabled?'1':'0.35')+';pointer-events:'+(ch.ai_enabled?'auto':'none')+'">' +
+                        '<div style="margin-bottom:5px;">' +
+                            '<label style="font-size:0.7rem;color:#64748b;display:block;margin-bottom:2px;">KI-Modell</label>' +
+                            '<select class="ch-aimodel" data-id="'+ch.id+'" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;">' +
+                                '<option value="deepseek-chat"'+(ch.ai_model==="deepseek-chat"||(ch.ai_model||"")==""?" selected":"")+'>DeepSeek Chat (günstig)</option>' +
+                                '<option value="deepseek-reasoner"'+(ch.ai_model==="deepseek-reasoner"?" selected":"")+'>DeepSeek Reasoner</option>' +
+                                '<option value="gpt-4o-mini"'+(ch.ai_model==="gpt-4o-mini"?" selected":"")+'>GPT-4o Mini (OpenAI)</option>' +
+                            '</select>' +
+                        '</div>' +
                         '<button class="btn btn-secondary btn-sm ch-kb" data-id="'+ch.id+'" style="width:100%;margin-bottom:5px;">📚 Wissen ('+ch.kb_entry_count+' Einträge)</button>' +
                     '</div>' +
                 '</div>' +
@@ -969,8 +977,14 @@ async function loadChannels() {
             if (kb)      openChannelKB(kb.dataset.id, '');
         });
         el.addEventListener('change', function(e) {
-            var mode = e.target.closest('.ch-mode');
-            if (mode) updateChannel(mode.dataset.id, { mode: mode.value });
+            var mode    = e.target.closest('.ch-mode');
+            var aimodel = e.target.closest('.ch-aimodel');
+            if (mode)    updateChannel(mode.dataset.id,    { mode:     mode.value    });
+            if (aimodel) {
+                api.request('/channels/' + aimodel.dataset.id + '/ai', 'PUT', { ai_model: aimodel.value })
+                   .then(function(){ showToast('✅ Modell: ' + aimodel.value); })
+                   .catch(function(e){ alert(e.message||String(e)); });
+            }
         });
         el.addEventListener('blur', function(e) {
             var cmd = e.target.closest('.ch-cmd');

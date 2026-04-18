@@ -12,14 +12,18 @@ const supabase = require("../../config/supabase");
 const logger   = require("../../utils/logger");
 
 // DeepSeek Preise ($/1M Tokens) – günstigstes Modell
-const PRICE_PER_TOKEN = { input: 0.00000027, output: 0.0000011 }; // deepseek-chat
+const MODEL_PRICES = {
+  "deepseek-chat":     { input: 0.00000027, output: 0.0000011  },
+  "deepseek-reasoner": { input: 0.0000014,  output: 0.0000022  },
+  "gpt-4o-mini":       { input: 0.00000015, output: 0.0000006  },
+};
 
-const DEFAULT_PROMPT = `Du bist ein freundlicher, witziger KI-Assistent.
-Antworte locker und kurz – maximal 3–4 Sätze.
-Wenn jemand nach eSIMs, Tarifen, Preisen oder Produkten fragt, weise ihn an: @ValueShop25Support_bot
-Antworte auf Deutsch, außer der User schreibt auf Englisch.`;
+const DEFAULT_PROMPT = `Du bist ein offener, freundlicher KI-Assistent in diesem Telegram-Channel.
+Du chattest gerne über alles: Witze, Fakten, Alltagsthemen, Unterhaltung, Reisen, Technik, Sport – was immer die Community interessiert.
+Halte deine Antworten kurz und locker (max. 3–4 Sätze). Antworte auf Deutsch, außer der User schreibt in einer anderen Sprache.`;
 
-const BERATER_TRIGGERS = /\b(esim|tarif|preis|gb|daten|roaming|kaufen|bestell|sim|laufzeit|angebot|rabatt|coupon)/i;
+// Jedes dieser Keywords löst sofort die Weiterleitung aus – kein KI-Aufruf
+const BERATER_TRIGGERS = /\b(esim|e-sim|e sim|tarif|preis|€|eur|dollar|\$|gb|gigabyte|megabyte|mb|roaming|kaufen|bestell|sim-karte|sim karte|laufzeit|angebot|rabatt|coupon|datenplan|datenvolumen|mobilfunk|netz|provider|prepaid|postpaid|aktivier)/i;
 
 const smalltalkAgent = {
 
@@ -49,17 +53,21 @@ const smalltalkAgent = {
       return { reply: msg, limitReached: true };
     }
 
-    // 3. Berater-Trigger → Weiterleitung
+    // 3. Berater-Trigger → sofortige Weiterleitung, KEIN KI-Aufruf
     if (BERATER_TRIGGERS.test(text)) {
-      return { reply: "Für eSIM-Fragen bin ich nicht zuständig 😄 Schreib @ValueShop25Support_bot direkt an – der hilft dir mit Tarifen und Preisen! 📱" };
+      const deflectMsg = (s?.smalltalk_deflect_msg) ||
+        "Für Produkt- und Tarifanfragen bin ich nicht zuständig. Wende dich direkt an den Support! 📱";
+      return { reply: deflectMsg, mode: "deflect" };
     }
 
     // 4. KI-Antwort generieren
     // Channel-spezifischer System-Prompt hat Vorrang vor globalem
-    const systemPrompt = channel?.system_prompt || s.smalltalk_system_prompt || DEFAULT_PROMPT;
-    const model        = s.smalltalk_model     || "deepseek-chat";
-    const maxTokens    = parseInt(s.smalltalk_max_tokens) || 200;
-    const temperature  = parseFloat(s.smalltalk_temperature) || 0.8;
+    // Channel-eigenes Modell hat Vorrang, dann globale Setting, dann Default
+    const systemPrompt = channel?.system_prompt || s?.smalltalk_system_prompt || DEFAULT_PROMPT;
+    const model        = channel?.ai_model || s?.smalltalk_model || "deepseek-chat";
+    const maxTokens    = parseInt(s?.smalltalk_max_tokens) || 200;
+    const temperature  = parseFloat(s?.smalltalk_temperature) || 0.8;
+    const isGPT        = model.startsWith("gpt-");
 
     // Per-Channel KB laden (semantische Suche in channel_knowledge Tabelle)
     let kbContext = "";
@@ -83,17 +91,31 @@ const smalltalkAgent = {
     }
 
     try {
+      let apiUrl, apiKey2;
+      if (isGPT) {
+        apiUrl  = "https://api.openai.com/v1/chat/completions";
+        apiKey2 = process.env.OPENAI_API_KEY;
+      } else {
+        apiUrl  = "https://api.deepseek.com/v1/chat/completions";
+        apiKey2 = dsKey;
+      }
+      if (!apiKey2) {
+        logger.warn(`[Smalltalk] Kein API-Key für Modell ${model}`);
+        return { reply: null };
+      }
+
       const resp = await axios.post(
-        "https://api.deepseek.com/v1/chat/completions",
+        apiUrl,
         { model, max_tokens: maxTokens, temperature, messages },
-        { headers: { Authorization: "Bearer " + dsKey, "Content-Type": "application/json" }, timeout: 20000 }
+        { headers: { Authorization: "Bearer " + apiKey2, "Content-Type": "application/json" }, timeout: 20000 }
       );
 
       const reply  = resp.data.choices[0].message.content.trim();
       const usage  = resp.data.usage || {};
       const inTok  = usage.prompt_tokens     || 0;
       const outTok = usage.completion_tokens || 0;
-      const usd    = inTok * PRICE_PER_TOKEN.input + outTok * PRICE_PER_TOKEN.output;
+      const prices  = MODEL_PRICES[model] || MODEL_PRICES["deepseek-chat"];
+      const usd     = inTok * prices.input + outTok * prices.output;
 
       // 5. Kosten tracken (Volumen = nur Output-Token; USD = vollständig)
       await this._trackUsage(String(chatId), outTok, usd);
