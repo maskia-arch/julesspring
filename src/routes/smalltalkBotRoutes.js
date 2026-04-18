@@ -733,7 +733,7 @@ async function _createDailySummary(supabase_db, channelId) {
       "https://api.openai.com/v1/chat/completions",
       {
         model: "gpt-4o-mini",
-        max_tokens: 500,
+        max_tokens: 5000,
         temperature: 0.3,
         messages: [
           {

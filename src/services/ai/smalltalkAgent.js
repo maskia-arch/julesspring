@@ -27,7 +27,7 @@ const BERATER_TRIGGERS = /\b(esim|e-sim|e sim|tarif|preis|€|eur|dollar|\$|gb|g
 
 const smalltalkAgent = {
 
-  async handle({ chatId, text, settings, channelRecord = null, history = [] }) {
+  async handle({ chatId, text, settings, channelRecord = null }) {
     const s = settings || {};
 
     // 1. Channel-Freischaltung prüfen
@@ -69,20 +69,27 @@ const smalltalkAgent = {
     const temperature  = parseFloat(s?.smalltalk_temperature) || 0.8;
     const isGPT        = model.startsWith("gpt-");
 
-    // Per-Channel KB laden (semantische Suche in channel_knowledge Tabelle)
+    // Per-Channel KB — 3-tier search (vector → keyword → inject all)
     let kbContext = "";
     try {
       const channelKB = require("./channelKnowledgeEnricher");
-      const results = await channelKB.search(String(chatId), text, 0.50, 4);
-      if (results.length) kbContext = results.join("\n\n").substring(0, 1000);
-    } catch (_) {}
+      const results = await channelKB.search(String(chatId), text, 0.50, 6);
+      if (results.length) {
+        kbContext = results.join("\n---\n").substring(0, 3000);
+        logger.info(`[Smalltalk KB] ${results.length} Einträge geladen für Channel ${chatId}`);
+      } else {
+        logger.info(`[Smalltalk KB] Keine Einträge gefunden für Channel ${chatId}`);
+      }
+    } catch (e) {
+      logger.warn("[Smalltalk KB] Fehler:", e.message);
+    }
 
-    // Gesprächsverlauf: max letzte 5 Paare einbauen (ohne aktuelle Frage die noch nicht gespeichert ist)
-    const historyMessages = (history || []).filter(m => m.content && m.role);
+    const kbInstruction = kbContext
+      ? "\n\nWICHTIG: Nutze folgendes Channel-Wissen für deine Antworten. Wenn die Frage dazu passt, antworte immer auf Basis dieser Informationen:\n\n" + kbContext
+      : "";
 
     const messages = [
-      { role: "system", content: systemPrompt + (kbContext ? "\n\nKontext:\n" + kbContext : "") },
-      ...historyMessages,
+      { role: "system", content: systemPrompt + kbInstruction },
       { role: "user",   content: text }
     ];
 

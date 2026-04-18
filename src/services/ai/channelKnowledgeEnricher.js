@@ -71,16 +71,69 @@ const channelKnowledgeEnricher = {
 
   // ── Semantic Search für Smalltalk-Agent ──────────────────────────────────
   async search(channelId, text, threshold = 0.50, limit = 4) {
+    // Strategy 1: Full semantic vector search
     try {
       const embedding = await this._embed(text);
-      const { data } = await supabase.rpc("match_channel_knowledge", {
-        p_channel_id: channelId,
-        query_embedding: embedding,
-        match_threshold: threshold,
-        match_count: limit
-      });
-      return (data || []).map(d => d.content);
-    } catch { return []; }
+      if (embedding) {
+        const { data, error } = await supabase.rpc("match_channel_knowledge", {
+          p_channel_id: channelId,
+          query_embedding: embedding,
+          match_threshold: threshold,
+          match_count: limit
+        });
+        if (!error && data?.length) {
+          return data.map(d => d.content);
+        }
+        // Lower threshold and retry if nothing found
+        if (!error) {
+          const { data: data2 } = await supabase.rpc("match_channel_knowledge", {
+            p_channel_id: channelId,
+            query_embedding: embedding,
+            match_threshold: 0.20,
+            match_count: limit
+          });
+          if (data2?.length) return data2.map(d => d.content);
+        }
+      }
+    } catch (e) {
+      require("../../utils/logger").warn("[ChannelKB] Semantic search failed:", e.message);
+    }
+
+    // Strategy 2: Simple keyword text search fallback (always works, no embedding needed)
+    try {
+      const words = text.split(/\s+/).filter(w => w.length > 2).slice(0, 5);
+      if (words.length) {
+        // Load all entries and keyword-filter client-side
+        const { data: all } = await supabase.from("channel_knowledge")
+          .select("id, content")
+          .eq("channel_id", String(channelId))
+          .limit(50);
+        if (all?.length) {
+          const lowerText = text.toLowerCase();
+          const scored = all
+            .map(e => {
+              const lower = (e.content || "").toLowerCase();
+              const score = words.reduce((s, w) => s + (lower.includes(w.toLowerCase()) ? 1 : 0), 0);
+              return { ...e, score };
+            })
+            .filter(e => e.score > 0)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, limit);
+          if (scored.length) return scored.map(e => e.content);
+        }
+      }
+    } catch (e) {
+      require("../../utils/logger").warn("[ChannelKB] Text fallback failed:", e.message);
+    }
+
+    // Strategy 3: Return all entries if KB is small (≤8) — always inject everything
+    try {
+      const { data: all } = await supabase.from("channel_knowledge")
+        .select("content").eq("channel_id", String(channelId)).limit(8);
+      if (all?.length) return all.map(e => e.content);
+    } catch (_) {}
+
+    return [];
   },
 
   // ── OpenAI Orchestrierung ─────────────────────────────────────────────────
@@ -147,8 +200,16 @@ Format (nur JSON, kein Markdown):
     try {
       const embService = require("../embeddingService");
       const result = await embService.generateEmbedding(text);
-      return result.embedding || result;
-    } catch { return null; }
+      const emb = result?.embedding || result;
+      if (!Array.isArray(emb) || !emb.length) {
+        require("../../utils/logger").warn("[ChannelKB] Embedding leer oder ungültig");
+        return null;
+      }
+      return emb;
+    } catch (e) {
+      require("../../utils/logger").warn("[ChannelKB] Embedding Fehler:", e.message);
+      return null;
+    }
   }
 };
 
