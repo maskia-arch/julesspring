@@ -13,8 +13,9 @@ CREATE TABLE IF NOT EXISTS daily_summaries (
   member_joins  INTEGER      DEFAULT 0,
   member_leaves INTEGER      DEFAULT 0,
   msg_count     INTEGER      DEFAULT 0,
+  summary_date  DATE         NOT NULL DEFAULT CURRENT_DATE,
   created_at    TIMESTAMPTZ  DEFAULT NOW(),
-  UNIQUE(channel_id, (date_trunc('day', created_at)))
+  UNIQUE(channel_id, summary_date)
 );
 
 -- Channel token spent tracking (for cost display)

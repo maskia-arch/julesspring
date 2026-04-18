@@ -74,7 +74,7 @@ async function initDashboard() {
     clearInterval(window._statsInterval);
     clearInterval(window._chatsInterval);
     clearInterval(window._msgsInterval);
-    window._statsInterval = setInterval(function() { _safeRun(updateStats); }, 30000);
+    window._statsInterval = setInterval(function() { _safeRun(updateStats); }, 15000);
     window._chatsInterval = setInterval(function() {
         _safeRun(loadChats);
     }, 8000);
@@ -139,21 +139,22 @@ async function updateStats() {
         sv('s-chats',    d.stats.totalChats);
         sv('s-manual',   d.stats.activeManual);
         sv('s-knowledge',d.stats.knowledgeEntries);
-        // Add channel AI costs to main cost display
-        var baseCost   = parseFloat((d.stats.totalCost||'0').toString().replace(/[^0-9.]/g,'')) || 0;
-        var baseTokens = parseInt(d.stats.totalTokens||0) || 0;
-        try {
-            var channels = await api.request('/channels').catch(function(){ return []; }) || [];
+        // Haupt-Stats setzen
+        sv('s-cost',   d.stats.totalCost);
+        sv('s-tokens', (parseInt(d.stats.totalTokens||0)).toLocaleString() + ' Token');
+
+        // Channel-KI-Kosten hinzurechnen (parallel, kein Cache)
+        api.request('/channels').then(function(channels) {
+            if (!channels || !channels.length) return;
+            var baseCost   = parseFloat((d.stats.totalCost||'0').toString().replace(/[^0-9.]/g,'')) || 0;
+            var baseTokens = parseInt(d.stats.totalTokens||0) || 0;
             var chanCost   = channels.reduce(function(s,ch){ return s + parseFloat(ch.usd_spent||0); }, 0);
             var chanTokens = channels.reduce(function(s,ch){ return s + parseInt(ch.token_used||0); }, 0);
-            var combinedCost   = (baseCost + chanCost).toFixed(4) + ' $';
-            var combinedTokens = (baseTokens + chanTokens).toLocaleString() + ' Token';
-            sv('s-cost',   combinedCost);
-            sv('s-tokens', combinedTokens);
-        } catch(_) {
-            sv('s-cost',   d.stats.totalCost);
-            sv('s-tokens', baseTokens.toLocaleString() + ' Token');
-        }
+            if (chanCost > 0 || chanTokens > 0) {
+                sv('s-cost',   (baseCost + chanCost).toFixed(4) + ' $');
+                sv('s-tokens', (baseTokens + chanTokens).toLocaleString() + ' Token');
+            }
+        }).catch(function(){});
         sv('version-tag','v' + d.version);
         var badge = document.getElementById('learning-badge');
         if (badge) {

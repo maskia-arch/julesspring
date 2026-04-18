@@ -90,8 +90,8 @@ const smalltalkAgent = {
       const outTok = usage.completion_tokens || 0;
       const usd    = inTok * PRICE_PER_TOKEN.input + outTok * PRICE_PER_TOKEN.output;
 
-      // 5. Kosten tracken
-      void this._trackUsage(String(chatId), inTok + outTok, usd);
+      // 5. Kosten tracken (Volumen = nur Output-Token; USD = vollständig)
+      await this._trackUsage(String(chatId), outTok, usd);
 
       logger.info(`[Smalltalk] ${chatId}: ${inTok + outTok} Tokens ($${usd.toFixed(5)})`);
       return { reply, tokens: inTok + outTok, usd };
@@ -134,17 +134,24 @@ const smalltalkAgent = {
   },
 
   async _trackUsage(chatId, tokens, usd) {
+    // Sofort zählen – kein void (fire & forget kann Race Conditions erzeugen)
     try {
-      await supabase.rpc("increment_channel_usage", { p_id: chatId, p_tokens: tokens, p_usd: usd });
-    } catch {
-      // Fallback: direktes Update
-      const { data: ch } = await supabase.from("bot_channels").select("token_used, usd_spent").eq("id", chatId).maybeSingle().catch(() => ({ data: null }));
-      if (ch) {
-        await supabase.from("bot_channels").update({
-          token_used:    (ch.token_used || 0) + tokens,
-          usd_spent:     parseFloat(((ch.usd_spent || 0) + usd).toFixed(6)),
-          last_active_at: new Date()
-        }).eq("id", chatId).catch(() => {});
+      const result = await supabase.rpc("increment_channel_usage", { p_id: String(chatId), p_tokens: tokens, p_usd: usd });
+      if (result.error) throw result.error;
+    } catch (rpcErr) {
+      // Fallback: direktes atomares Update
+      try {
+        const { data: ch } = await supabase.from("bot_channels")
+          .select("token_used, usd_spent").eq("id", String(chatId)).maybeSingle();
+        if (ch) {
+          await supabase.from("bot_channels").update({
+            token_used:     (ch.token_used || 0) + tokens,
+            usd_spent:      parseFloat(((ch.usd_spent || 0) + usd).toFixed(6)),
+            last_active_at: new Date()
+          }).eq("id", String(chatId));
+        }
+      } catch (fallbackErr) {
+        require("../../utils/logger").warn("[Smalltalk] Token-Tracking fehlgeschlagen:", fallbackErr.message);
       }
     }
   },

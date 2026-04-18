@@ -8,7 +8,10 @@ const channelController = {
 
   async getChannels(req, res, next) {
     try {
-      const { data } = await supabase.from("bot_channels").select("*").order("added_at", { ascending: false });
+      // Alle Channels zurückgeben, niemals filtern (Admin entscheidet was sichtbar bleibt)
+      const { data } = await supabase.from("bot_channels").select("*")
+        .order("is_approved", { ascending: false })
+        .order("added_at", { ascending: false });
       res.json(data || []);
     } catch (e) { next(e); }
   },
@@ -130,15 +133,14 @@ const channelController = {
           });
           const status = memberResp.data?.result?.status;
           const isAdmin = ["administrator","creator"].includes(status);
+          if (isAdmin) registered++;
 
-          // Update is_active based on current admin status
+          // Nur Status aktualisieren, niemals aus Dashboard löschen
           await supabase_local.from("bot_channels")
             .update({ is_active: isAdmin, updated_at: new Date() }).eq("id", existing.id);
-          if (isAdmin) registered++;
         } catch (_) {
-          // Channel nicht mehr erreichbar → als inaktiv markieren
-          await supabase_local.from("bot_channels")
-            .update({ is_active: false }).eq("id", existing.id).catch(() => {});
+          // Channel nicht erreichbar → Status unverändert lassen, Eintrag bleibt erhalten
+          logger.info(`[Scan] Channel ${existing.id} nicht erreichbar, Eintrag bleibt.`);
         }
       }
 
