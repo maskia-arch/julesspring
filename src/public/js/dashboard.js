@@ -68,6 +68,7 @@ async function initDashboard() {
     setTimeout(function() { _safeRun(loadKbCategories); }, 3000);
     // Channel-Liste vorladen
     setTimeout(function() { _safeRun(loadChannels); }, 3500);
+    setTimeout(function() { _safeRun(loadProUsers); }, 4200);
     setTimeout(function() { _safeRun(loadChannelCosts); }, 4000);
 
     // Intervalle
@@ -735,6 +736,51 @@ async function removeFromScamlistUI(channelId, userId) {
         showToast('✅ Entfernt!');
         loadScamlist(channelId);
     } catch(e) { alert(e.message||String(e)); }
+}
+
+
+// ── UserInfo Pro Management ───────────────────────────────────────────────────
+
+async function loadProUsers() {
+    var el = document.getElementById('userinfo-pro-list');
+    if (!el) return;
+    try {
+        var list = await api.request('/userinfo-pro') || [];
+        if (!list.length) { el.innerHTML = '<p style="color:#555;font-size:0.85rem;">Keine Pro-Nutzer.</p>'; return; }
+        el.innerHTML = list.map(function(u) {
+            var exp = u.expires_at ? new Date(u.expires_at).toLocaleDateString('de-DE') : '∞';
+            return '<div style="background:#111;border-radius:6px;padding:10px;margin-bottom:6px;display:flex;align-items:center;gap:8px;">' +
+                '<div style="flex:1;">' +
+                    '<div style="font-weight:700;">' + (u.username ? '@'+esc(u.username) : esc(String(u.user_id))) + '</div>' +
+                    '<div style="font-size:0.7rem;color:#64748b;">ID: ' + esc(String(u.user_id)) + ' · Läuft ab: ' + exp + (u.note ? ' · '+esc(u.note) : '') + '</div>' +
+                '</div>' +
+                '<button onclick="removeProUser(\''+u.user_id+'\')" class="icon-btn">🗑</button>' +
+            '</div>';
+        }).join('');
+    } catch(e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(e.message||String(e))+'</p>'; }
+}
+
+async function addProUser() {
+    var uid  = document.getElementById('ui-pro-id')?.value?.trim();
+    var uname= document.getElementById('ui-pro-username')?.value?.trim();
+    var note = document.getElementById('ui-pro-note')?.value?.trim();
+    var exp  = document.getElementById('ui-pro-expires')?.value;
+    if (!uid) { alert('Telegram ID erforderlich'); return; }
+    try {
+        await api.request('/userinfo-pro', 'POST', {
+            user_id: parseInt(uid), username: uname||null,
+            note: note||null, expires_at: exp||null
+        });
+        showToast('✅ Pro-Nutzer hinzugefügt!');
+        ['ui-pro-id','ui-pro-username','ui-pro-note','ui-pro-expires'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=''; });
+        loadProUsers();
+    } catch(e) { alert(e.message||String(e)); }
+}
+
+async function removeProUser(userId) {
+    if (!confirm('Pro-Zugang entfernen?')) return;
+    try { await api.request('/userinfo-pro/'+userId, 'DELETE'); loadProUsers(); }
+    catch(e) { alert(e.message||String(e)); }
 }
 
 async function loadChannelGroups() {

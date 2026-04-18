@@ -96,6 +96,7 @@ async function sendSettingsMenu(tg, sendTo, channelId, ch) {
       [{ text: t("btn_safelist", lang), callback_data: `cfg_safelist_${channelId}` }],
       [{ text: t("btn_ai",       lang), callback_data: `cfg_ai_${channelId}` }],
       [{ text: t("btn_language", lang), callback_data: `cfg_lang_${channelId}` }],
+      [{ text: "🔍 UserInfo",            callback_data: `cfg_userinfo_${channelId}` }],
     ]}
   });
 }
@@ -419,6 +420,20 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       await sendSettingsMenu(tg, String(userId), channelId, ch);
       break;
     }
+    case "userinfo": {
+      // Start UserInfo scene — private chat only
+      pendingInputs[String(userId)] = { action: "userinfo_awaiting", channelId };
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `🔍 <b>UserInfo</b>\n\nDrei Möglichkeiten:\n` +
+              `1. <b>Nachricht weiterleiten</b> — leite eine Nachricht des gesuchten Users weiter\n` +
+              `2. <b>Telegram-ID eingeben</b> — z.B. <code>123456789</code>\n` +
+              `3. <b>@Username eingeben</b> — z.B. <code>@autoacts</code>\n\n` +
+              `/cancel zum Abbrechen`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[backBtn(channelId, ch?.bot_language||"de")]] }
+      });
+      break;
+    }
     case "setlang": {
       // data = "cfg_setlang_{langcode}_{channelId}" - langcode may have no underscore
       // Smart parse already extracted action="setlang", but channelId may be wrong
@@ -544,6 +559,49 @@ async function handlePendingInput(tg, supabase_db, userId, text, settings, msg) 
     await supabase_db.from("bot_channels").update({ [field]: text, updated_at: new Date() }).eq("id", channelId);
     await tg.call("sendMessage", { chat_id: String(userId),
       text: `✅ <b>${label}</b> gespeichert!`, parse_mode: "HTML" });
+    return true;
+  }
+
+  // ── UserInfo scene ────────────────────────────────────────────────────────
+  if (action === "userinfo_awaiting") {
+    let targetId = null;
+    let inputType = "manual";
+
+    // Case 1: Forwarded message (has forward_from with user info)
+    if (msg?.forward_from) {
+      targetId = String(msg.forward_from.id);
+      inputType = "forward";
+    }
+    // Case 2: Forwarded from user who blocked forwarding (forward_sender_name but no forward_from)
+    // We can't get the ID in this case
+    else if (msg?.forward_sender_name && !msg?.forward_from) {
+      delete pendingInputs[String(userId)];
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `🔒 Dieser User hat das Weiterleiten blockiert.\n\n` +
+              `Bitte gib die Telegram-ID manuell ein oder versuche es mit /userinfo @username`,
+        parse_mode: "HTML" });
+      pendingInputs[String(userId)] = { action: "userinfo_awaiting", channelId };
+      return true;
+    }
+    // Case 3: @username input
+    else if (text && text.startsWith("@")) {
+      targetId = text.trim();
+      inputType = "username";
+    }
+    // Case 4: Numeric Telegram ID
+    else if (text && /^\d+$/.test(text.trim())) {
+      targetId = text.trim();
+      inputType = "id";
+    }
+    else {
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: "❓ Bitte leite eine Nachricht weiter, gib eine Telegram-ID ein (z.B. <code>123456789</code>) oder einen @username.",
+        parse_mode: "HTML" });
+      return true;
+    }
+
+    delete pendingInputs[String(userId)];
+    await _runUserInfo(tg, supabase_db, userId, targetId, channelId, null, null);
     return true;
   }
 
@@ -863,6 +921,140 @@ async function _handleWizardMedia(tg, supabase_db, userId, pending, msg) {
   return true;
 }
 
+// ── UserInfo: Rate-limited Telegram lookup ────────────────────────────────────
+const FREE_QUERIES_PER_DAY = 5;
+
+async function _checkUserInfoAccess(supabase_db, requesterId, channelId) {
+  // Admin with AI features → unlimited
+  if (channelId) {
+    try {
+      const { data: ch } = await supabase_db.from("bot_channels")
+        .select("ai_enabled, added_by_user_id").eq("id", String(channelId)).maybeSingle();
+      if (ch?.ai_enabled && String(ch.added_by_user_id) === String(requesterId)) return { ok: true, unlimited: true };
+    } catch (_) {}
+  }
+  // Pro user?
+  try {
+    const { data: pro } = await supabase_db.from("userinfo_pro_users")
+      .select("expires_at").eq("user_id", requesterId).maybeSingle();
+    if (pro) {
+      if (!pro.expires_at || new Date(pro.expires_at) > new Date()) return { ok: true, unlimited: true };
+    }
+  } catch (_) {}
+  // Daily limit
+  try {
+    const { data: q } = await supabase_db.from("userinfo_queries")
+      .select("query_count").eq("user_id", requesterId).eq("query_date", new Date().toISOString().split("T")[0]).maybeSingle();
+    const used = q?.query_count || 0;
+    if (used >= FREE_QUERIES_PER_DAY) return { ok: false, used, limit: FREE_QUERIES_PER_DAY };
+  } catch (_) {}
+  return { ok: true };
+}
+
+async function _incrementQueryCount(supabase_db, userId) {
+  try {
+    const { data } = await supabase_db.rpc("increment_userinfo_count", { p_user_id: userId });
+    return data || 1;
+  } catch {
+    try {
+      const today = new Date().toISOString().split("T")[0];
+      await supabase_db.from("userinfo_queries").upsert([{ user_id: userId, query_date: today, query_count: 1 }], { onConflict: "user_id,query_date" });
+    } catch (_) {}
+    return 1;
+  }
+}
+
+async function _runUserInfo(tg, supabase_db, requesterId, targetId, channelId, replyToMsgId, targetChatId) {
+  // targetChatId: where to send the result (channel or private)
+  const sendTo = targetChatId || String(requesterId);
+
+  // Rate limit check
+  const access = await _checkUserInfoAccess(supabase_db, requesterId, channelId);
+  if (!access.ok) {
+    const msg = await tg.call("sendMessage", { chat_id: sendTo,
+      text: `⛔ Tages-Limit erreicht (${access.used}/${access.limit} kostenlose Abfragen).\n\nFür unbegrenzte Abfragen: <b>UserInfo Pro</b> → @autoacts`,
+      parse_mode: "HTML",
+      ...(replyToMsgId ? { reply_to_message_id: replyToMsgId } : {})
+    });
+    if (msg?.message_id) await safelistService.trackBotMessage(sendTo, msg.message_id, "temp", 15000);
+    return;
+  }
+
+  // Increment counter (unless unlimited)
+  if (!access.unlimited) await _incrementQueryCount(supabase_db, requesterId);
+
+  // Query Telegram
+  let chatData = null;
+  try { chatData = await tg.call("getChat", { chat_id: targetId }); } catch (_) {}
+
+  if (!chatData) {
+    const msg = await tg.call("sendMessage", { chat_id: sendTo,
+      text: `❌ Keine Daten gefunden für <code>${targetId}</code>\n\nMögliche Gründe:\n• User hat keinen öffentlichen Account\n• Falsche ID / Username\n• Kein gemeinsamer Chat mit dem Bot`,
+      parse_mode: "HTML",
+      ...(replyToMsgId ? { reply_to_message_id: replyToMsgId } : {})
+    });
+    if (msg?.message_id && sendTo !== String(requesterId)) {
+      await safelistService.trackBotMessage(sendTo, msg.message_id, "temp", 5 * 60 * 1000);
+    }
+    return;
+  }
+
+  const { id, first_name, last_name, username, bio, type, description, member_count } = chatData;
+
+  let text = `👤 <b>UserInfo</b>\n`;
+  text += `━━━━━━━━━━━━━━\n`;
+  text += `🆔 <b>ID:</b> <code>${id}</code>\n`;
+  if (first_name || last_name) {
+    text += `📛 <b>Name:</b> ${[first_name, last_name].filter(Boolean).join(" ")}\n`;
+  }
+  if (username)   text += `🔗 <b>Username:</b> <a href="tg://user?id=${id}">@${username}</a>\n`;
+  if (bio)        text += `📝 <b>Bio:</b> ${bio.substring(0, 200)}\n`;
+  if (type && type !== "private") text += `📌 <b>Typ:</b> ${type}\n`;
+  if (description) text += `📄 ${description.substring(0, 150)}\n`;
+  if (member_count) text += `👥 <b>Mitglieder:</b> ${member_count.toLocaleString()}\n`;
+
+  // Channel DB info
+  if (channelId) {
+    try {
+      const { data: member } = await supabase_db.from("channel_members")
+        .select("joined_at, last_seen, is_deleted").eq("channel_id", String(channelId)).eq("user_id", String(id)).maybeSingle();
+      if (member) {
+        text += `\n📅 <b>Im Channel seit:</b> ${member.joined_at ? new Date(member.joined_at).toLocaleDateString("de-DE") : "unbekannt"}\n`;
+        text += `👁 <b>Zuletzt aktiv:</b> ${member.last_seen ? new Date(member.last_seen).toLocaleDateString("de-DE") : "–"}\n`;
+        if (member.is_deleted) text += `🗑 <b>Account:</b> Gelöscht\n`;
+      }
+    } catch (_) {}
+
+    // Safelist/Scamlist
+    try {
+      const { data: scamEntry } = await supabase_db.from("scam_entries").select("reason").eq("channel_id", String(channelId)).eq("user_id", id).maybeSingle();
+      const { data: feedbacks } = await supabase_db.from("user_feedbacks").select("feedback_type").eq("channel_id", String(channelId)).eq("status", "approved").or(`target_user_id.eq.${id},target_username.ilike.${username||"__none__"}`).limit(10);
+      if (scamEntry) {
+        text += `\n⛔ <b>Scamliste:</b> ${(scamEntry.reason||"").substring(0,100)}\n`;
+      }
+      if (feedbacks?.length) {
+        const pos = feedbacks.filter(f => f.feedback_type === "positive").length;
+        const neg = feedbacks.filter(f => f.feedback_type === "negative").length;
+        text += `📊 <b>Feedbacks:</b> ✅ ${pos} · ⚠️ ${neg}\n`;
+      }
+    } catch (_) {}
+  }
+
+  const remaining = access.unlimited ? "∞" : String(FREE_QUERIES_PER_DAY - ((await supabase_db.from("userinfo_queries").select("query_count").eq("user_id", requesterId).eq("query_date", new Date().toISOString().split("T")[0]).maybeSingle().catch(() => ({ data: null }))).data?.query_count || 0));
+  text += `\n<i>Abfragen heute: ${access.unlimited ? "∞" : remaining + "/" + FREE_QUERIES_PER_DAY}</i>`;
+
+  const sentMsg = await tg.call("sendMessage", { chat_id: sendTo,
+    text: text.trim(), parse_mode: "HTML",
+    ...(replyToMsgId ? { reply_to_message_id: replyToMsgId } : {})
+  });
+
+  // Auto-delete after 5 min in channels (not in private admin chat)
+  if (sentMsg?.message_id && sendTo !== String(requesterId)) {
+    await safelistService.trackBotMessage(sendTo, sentMsg.message_id, "temp", 5 * 60 * 1000);
+  }
+}
+
+
 router.post("/smalltalk", (req, res) => {
   res.sendStatus(200);
 
@@ -1123,6 +1315,11 @@ router.post("/smalltalk", (req, res) => {
       if (chat.type === "private") {
         // Pending input (welcome/goodbye/proof text OR media)
         const hasPending = pendingInputs[String(from.id)];
+        // UserInfo: forwarded message handling
+        if (hasPending?.action === "userinfo_awaiting" && (msg?.forward_from || msg?.forward_sender_name)) {
+          await handlePendingInput(tg, supabase, from.id, msg?.text || "", settings, msg);
+          return;
+        }
         // Wizard media handling
         if (hasPending?.action === "sched_wizard_file" && (msg?.photo || msg?.animation || msg?.video)) {
           await _handleWizardMedia(tg, supabase, from.id, hasPending, msg);
@@ -1405,6 +1602,32 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
           const lines = scamList.map(s => `⛔ @${s.username || s.user_id}${s.reason ? " – " + s.reason.substring(0, 60) : ""}`).join("\n");
           const sent = await tg.send(chatId, `⚠️ <b>Scamliste (${scamList.length})</b>\n\n${lines}`);
           if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "check_result", 5 * 60 * 1000);
+        }
+        return;
+      }
+
+      // /userinfo – Public user lookup (rate-limited)
+      const isUserinfoCmd = /^\/userinfo(@\w+)?/i.test(text);
+      if (isUserinfoCmd) {
+        let lookupId = null;
+        let replyMsgId = msg.message_id;
+
+        // Extract ID from command: /userinfo 123456789 or /userinfo @username
+        const uiArg = text.replace(/^\/userinfo(@\w+)?\s*/i, "").trim();
+        if (uiArg) {
+          lookupId = uiArg; // @username or numeric ID
+        } else if (msg.reply_to_message?.from) {
+          lookupId = String(msg.reply_to_message.from.id);
+          replyMsgId = msg.reply_to_message.message_id;
+        }
+
+        if (!lookupId) {
+          const hint = await tg.send(chatId, "💡 Nutze /userinfo @username, /userinfo [ID] oder antworte auf eine Nachricht mit /userinfo");
+          if (hint?.message_id) void safelistService.trackBotMessage(chatId, hint.message_id, "temp", 10000);
+        } else {
+          // Delete the command message
+          await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+          await _runUserInfo(tg, supabase, from.id, lookupId, chatId, replyMsgId, chatId);
         }
         return;
       }

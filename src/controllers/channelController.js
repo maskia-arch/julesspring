@@ -277,6 +277,36 @@ const channelController = {
     } catch (e) { next(e); }
   },
 
+  // ── UserInfo Pro Management ────────────────────────────────────────────────
+  async getProUsers(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      const { data } = await supa.from("userinfo_pro_users")
+        .select("*").order("created_at", { ascending: false });
+      res.json(data || []);
+    } catch (e) { next(e); }
+  },
+
+  async addProUser(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      const { user_id, username, note, expires_at } = req.body;
+      if (!user_id) return res.status(400).json({ error: "user_id erforderlich" });
+      const { data } = await supa.from("userinfo_pro_users")
+        .upsert([{ user_id, username: username || null, note: note || null, expires_at: expires_at || null, updated_at: new Date() }], { onConflict: "user_id" })
+        .select().single();
+      res.json(data);
+    } catch (e) { next(e); }
+  },
+
+  async removeProUser(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      await supa.from("userinfo_pro_users").delete().eq("user_id", req.params.userId);
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
   _channelCache: {},
   async getChannelSettings(chatId) {
     const c = this._channelCache[chatId];

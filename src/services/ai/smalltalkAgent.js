@@ -69,19 +69,49 @@ const smalltalkAgent = {
     const temperature  = parseFloat(s?.smalltalk_temperature) || 0.8;
     const isGPT        = model.startsWith("gpt-");
 
-    // Per-Channel KB — 3-tier search (vector → keyword → inject all)
+    // Per-Channel KB — only query DB for specific requests, not generic small talk
     let kbContext = "";
-    try {
-      const channelKB = require("./channelKnowledgeEnricher");
-      const results = await channelKB.search(String(chatId), text, 0.50, 6);
-      if (results.length) {
-        kbContext = results.join("\n---\n").substring(0, 3000);
-        logger.info(`[Smalltalk KB] ${results.length} Einträge geladen für Channel ${chatId}`);
-      } else {
-        logger.info(`[Smalltalk KB] Keine Einträge gefunden für Channel ${chatId}`);
+    const isSmallTalk = /^(hallo|hi|hey|guten|morgen|abend|nacht|wie geht|danke|bitte|ok|okay|ja|nein|witze?|lol|haha|😂|👋|test|\?\s*$)/i.test(text.trim());
+
+    if (!isSmallTalk) {
+      try {
+        const channelKB = require("./channelKnowledgeEnricher");
+        const results = await channelKB.search(String(chatId), text, 0.50, 6);
+        if (results.length) {
+          kbContext = results.join("\n---\n").substring(0, 3000);
+          logger.info(`[Smalltalk KB] ${results.length} Einträge für Channel ${chatId}`);
+        }
+      } catch (e) {
+        logger.warn("[Smalltalk KB] Fehler:", e.message);
       }
-    } catch (e) {
-      logger.warn("[Smalltalk KB] Fehler:", e.message);
+
+      // Safelist/Scamlist als Kontextwissen wenn gefragt
+      const isSafelistQuery = /safelist|scamliste?|scammer|gebannt|gesperrt|verifiziert|@\w+|member|mitglied/i.test(text);
+      if (isSafelistQuery && channel?.safelist_enabled) {
+        try {
+          const supabase = require("../../config/supabase");
+          const { data: safeEntries } = await supabase.from("user_feedbacks")
+            .select("target_username, target_user_id, feedback_type, feedback_text")
+            .eq("channel_id", String(chatId)).eq("status", "approved").limit(20);
+          const { data: scamEntries } = await supabase.from("scam_entries")
+            .select("username, user_id, reason")
+            .eq("channel_id", String(chatId)).limit(20);
+          if (safeEntries?.length || scamEntries?.length) {
+            let safeCtx = "";
+            if (safeEntries?.length) {
+              const pos = safeEntries.filter(e => e.feedback_type === "positive");
+              const neg = safeEntries.filter(e => e.feedback_type === "negative");
+              safeCtx += `\n\nChannel-Safelist:\n`;
+              if (pos.length) safeCtx += `✅ Verifiziert: ${pos.map(e => "@"+(e.target_username||e.target_user_id)).join(", ")}\n`;
+              if (neg.length) safeCtx += `⚠️ Negatives Feedback: ${neg.map(e => "@"+(e.target_username||e.target_user_id)).join(", ")}`;
+            }
+            if (scamEntries?.length) {
+              safeCtx += `\n⛔ Scamliste: ${scamEntries.map(e => "@"+(e.username||e.user_id)+(e.reason?" ("+e.reason.substring(0,50)+")":"")).join(", ")}`;
+            }
+            kbContext = (kbContext + safeCtx).substring(0, 4000);
+          }
+        } catch (_) {}
+      }
     }
 
     const kbInstruction = kbContext

@@ -114,4 +114,9 @@ router.delete('/channel-groups/:id',   channelCtrl.deleteChannelGroup.bind(chann
 router.get('/scamlist',              channelCtrl.getScamlist.bind(channelCtrl));
 router.post('/scamlist/remove',      channelCtrl.removeFromScamlist.bind(channelCtrl));
 
+// UserInfo Pro
+router.get('/userinfo-pro',               channelCtrl.getProUsers.bind(channelCtrl));
+router.post('/userinfo-pro',              channelCtrl.addProUser.bind(channelCtrl));
+router.delete('/userinfo-pro/:userId',    channelCtrl.removeProUser.bind(channelCtrl));
+
 module.exports = router;
