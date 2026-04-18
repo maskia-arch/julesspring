@@ -171,7 +171,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
 // In-Memory: Pending text inputs (welcome/goodbye Nachricht setzen)
 const pendingInputs = {};
 
-async function handlePendingInput(tg, supabase_db, userId, text, settings) {
+async function handlePendingInput(tg, supabase_db, userId, text, settings, msg) {
   const pending = pendingInputs[String(userId)];
   if (!pending) return false;
 
@@ -181,19 +181,98 @@ async function handlePendingInput(tg, supabase_db, userId, text, settings) {
     return true;
   }
 
-  const { action, channelId } = pending;
-  delete pendingInputs[String(userId)];
+  const { action, channelId, entryId, targetUsername } = pending;
 
+  // ── Welcome/Goodbye Nachricht setzen ──────────────────────────────────────
   if (action === "set_welcome" || action === "set_goodbye") {
+    delete pendingInputs[String(userId)];
     const field = action === "set_welcome" ? "welcome_msg" : "goodbye_msg";
     await supabase_db.from("bot_channels").update({ [field]: text, updated_at: new Date() }).eq("id", channelId);
-    await tg.call("sendMessage", {
-      chat_id: String(userId),
-      text: `✅ ${action === "set_welcome" ? "Willkommens" : "Abschied"}snachricht gespeichert!`,
-      parse_mode: "HTML"
-    });
+    await tg.call("sendMessage", { chat_id: String(userId),
+      text: `✅ ${action === "set_welcome" ? "Willkommens" : "Abschied"}snachricht gespeichert!`, parse_mode: "HTML" });
     return true;
   }
+
+  // ── Proof-Einreichung: User startet mit /proofs_ENTRYID ───────────────────
+  if (action === "awaiting_proofs_start" && text && text.startsWith("/proofs_")) {
+    const inputEntryId = text.split("_")[1];
+    if (inputEntryId === String(entryId)) {
+      pendingInputs[String(userId)] = { ...pending, action: "collecting_proofs", proofCount: 0 };
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `📎 <b>Beweise einreichen für @${targetUsername}</b>\n\nSende jetzt bis zu <b>5 Beweise</b> als:\n• Screenshot (Foto)\n• Textnachricht\n• Dokument/Video\n\nSchreibe /fertig wenn du alle Beweise eingereicht hast.`,
+        parse_mode: "HTML" });
+    }
+    return true;
+  }
+
+  // ── Proofs sammeln ─────────────────────────────────────────────────────────
+  if (action === "collecting_proofs") {
+    if (text === "/fertig") {
+      delete pendingInputs[String(userId)];
+      const proofs = await safelistService.getProofs(entryId);
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✅ <b>${proofs.length} Beweis(e) eingegangen.</b>\n\nVielen Dank! Ein Admin prüft die Meldung. Du wirst informiert.`,
+        parse_mode: "HTML" });
+
+      // Admin benachrichtigen
+      const { data: fbEntry } = await supabase_db.from("user_feedbacks")
+        .select("*").eq("id", entryId).single().catch(() => ({ data: null }));
+      const { data: chData } = await supabase_db.from("bot_channels")
+        .select("added_by_user_id").eq("id", String(pending.channelId||0)).maybeSingle().catch(() => ({ data: null }));
+      const adminId = chData?.added_by_user_id;
+      if (adminId) {
+        await tg.call("sendMessage", { chat_id: String(adminId),
+          text: `⚠️ <b>Neue Scam-Meldung</b>\n\nZiel: @${targetUsername}\nVon: @${pending.reporterUsername || userId}\nBeweise: ${proofs.length}\n\nInhalt:\n${proofs.filter(p=>p.content||p.caption).slice(0,3).map(p => "• " + (p.content || p.caption || "[Medien]")).join("\n")}`,
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [[
+            { text: "✅ Als Scammer bestätigen", callback_data: "safe_approve_" + entryId + "_scam" },
+            { text: "❌ Ablehnen",               callback_data: "safe_reject_" + entryId }
+          ]]}
+        });
+        // Medien-Beweise weiterleiten
+        for (const p of proofs.filter(pr => pr.file_id)) {
+          try {
+            if (p.proof_type === "photo")    await tg.call("sendPhoto",    { chat_id: String(adminId), photo:    p.file_id, caption: p.caption || "" });
+            if (p.proof_type === "video")    await tg.call("sendVideo",    { chat_id: String(adminId), video:    p.file_id, caption: p.caption || "" });
+            if (p.proof_type === "document") await tg.call("sendDocument", { chat_id: String(adminId), document: p.file_id, caption: p.caption || "" });
+          } catch (_) {}
+        }
+      }
+      return true;
+    }
+
+    // Proof entgegennehmen (Text oder Medien)
+    const count = pending.proofCount || 0;
+    if (count >= 5) {
+      await tg.call("sendMessage", { chat_id: String(userId), text: "Maximal 5 Beweise möglich. Schreibe /fertig um abzuschließen." });
+      return true;
+    }
+
+    let proofType = "text";
+    let fileId = null;
+    let caption = null;
+    let content = text || null;
+
+    if (msg?.photo) {
+      proofType = "photo"; fileId = msg.photo[msg.photo.length - 1]?.file_id; caption = msg.caption || null; content = null;
+      // Sofort aus dem privaten Chat löschen
+      await tg.call("deleteMessage", { chat_id: String(userId), message_id: msg.message_id }).catch(() => {});
+    } else if (msg?.video) {
+      proofType = "video"; fileId = msg.video.file_id; caption = msg.caption || null; content = null;
+      await tg.call("deleteMessage", { chat_id: String(userId), message_id: msg.message_id }).catch(() => {});
+    } else if (msg?.document) {
+      proofType = "document"; fileId = msg.document.file_id; caption = msg.caption || null; content = null;
+      await tg.call("deleteMessage", { chat_id: String(userId), message_id: msg.message_id }).catch(() => {});
+    }
+
+    await safelistService.addProof({ entryId, submittedBy: userId, proofType, fileId, caption, content });
+    pendingInputs[String(userId)].proofCount = count + 1;
+
+    await tg.call("sendMessage", { chat_id: String(userId),
+      text: `📎 Beweis ${count + 1}/5 erhalten${count + 1 < 5 ? ". Weitere senden oder /fertig." : ". Maximal erreicht – schreibe /fertig."}` });
+    return true;
+  }
+
   return false;
 }
 
@@ -327,25 +406,30 @@ router.post("/smalltalk", (req, res) => {
           return;
         }
 
+        // Channel selection in private chat
+        if (data.startsWith("sel_channel_")) {
+          const selChanId = data.split("_")[2];
+          const ch = await getChannel(selChanId);
+          await sendSettingsMenu(tg, String(qUserId), selChanId, ch);
+          return;
+        }
+
         // Settings sub-callbacks
         if (data.startsWith("cfg_")) {
           await handleSettingsCallback(tg, supabase, data, q, qUserId);
           return;
         }
 
-        // Safelist approve/reject callbacks
-        if (data.startsWith("safe_approve_") || data.startsWith("safe_reject_")) {
-          const parts = data.split("_");
-          const action = parts[1]; // approve / reject
-          const entryId = parts[2];
-          const listType = parts[3] || null;
-          const safelistService = require("../services/adminHelper/safelistService");
-          if (action === "approve") {
-            await safelistService.approve(entryId, qUserId, listType);
-            await tg.call("sendMessage", { chat_id: String(qUserId), text: "✅ Bestätigt!" });
+        // Feedback approve/reject callbacks
+        if (data.startsWith("fb_approve_") || data.startsWith("fb_reject_")) {
+          const feedbackId = data.split("_")[2];
+          const ch2 = {}; // We'll load channel from feedback
+          if (data.startsWith("fb_approve_")) {
+            await safelistService.approveFeedback(feedbackId, qUserId, ch2);
+            await tg.call("sendMessage", { chat_id: String(qUserId), text: "✅ Meldung bestätigt. User wurde auf Scamliste gesetzt." });
           } else {
-            await safelistService.reject(entryId, qUserId);
-            await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Abgelehnt." });
+            await safelistService.rejectFeedback(feedbackId, qUserId);
+            await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Meldung abgelehnt." });
           }
           return;
         }
@@ -365,17 +449,44 @@ router.post("/smalltalk", (req, res) => {
 
       // ── Privat-Chat: /start Onboarding ───────────────────────────────────
       if (chat.type === "private") {
-        // Check for pending text input (e.g. setting welcome/goodbye message)
-        if (text && !(text.startsWith("/"))) {
-          const handled = await handlePendingInput(tg, supabase, from.id, text, settings);
+        // Pending input (welcome/goodbye/proof text OR media)
+        const hasPending = pendingInputs[String(from.id)];
+        if (hasPending?.action === "collecting_proofs" && (msg?.photo || msg?.video || msg?.document)) {
+          await handlePendingInput(tg, supabase, from.id, "", settings, msg);
+          return;
+        }
+        if (text && !text.startsWith("/")) {
+          const handled = await handlePendingInput(tg, supabase, from.id, text, settings, msg);
           if (handled) return;
         }
         if (text === "/cancel") {
-          await handlePendingInput(tg, supabase, from.id, "/cancel", settings);
+          await handlePendingInput(tg, supabase, from.id, "/cancel", settings, null);
           return;
         }
         if (text === "/start" || text.startsWith("/start ")) {
           await tg.send(chatId, WELCOME_INTRO);
+          return;
+        }
+
+        // /settings in private chat: show all channels this user admins
+        if (text === "/settings" || text.startsWith("/settings@")) {
+          const { data: myChannels } = await supabase.from("bot_channels")
+            .select("id, title, type, is_approved, ai_enabled").eq("added_by_user_id", String(from.id));
+          if (!myChannels?.length) {
+            await tg.send(chatId, "Du hast noch keinen Channel/Gruppe mit diesem Bot verknüpft.\nFüge mich als Admin in deiner Gruppe/Channel ein und schreibe dann /settings dort.");
+            return;
+          }
+          if (myChannels.length === 1) {
+            const ch = await getChannel(String(myChannels[0].id));
+            await sendSettingsMenu(tg, chatId, String(myChannels[0].id), ch);
+            return;
+          }
+          // Mehrere Channels → Auswahl
+          const keyboard = myChannels.map(ch => [{
+            text: (ch.type === "channel" ? "📢" : "👥") + " " + (ch.title || ch.id) + (ch.is_approved ? " ✅" : " ⏳"),
+            callback_data: "sel_channel_" + ch.id
+          }]);
+          await tg.call("sendMessage", { chat_id: chatId, text: "Wähle den Channel/Gruppe für die Einstellungen:", reply_markup: { inline_keyboard: keyboard } });
           return;
         }
 
@@ -462,39 +573,131 @@ router.post("/smalltalk", (req, res) => {
         return;
       }
 
-      // /safelist @user Feedback
-      const safeMatch = text.match(/^\/safelist\s+@?(\w+)\s*(.*)/i);
-      if (safeMatch) {
-        const [, username, feedback] = safeMatch;
-        const result = await safelistService.submitFeedback(
-          chatId, from.id, null, username, "safe", feedback || "Positives Feedback",
-          msg.reply_to_message ? [{ text: msg.reply_to_message.text, from: msg.reply_to_message.from?.id }] : []
-        );
-        await tg.send(chatId, `✅ Feedback für @${username} eingereicht (ID: ${result.id}).\nEin Admin prüft und bestätigt den Eintrag.`);
+      // ── Kontext-Tracking: alle User-Nachrichten speichern ─────────────────
+      if (text && from?.id && !text.startsWith("/")) {
+        void safelistService.saveContextMsg(chatId, from.id, from.username, text).catch(() => {});
+      }
+
+      // ── /feedbacks @user oder /check @user ────────────────────────────────
+      const feedbackCmds = /^\/(?:feedbacks?|check)\s+@?(\w+)/i;
+      const feedbackMatch = text.match(feedbackCmds);
+      if (feedbackMatch) {
+        const targetUsername = feedbackMatch[1];
+        const feedbacks = await safelistService.getFeedbacks(chatId, targetUsername, null);
+        const scamEntry  = await safelistService.checkScamlist(chatId, targetUsername, null);
+
+        let replyText;
+        if (scamEntry) {
+          replyText = `⛔ <b>@${targetUsername} steht auf der Scamliste!</b>
+${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
+`;
+          if (scamEntry.ai_summary) replyText += `
+🤖 ${scamEntry.ai_summary}`;
+        } else if (ch?.ai_enabled) {
+          const aiSummary = await safelistService.generateAiSummary(chatId, targetUsername, null);
+          replyText = safelistService.buildFullText(feedbacks, targetUsername, aiSummary);
+        } else {
+          replyText = safelistService.buildStatsText(feedbacks, targetUsername);
+        }
+
+        const sentMsg = await tg.send(chatId, replyText);
+        // Auto-delete nach 5 Minuten
+        if (sentMsg?.message_id) {
+          void safelistService.trackBotMessage(chatId, sentMsg.message_id, "check_result", 5 * 60 * 1000);
+        }
         return;
       }
 
-      // /scamlist @user Grund
-      const scamMatch = text.match(/^\/scamlist\s+@?(\w+)\s*(.*)/i);
+      // ── /feedbacks ohne @user → eigene Liste ─────────────────────────────
+      if (/^\/feedbacks?$/i.test(text)) {
+        const all = await safelistService.getFeedbacks(chatId, null, null);
+        const pos = all.filter(f => f.feedback_type === "positive").length;
+        const neg = all.filter(f => f.feedback_type === "negative").length;
+        const sent = await tg.send(chatId, `📋 <b>Feedback-Übersicht</b>\n✅ ${pos} positive · ⚠️ ${neg} negative bestätigte Einträge.`);
+        if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "check_result", 5 * 60 * 1000);
+        return;
+      }
+
+      // ── /safelist @user – NUR FÜR ADMINS ─────────────────────────────────
+      const safelistAdminMatch = text.match(/^\/safe?list[e]?\s+@?(\w+)\s*(.*)/i);
+      if (safelistAdminMatch) {
+        if (!await isGroupAdmin(token, chatId, from.id)) {
+          const sent = await tg.send(chatId, "🔒 Nur Channel-Admins können Mitglieder verifizieren.");
+          if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 10000);
+          return;
+        }
+        const [, username, feedback] = safelistAdminMatch;
+        const fb = await safelistService.submitFeedback({
+          channelId: chatId, submittedBy: from?.id, submittedByUsername: from?.username,
+          targetUsername: username, feedbackType: "positive",
+          feedbackText: feedback || "Vom Channel-Admin verifiziert"
+        });
+        if (fb?.id) {
+          const ch2 = await getChannel(chatId);
+          await safelistService.approveFeedback(fb.id, from.id, ch2);
+        }
+        const sent = await tg.send(chatId, `✅ @${username} wurde auf die Safelist gesetzt.`);
+        if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 15000);
+        return;
+      }
+
+      // ── /scamlist @user – Scam-Meldung mit Proofs ────────────────────────
+      const scamMatch = text.match(/^\/scam?list[e]?\s+@?(\w+)\s*(.*)/i);
       if (scamMatch) {
         const [, username, reason] = scamMatch;
-        const result = await safelistService.submitFeedback(
-          chatId, from.id, null, username, "scam", reason || "Scam gemeldet",
-          msg.reply_to_message ? [{ text: msg.reply_to_message.text, from: msg.reply_to_message.from?.id }] : []
-        );
-        await tg.send(chatId, `⚠️ Scam-Meldung für @${username} eingereicht (ID: ${result.id}).\nEin Admin prüft den Fall.`);
+        const fb = await safelistService.submitFeedback({
+          channelId: chatId, submittedBy: from?.id, submittedByUsername: from?.username,
+          targetUsername: username, feedbackType: "negative",
+          feedbackText: reason || "Scam-Verdacht"
+        });
+        if (fb?.id) {
+          // Pending-State für Proof-Bestätigung im Channel
+          pendingInputs["scam_confirm_" + String(from?.id) + "_" + chatId] = {
+            action: "await_proof_confirm", feedbackId: fb.id,
+            targetUsername: username, channelId: chatId, reporterUsername: from?.username
+          };
+          const sent = await tg.send(chatId,
+            `⚠️ Scam-Meldung gegen @${username} eingereicht.\n\n` +
+            `Hast du Beweise (Screenshots, Videos, Texte)?\n` +
+            `Antworte mit <b>"Ich habe Proofs"</b> um Beweise privat einzureichen.\n\n` +
+            `<i>Ohne Beweise wird die Meldung möglicherweise abgelehnt.</i>`
+          );
+          if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 60000);
+        }
         return;
       }
 
-      // /check @user
-      const checkMatch = text.match(/^\/check\s+@?(\w+)/i);
-      if (checkMatch) {
-        const entry = await safelistService.checkUser(null, checkMatch[1]);
-        if (entry) {
-          const emoji = entry.list_type === "safe" ? "✅" : "⚠️";
-          await tg.send(chatId, `${emoji} <b>@${entry.username}</b>\nStatus: ${entry.list_type === "safe" ? "Verifiziert sicher" : "Scammer gemeldet"}\n${entry.summary || entry.feedback_text || ""}`);
+      // ── "Ich habe Proofs" Bestätigung im Channel ─────────────────────────
+      if (/ich habe proofs?/i.test(text) && from?.id) {
+        const key = "scam_confirm_" + String(from.id) + "_" + chatId;
+        const pending = pendingInputs[key];
+        if (pending) {
+          delete pendingInputs[key];
+          // Proof-State im privaten Chat aktivieren
+          pendingInputs[String(from.id)] = {
+            action: "collecting_proofs", feedbackId: pending.feedbackId,
+            channelId: chatId, targetUsername: pending.targetUsername,
+            reporterUsername: pending.reporterUsername, proofCount: 0
+          };
+          const sent = await tg.send(chatId,
+            `📩 Bitte schicke deine Beweise <b>direkt im privaten Chat</b> mit @${settings?.smalltalk_bot_username || "dem Bot"}.\n` +
+            `→ Öffne den Bot-Chat und tippe /start falls noch nicht geschehen.`
+          );
+          if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 30000);
+        }
+        return;
+      }
+
+      // ── /scamlist ohne @user → Scamliste anzeigen ────────────────────────
+      if (/^\/scam?list[e]?(@\w+)?$/i.test(text)) {
+        const { data: scamList } = await supabase.from("scam_entries").select("username, user_id, reason").eq("channel_id", chatId).limit(20);
+        if (!scamList?.length) {
+          const sent = await tg.send(chatId, "⚠️ <b>Scamliste</b>\n\nNoch keine bestätigten Einträge.");
+          if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "check_result", 5 * 60 * 1000);
         } else {
-          await tg.send(chatId, `❓ @${checkMatch[1]} ist nicht in der Safelist.`);
+          const lines = scamList.map(s => `⛔ @${s.username || s.user_id}${s.reason ? " – " + s.reason.substring(0, 60) : ""}`).join("\n");
+          const sent = await tg.send(chatId, `⚠️ <b>Scamliste (${scamList.length})</b>\n\n${lines}`);
+          if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "check_result", 5 * 60 * 1000);
         }
         return;
       }
@@ -503,11 +706,20 @@ router.post("/smalltalk", (req, res) => {
       const aiMatch = text.match(/^\/ai\s+(.*)/i);
       if (aiMatch && ch?.is_approved && ch?.ai_enabled) {
         const question = aiMatch[1].trim();
+        // Kontext: letzte 3 Nachrichten des Users
+        const ctxMsgs = from?.id ? await safelistService.getContextMsgs(chatId, from.id) : [];
+        const ctxText = ctxMsgs.length ? "\nKontext (letzte Nachrichten):\n" + ctxMsgs.map(m => `${m.username||"User"}: ${m.message}`).join("\n") : "";
+        const enrichedQuestion = question + ctxText;
+
         const smalltalkAgent = require("../services/ai/smalltalkAgent");
-        const result = await smalltalkAgent.handle({ chatId, text: question, settings, channelRecord: ch });
-        if (result.reply) await tg.send(chatId, result.reply);
+        const result = await smalltalkAgent.handle({ chatId, text: enrichedQuestion, settings, channelRecord: ch });
+        if (result.reply) {
+          // AI-Antworten bleiben dauerhaft
+          await tg.send(chatId, result.reply);
+        }
       } else if (aiMatch && ch && !ch.ai_enabled) {
-        await tg.send(chatId, "🔒 AI-Features sind für diesen Channel noch nicht freigeschaltet.\n\nWende dich an @autoacts für die Aktivierung.");
+        const sent = await tg.send(chatId, "🔒 AI-Features sind für diesen Channel noch nicht freigeschaltet.\n\nWende dich an @autoacts für die Aktivierung.");
+        if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 15000);
       }
 
     } catch (e) {

@@ -482,11 +482,17 @@
                     <h3 class="card-title">📢 Channel Bot</h3>
                     <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Channels & Gruppen wo der Bot als Admin hinzugefügt wurde. Bot erkennt sich automatisch beim Hinzufügen.</p>
                     <div id="channel-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
-                    <div style="display:flex;gap:6px;margin-top:8px;">
-                      <input type="text" id="manual-chat-id" placeholder="Chat-ID manuell (z.B. -1001234567890)" style="flex:1;padding:6px 8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.78rem;">
-                      <button onclick="registerChannelManually()" class="btn btn-success btn-sm">+ Hinzufügen</button>
+                    <button onclick="scanAndLoadChannels()" class="btn btn-secondary btn-sm" style="margin-top:8px;">🔍 Scannen &amp; Aktualisieren</button>
+                  </div>
+                  <div class="card" style="margin-top:12px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                      <h3 class="card-title" style="margin:0;">🔗 Channel-Gruppen</h3>
+                      <button onclick="createChannelGroupUI()" class="btn btn-secondary btn-sm">+ Neu</button>
                     </div>
-                    <button onclick="scanAndLoadChannels()" class="btn btn-secondary btn-sm" style="margin-top:6px;width:100%;">🔍 Scannen & Aktualisieren</button>
+                    <p style="font-size:0.78rem;color:#888;margin-bottom:8px;">Verknüpfte Channels teilen Datenbank und System-Prompt.</p>
+                    <div id="channel-groups-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                  </div>
+                  <div style="display:none">
                   </div>
                 </div>
 
@@ -533,8 +539,8 @@
     </div>
 </div>
 
-<script src="js/api.js?v=1414"></script>
-<script src="js/dashboard.js?v=1414"></script>
+<script src="js/api.js?v=1417"></script>
+<script src="js/dashboard.js?v=1417"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });

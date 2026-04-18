@@ -104,4 +104,13 @@ router.delete('/channels/:id',           channelCtrl.deleteChannel.bind(channelC
 router.get('/smalltalk/status',   ctrl.testSmallTalkBot);
 router.post('/smalltalk/connect',  ctrl.testSmallTalkBot);
 
+// ── Channel-Gruppen ───────────────────────────────────────────────────────
+router.get('/channel-groups',          channelCtrl.getChannelGroups.bind(channelCtrl));
+router.post('/channel-groups',         channelCtrl.createChannelGroup.bind(channelCtrl));
+router.delete('/channel-groups/:id',   channelCtrl.deleteChannelGroup.bind(channelCtrl));
+
+// Scamlist Management
+router.get('/scamlist',              channelCtrl.getScamlist.bind(channelCtrl));
+router.post('/scamlist/remove',      channelCtrl.removeFromScamlist.bind(channelCtrl));
+
 module.exports = router;

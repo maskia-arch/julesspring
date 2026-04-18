@@ -200,6 +200,62 @@ const channelController = {
     }
   },
 
+  // ── Channel-Gruppen Verwaltung ───────────────────────────────────────────
+  async getChannelGroups(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      const { data } = await supa.from("channel_groups")
+        .select("*, channel_group_members(channel_id, is_primary, bot_channels(id, title, type)))")
+        .order("created_at", { ascending: false });
+      res.json(data || []);
+    } catch (e) { next(e); }
+  },
+
+  async createChannelGroup(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      const { name, channel_ids } = req.body;
+      if (!name || !channel_ids?.length) return res.status(400).json({ error: "Name und Channels pflicht" });
+      const { data: grp } = await supa.from("channel_groups").insert([{ name }]).select().single();
+      for (let i = 0; i < channel_ids.length; i++) {
+        await supa.from("channel_group_members").insert([{ group_id: grp.id, channel_id: channel_ids[i], is_primary: i === 0 }]).catch(() => {});
+        await supa.from("bot_channels").update({ channel_group_id: grp.id }).eq("id", channel_ids[i]).catch(() => {});
+      }
+      res.json({ success: true, group: grp });
+    } catch (e) { next(e); }
+  },
+
+  async removeFromScamlist(req, res, next) {
+    try {
+      const { channel_id, user_id } = req.body;
+      if (!channel_id || !user_id) return res.status(400).json({ error: "channel_id und user_id pflicht" });
+      const safelistService = require("../services/adminHelper/safelistService");
+      await safelistService.removeFromScamlist(channel_id, user_id, req.user?.id || 0);
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  async getScamlist(req, res, next) {
+    try {
+      const supabase_local = require("../config/supabase");
+      const { channel_id } = req.query;
+      let q = supabase_local.from("scam_entries").select("*").order("created_at", { ascending: false });
+      if (channel_id) q = q.eq("channel_id", String(channel_id));
+      const { data } = await q.limit(50);
+      res.json(data || []);
+    } catch (e) { next(e); }
+  },
+
+  async deleteChannelGroup(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      // Remove group membership from channels
+      await supa.from("bot_channels").update({ channel_group_id: null }).eq("channel_group_id", req.params.id);
+      await supa.from("channel_groups").delete().eq("id", req.params.id);
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
   _channelCache: {},
   async getChannelSettings(chatId) {
     const c = this._channelCache[chatId];

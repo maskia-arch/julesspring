@@ -668,6 +668,109 @@ async function loadSmallTalkStatus() {
     }
 }
 
+
+// ── Channel-Gruppen (Linking) ─────────────────────────────────────────────────
+
+
+// ── Scamlist Dashboard ────────────────────────────────────────────────────────
+
+async function loadScamlist(channelId) {
+    var modal = _getOrCreateModal('scamlist-manage-modal');
+    modal.innerHTML =
+        '<div style="background:#0d1117;border-radius:16px 16px 0 0;padding:20px;width:100%;max-width:600px;max-height:85vh;overflow-y:auto;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">' +
+                '<h3 style="color:white;font-size:1rem;margin:0;">⛔ Scamliste</h3>' +
+                '<button onclick="_closeModal(\"scamlist-manage-modal\")" style="background:#333;border:none;color:white;border-radius:5px;padding:4px 10px;cursor:pointer;">✕</button>' +
+            '</div>' +
+            '<div id="scamlist-entries-' + channelId + '"><p style="color:#555;">Lädt…</p></div>' +
+        '</div>';
+    modal.style.display = 'flex';
+
+    try {
+        var entries = await api.request('/scamlist?channel_id=' + channelId) || [];
+        var el = document.getElementById('scamlist-entries-' + channelId);
+        if (!el) return;
+        if (!entries.length) { el.innerHTML = '<p style="color:#555;font-size:0.85rem;">Keine Einträge.</p>'; return; }
+        el.innerHTML = entries.map(function(e) {
+            var prof = e.tg_profile || {};
+            return '<div style="background:#111;border-radius:6px;padding:10px;margin-bottom:6px;">' +
+                '<div style="display:flex;align-items:center;gap:8px;">' +
+                    '<div style="flex:1;">' +
+                        '<div style="font-weight:700;color:#ef4444;">⛔ @'+(e.username||e.user_id)+'</div>' +
+                        (prof.id ? '<div style="font-size:0.68rem;color:#64748b;">TG-ID: '+prof.id+(prof.first_name ? ' · '+prof.first_name : '')+'</div>' : '') +
+                        '<div style="font-size:0.75rem;color:#94a3b8;margin-top:3px;">'+(e.reason||'').substring(0,80)+'</div>' +
+                        (e.ai_summary ? '<div style="font-size:0.72rem;color:#60a5fa;margin-top:3px;">🤖 '+e.ai_summary.substring(0,100)+'</div>' : '') +
+                    '</div>' +
+                    '<button class="btn btn-sm scam-remove-btn" data-cid="'+channelId+'" data-uid="'+e.user_id+'" style="background:#3a1a1a;color:#ef4444;border:none;border-radius:4px;padding:4px 8px;cursor:pointer;flex-shrink:0;">🗑 Entfernen</button>' +
+                '</div>' +
+            '</div>';
+        }).join('');
+
+        el.addEventListener('click', function(ev) {
+            var btn = ev.target.closest('.scam-remove-btn');
+            if (btn) removeFromScamlistUI(btn.dataset.cid, btn.dataset.uid);
+        });
+    } catch(e) { console.error(e); }
+}
+
+async function removeFromScamlistUI(channelId, userId) {
+    if (!confirm('Von Scamliste entfernen?')) return;
+    try {
+        await api.request('/scamlist/remove', 'POST', { channel_id: channelId, user_id: userId });
+        showToast('✅ Entfernt!');
+        loadScamlist(channelId);
+    } catch(e) { alert(e.message||String(e)); }
+}
+
+async function loadChannelGroups() {
+    var el = document.getElementById('channel-groups-list');
+    if (!el) return;
+    try {
+        var groups = await api.request('/channel-groups') || [];
+        if (!groups.length) {
+            el.innerHTML = '<p style="color:#555;font-size:0.85rem;">Keine Gruppen. Erstelle eine um Channels zu verknüpfen.</p>';
+            return;
+        }
+        el.innerHTML = groups.map(function(g) {
+            var members = (g.channel_group_members || []).map(function(m) {
+                return '<span style="background:#1e3a5f;color:#60a5fa;font-size:0.68rem;padding:2px 5px;border-radius:3px;margin-right:3px;">'+(m.bot_channels?.title||m.channel_id)+'</span>';
+            }).join('');
+            return '<div style="background:#111;border-radius:6px;padding:10px;margin-bottom:6px;display:flex;align-items:center;gap:8px;">'+
+                '<div style="flex:1;"><div style="font-weight:700;font-size:0.85rem;">'+esc(g.name)+'</div>'+
+                '<div style="margin-top:4px;">'+members+'</div></div>'+
+                '<button onclick="deleteChannelGroup(\''+g.id+'\')" class="icon-btn">🗑</button>'+
+            '</div>';
+        }).join('');
+    } catch(e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(e.message||String(e))+'</p>'; }
+}
+
+async function createChannelGroupUI() {
+    // Show channel multi-select
+    var el = document.getElementById('channel-list');
+    var channelCards = el ? el.querySelectorAll('[data-chid]') : [];
+    if (!channelCards.length) { alert('Erst Channels laden.'); return; }
+    var name = prompt('Name der Gruppe (z.B. "ValueShop Channels"):');
+    if (!name) return;
+    var ids = [];
+    channelCards.forEach(function(card) {
+        if (confirm('Channel "' + (card.querySelector('[style*="font-weight:700"]')?.textContent || card.dataset.chid) + '" hinzufügen?')) {
+            ids.push(card.dataset.chid);
+        }
+    });
+    if (ids.length < 2) { alert('Mindestens 2 Channels benötigt.'); return; }
+    try {
+        await api.request('/channel-groups', 'POST', { name, channel_ids: ids });
+        showToast('✅ Gruppe erstellt!');
+        loadChannelGroups();
+    } catch(e) { alert('Fehler: ' + (e.message||String(e))); }
+}
+
+async function deleteChannelGroup(id) {
+    if (!confirm('Gruppe auflösen?')) return;
+    try { await api.request('/channel-groups/' + id, 'DELETE'); loadChannelGroups(); }
+    catch(e) { alert(e.message||String(e)); }
+}
+
 async function registerChannelManually() {
     var chatId = document.getElementById('manual-chat-id')?.value?.trim();
     if (!chatId) { alert('Chat-ID eingeben (z.B. -1001234567890)'); return; }
@@ -798,6 +901,7 @@ async function loadChannels() {
                 // Action buttons
                 '<div style="display:flex;gap:6px;margin-bottom:6px;">' +
                     '<button class="btn btn-secondary btn-sm ch-schedule" data-id="'+ch.id+'" style="flex:1;">⏰ Geplant</button>' +
+                    '<button class="btn btn-secondary btn-sm ch-scamlist" data-id="'+ch.id+'" style="flex:1;">⛔ Scamliste</button>' +
                     '<button class="btn btn-secondary btn-sm ch-safelist" data-id="'+ch.id+'" style="flex:1;opacity:'+(ch.ai_enabled?'1':'0.4')+';pointer-events:'+(ch.ai_enabled?'auto':'none')+';">🛡 Safelist</button>' +
                 '</div>' +
                 '<div style="display:flex;gap:6px;">' +
@@ -819,14 +923,28 @@ async function loadChannels() {
         });
 
         el.addEventListener('click', function(e) {
+            var aiTog   = e.target.closest('.ch-ai-toggle');
+            var sched   = e.target.closest('.ch-schedule');
+            var safeEl  = e.target.closest('.ch-safelist');
             var approve = e.target.closest('.ch-approve');
             var reset   = e.target.closest('.ch-reset');
             var del     = e.target.closest('.ch-delete');
             var kb      = e.target.closest('.ch-kb');
+            if (aiTog) {
+                var enable = aiTog.dataset.ai !== '1';
+                if (!confirm(enable ? 'KI-Features aktivieren?' : 'KI-Features deaktivieren?')) return;
+                api.request('/channels/' + aiTog.dataset.id + '/ai', 'PUT', { ai_enabled: enable })
+                   .then(function(){ showToast(enable ? '🤖 KI aktiviert!' : '🔒 KI deaktiviert'); loadChannels(); })
+                   .catch(function(e){ alert('Fehler: ' + (e.message||String(e))); });
+            }
+            if (sched)  openScheduleModal(sched.dataset.id);
+            var scamBtn = e.target.closest('.ch-scamlist');
+            if (scamBtn) loadScamlist(scamBtn.dataset.id);
+            if (safeEl) openSafelistModal(safeEl.dataset.id);
             if (approve) approveChannel(approve.dataset.id);
             if (reset)   resetChannelUsage(reset.dataset.id);
             if (del)     deleteChannel(del.dataset.id);
-            if (kb)      openChannelKB(kb.dataset.id, kb.textContent);
+            if (kb)      openChannelKB(kb.dataset.id, '');
         });
         el.addEventListener('change', function(e) {
             var mode = e.target.closest('.ch-mode');
@@ -843,12 +961,6 @@ async function loadChannels() {
             if (ul)  updateChannel(ul.dataset.id,  { usd_limit:     ul.value  });
             if (lm)  updateChannel(lm.dataset.id,  { limit_message: lm.value  });
             if (sp)  updateChannel(sp.dataset.id,  { system_prompt: sp.value  });
-        }, true);
-
-        // KB Button click
-        el.addEventListener('click', function(e) {
-            var kb = e.target.closest('.ch-kb');
-            if (kb) openChannelKB(kb.dataset.id, kb.closest('[data-id]')?.querySelector('.ch-kb')?.textContent || '');
         }, true);
 
     } catch(e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(e.message)+'</p>'; }
