@@ -285,7 +285,8 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         reply_markup: { inline_keyboard: [
           [{ text: "✏️ System-Prompt",       callback_data: `cfg_ai_prompt_${channelId}` }],
           [{ text: "📰 Tageszusammenfassung", callback_data: `cfg_ai_summary_${channelId}` }],
-          [{ text: "📊 Mein Token-Verbrauch", callback_data: `cfg_ai_stats_${channelId}` }]
+          [{ text: "📊 Mein Token-Verbrauch", callback_data: `cfg_ai_stats_${channelId}` }],
+          [{ text: "🔇 Gesperrte Themen",    callback_data: `cfg_ai_threads_${channelId}` }]
         ]}
       });
       break;
@@ -354,6 +355,19 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       const SUMMARY_TOKEN_COST2 = 400;
       await tg.call("sendMessage", { chat_id: String(userId), text: "⏳ Erstelle Zusammenfassung…" });
       await _runDailySummary(supabase_db, channelId, userId, tg, ch);
+      break;
+    }
+    case "ai_threads": {
+      const blocked = Array.isArray(ch?.blocked_thread_ids) ? ch.blocked_thread_ids : [];
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `🔇 <b>Gesperrte Themen</b>\n\n` +
+              (blocked.length
+                ? `Gesperrte Thread-IDs:\n${blocked.map(id => `• ${id}`).join("\n")}\n\n`
+                : "Aktuell sind keine Themen gesperrt.\n\n") +
+              `Um ein Thema zu sperren: Gehe in das Thema und sende einem beliebigen Mitglied die Nachricht mit der Thread-ID.\n\n` +
+              `Thread-ID sperren/entsperren per Dashboard oder sende mir hier die ID.`,
+        parse_mode: "HTML" });
+      pendingInputs[String(userId)] = { action: "set_blocked_threads", channelId };
       break;
     }
     case "ai_abort": {
@@ -469,6 +483,18 @@ async function handlePendingInput(tg, supabase_db, userId, text, settings, msg) 
     return true;
   }
 
+  if (action === "set_blocked_threads") {
+    delete pendingInputs[String(userId)];
+    const threadIds = text.split(/[\s,]+/).map(s => parseInt(s.trim())).filter(n => !isNaN(n));
+    const { data: cur } = await supabase_db.from("bot_channels").select("blocked_thread_ids").eq("id", channelId).maybeSingle();
+    const existing = Array.isArray(cur?.blocked_thread_ids) ? cur.blocked_thread_ids : [];
+    const updated = [...new Set([...existing, ...threadIds])];
+    await supabase_db.from("bot_channels").update({ blocked_thread_ids: updated, updated_at: new Date() }).eq("id", channelId);
+    await tg.call("sendMessage", { chat_id: String(userId),
+      text: `✅ Gesperrte Themen aktualisiert.\nAktive Sperren: ${updated.join(", ") || "keine"}`, parse_mode: "HTML" });
+    return true;
+  }
+
   // ── Proof-Einreichung: User startet mit /proofs_ENTRYID ───────────────────
   if (action === "awaiting_proofs_start" && text && text.startsWith("/proofs_")) {
     const inputEntryId = text.split("_")[1];
@@ -577,66 +603,106 @@ async function _checkTokenBudget(supabase_db, channel, tg, token) {
   return false;
 }
 
-// ── Tages-Zusammenfassung ──────────────────────────────────────────────────────
-async function _createDailySummary(supabase_db, channelId, tg, adminChatId) {
+// ── Tages-Zusammenfassung ─────────────────────────────────────────────────────
+async function _createDailySummary(supabase_db, channelId) {
   const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey) {
+    logger.warn("[DailySummary] Kein OPENAI_API_KEY");
+    return null;
+  }
 
   const since = new Date(Date.now() - 86400000).toISOString();
 
-  // Channel-Kontext der letzten 24h laden (nutzt channel_context Tabelle)
+  let ctxMsgs = [], members = [];
   try {
-    const { data: ctxMsgs } = await supabase_db.from("channel_context")
-      .select("username, message, msg_date")
+    // channel_chat_history hat alle User-Nachrichten seit v1.4.23
+    const { data: hist } = await supabase_db
+      .from("channel_chat_history")
+      .select("user_id, content, created_at")
       .eq("channel_id", String(channelId))
-      .gte("msg_date", since)
-      .order("msg_date", { ascending: true })
-      .limit(200);
+      .eq("role", "user")
+      .gte("created_at", since)
+      .order("created_at", { ascending: true })
+      .limit(300);
+    ctxMsgs = hist || [];
+  } catch (e) { logger.warn("[DailySummary] history read:", e.message); }
 
-    const { data: members } = await supabase_db.from("channel_members")
-      .select("is_deleted").eq("channel_id", String(channelId));
+  try {
+    const { data: m } = await supabase_db
+      .from("channel_members")
+      .select("is_deleted")
+      .eq("channel_id", String(channelId));
+    members = m || [];
+  } catch (_) {}
 
-    const joins  = (members || []).filter(m => !m.is_deleted).length;
-    const leaves = (members || []).filter(m =>  m.is_deleted).length;
+  const joins  = members.filter(m => !m.is_deleted).length;
+  const leaves = members.filter(m =>  m.is_deleted).length;
 
-    if (!ctxMsgs?.length) return `📰 <b>Tageszusammenfassung</b>\n\nKeine Nachrichten in den letzten 24h.\n👥 Eintritte: ${joins} · Austritte: ${leaves}`;
+  if (!ctxMsgs.length) {
+    return {
+      text: `📰 <b>Tageszusammenfassung</b>\n\nKeine User-Nachrichten in den letzten 24h.` +
+            `\n\n👥 Eintritte: ${joins} · Austritte: ${leaves}`,
+      outTokens: 0, inTokens: 0, usd: 0
+    };
+  }
 
-    // Datensparsam: nur anonymisierter Inhalt (keine user_ids oder usernames)
-    const msgTexts = ctxMsgs.map(m => m.message).filter(Boolean).join("\n").substring(0, 4000);
+  // Format: [Zeit] User-ID/Username: Nachricht
+  const lines = ctxMsgs.map(m => {
+    const t = new Date(m.created_at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    return `[${t}] User${m.user_id}: ${(m.content || "").substring(0, 200)}`;
+  }).join("\n").substring(0, 5000);
 
+  try {
     const axios = require("axios");
-    const resp = await axios.post("https://api.openai.com/v1/chat/completions",
-      { model: "gpt-4o-mini", max_tokens: 400, temperature: 0.3,
-        messages: [{
-          role: "system",
-          content: "Du fasst Telegram-Gruppennachrichten zusammen. Zensiere Beleidigungen mit ***. Erwähne keine Usernamen. Erstelle einen Tagesbericht in 5-8 Stichpunkten."
-        },{
-          role: "user",
-          content: `Nachrichten der letzten 24h:\n${msgTexts}`
-        }]},
-      { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, timeout: 30000 }
+    const resp = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: "gpt-4o-mini",
+        max_tokens: 500,
+        temperature: 0.3,
+        messages: [
+          {
+            role: "system",
+            content: "Du bist ein Assistent der Telegram-Gruppen-Tagesberichte erstellt. " +
+                     "Fasse die Aktivitäten in 5-8 prägnanten Stichpunkten zusammen. " +
+                     "Zensiere Beleidigungen oder unangemessene Inhalte mit [***]. " +
+                     "Verwende keine echten Usernamen. Schreibe auf Deutsch."
+          },
+          {
+            role: "user",
+            content: `Erstelle einen Tagesbericht für diesen Telegram-Channel.\n\n` +
+                     `Nachrichten der letzten 24h:\n${lines}\n\n` +
+                     `Mitglieder-Statistik: ${joins} aktiv, ${leaves} ausgetreten.`
+          }
+        ]
+      },
+      {
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        timeout: 45000
+      }
     );
 
-    const usage     = resp.data.usage || {};
-    const outTokens = usage.completion_tokens || 0;
-    const inTokens  = usage.prompt_tokens     || 0;
-    const summaryText = resp.data.choices[0].message.content.trim();
+    const usage      = resp.data?.usage || {};
+    const outTokens  = usage.completion_tokens || 0;
+    const inTokens   = usage.prompt_tokens     || 0;
+    const summaryTxt = resp.data?.choices?.[0]?.message?.content?.trim() || "(Keine Zusammenfassung)";
+
     return {
-      text:      `📰 <b>Tageszusammenfassung</b>\n\n${summaryText}\n\n` +
-                 `👥 Mitglieder: ~${joins} aktiv · ${leaves} ausgetreten`,
+      text:      `📰 <b>Tageszusammenfassung</b>\n\n${summaryTxt}\n\n` +
+                 `👥 ${joins} aktive Mitglieder · ${leaves} ausgetreten`,
       outTokens,
       inTokens,
-      usd: inTokens * 0.00000015 + outTokens * 0.0000006 // gpt-4o-mini Preise
+      usd: inTokens * 0.00000015 + outTokens * 0.0000006
     };
   } catch (e) {
-    logger.error("[DailySummary] Fehler:", e.message);
+    logger.error("[DailySummary] OpenAI Fehler:", e.message, e.response?.data);
     return null;
   }
 }
 
 // ── _runDailySummary: Zusammenfassung ausführen + exakte Token abrechnen ────────
 async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch) {
-  const result = await _createDailySummary(supabase_db, channelId, tg, String(adminUserId));
+  const result = await _createDailySummary(supabase_db, channelId);
   if (!result) {
     await tg.call("sendMessage", { chat_id: String(adminUserId),
       text: "❌ Fehler bei der Zusammenfassung. Bitte später erneut versuchen." });
@@ -687,7 +753,7 @@ async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch) {
 
   // Zusammenfassung senden (erst nach Abrechnung → zeigt korrekten Verbrauch)
   await tg.call("sendMessage", { chat_id: String(adminUserId),
-    text: result.text + `\n\n<i>📊 ${actualOutTokens} Output-Token berechnet ($${actualUsd.toFixed(5)})</i>` + note,
+    text: result.text + `\n\n<i>📊 ${actualOutTokens} Token verbraucht</i>` + note,
     parse_mode: "HTML" });
 }
 
@@ -823,7 +889,14 @@ router.post("/smalltalk", (req, res) => {
         const qUserId = q.from?.id;
         const data   = q.data || "";
 
-        await tg.call("answerCallbackQuery", { callback_query_id: q.id }).catch(() => {});
+        // Delete the menu message after processing to prevent stale button use
+      if (q.message?.message_id && q.message?.chat?.id) {
+        await tg.call("deleteMessage", {
+          chat_id: q.message.chat.id,
+          message_id: q.message.message_id
+        }).catch(() => {});
+      }
+      await tg.call("answerCallbackQuery", { callback_query_id: q.id }).catch(() => {});
 
         // Settings-Menu: Hier oder Privat
         if (data.startsWith("settings_here_") || data.startsWith("settings_private_")) {
@@ -1281,7 +1354,12 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
       const aiMatch = text.match(/^\/ai\s+(.*)/i);
       const aiQuestion = aiMatch ? aiMatch[1].trim() : (isReplyToBot && !text.startsWith("/") ? text : null);
 
-      if (aiQuestion && ch?.is_approved && ch?.ai_enabled) {
+      // Check if this thread/topic is blocked for AI
+      const blockedThreads = Array.isArray(ch?.blocked_thread_ids) ? ch.blocked_thread_ids : [];
+      const currentThread  = msg.message_thread_id || 0;
+      const threadBlocked  = currentThread && blockedThreads.includes(currentThread);
+
+      if (aiQuestion && ch?.is_approved && ch?.ai_enabled && !threadBlocked) {
         // Kontext: vollständiger Gesprächsverlauf mit diesem User
         const history = from?.id ? await safelistService.getConversationHistory(chatId, from.id, 5) : [];
 
@@ -1291,8 +1369,12 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
         const smalltalkAgent = require("../services/ai/smalltalkAgent");
         const result = await smalltalkAgent.handle({ chatId, text: aiQuestion, settings, channelRecord: ch, history });
         if (result.reply) {
-          const sentAiMsg = await tg.send(chatId, result.reply);
-          // AI-Antwort speichern für Gesprächskontext
+          // Reply to original message in same thread (forum topic support)
+          const replyExtra = {};
+          if (msg.message_id) replyExtra.reply_to_message_id = msg.message_id;
+          if (msg.message_thread_id) replyExtra.message_thread_id = msg.message_thread_id;
+
+          const sentAiMsg = await tg.send(chatId, result.reply, replyExtra);
           if (from?.id && sentAiMsg?.message_id) {
             void safelistService.saveAssistantMessage(chatId, from.id, result.reply, sentAiMsg.message_id);
           }

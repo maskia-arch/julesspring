@@ -889,14 +889,14 @@ async function loadChannels() {
                 // Token limits
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px;">' +
                     '<div><label style="font-size:0.7rem;color:#64748b;">Token-Budget (Volumen)</label><input type="number" class="ch-tlimit" data-id="'+ch.id+'" value="'+(ch.token_limit||'')+'" placeholder="∞" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
-                    '<div><label style="font-size:0.7rem;color:#64748b;">USD-Limit</label><input type="number" step="0.01" class="ch-ulimit" data-id="'+ch.id+'" value="'+(ch.usd_limit||'')+'" placeholder="∞" style="width:100%;padding:5px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;"></div>' +
+                    '<div style="display:flex;align-items:flex-end;padding-bottom:1px;"><span style="font-size:0.7rem;color:#555;">USD intern verwaltet</span></div>' +
                 '</div>' +
 
                 // Cost display
                 '<div style="background:#0d1117;border-radius:6px;padding:8px;margin-bottom:8px;font-size:0.75rem;">' +
                     '<div style="display:flex;justify-content:space-between;margin-bottom:4px;"><span style="color:#64748b;">Tokens:</span><span>'+((ch.token_used||0)).toLocaleString()+(ch.token_limit?' / '+ch.token_limit.toLocaleString():'')+'</span></div>' +
                     (ch.token_limit ? '<div style="height:4px;background:#1e1e1e;border-radius:2px;margin-bottom:4px;"><div style="height:100%;width:'+tokenPct+'%;background:'+barColor+';border-radius:2px;"></div></div>' : '') +
-                    '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;">Kosten:</span><span style="color:#f59e0b;">$'+parseFloat(ch.usd_spent||0).toFixed(5)+(ch.usd_limit?' / $'+ch.usd_limit:'')+'</span></div>' +
+                    '<div style="display:flex;justify-content:space-between;"><span style="color:#64748b;">Kosten:</span><span style="color:#f59e0b;">intern</span></div>' +
                 '</div>' +
 
                 // Limit message
@@ -989,12 +989,11 @@ async function loadChannels() {
         el.addEventListener('blur', function(e) {
             var cmd = e.target.closest('.ch-cmd');
             var tl  = e.target.closest('.ch-tlimit');
-            var ul  = e.target.closest('.ch-ulimit');
             var lm  = e.target.closest('.ch-limitmsg');
             var sp  = e.target.closest('.ch-sysprompt');
             if (cmd) updateChannel(cmd.dataset.id, { ai_command:    cmd.value });
             if (tl)  updateChannel(tl.dataset.id,  { token_limit:   tl.value  });
-            if (ul)  updateChannel(ul.dataset.id,  { usd_limit:     ul.value  });
+
             if (lm)  updateChannel(lm.dataset.id,  { limit_message: lm.value  });
             if (sp)  updateChannel(sp.dataset.id,  { system_prompt: sp.value  });
         }, true);
