@@ -75,8 +75,10 @@ const tgAdminHelper = {
   },
 
   async trackLeft(channelId, userId) {
-    await supabase.from("channel_members")
-      .delete().eq("channel_id", channelId).eq("user_id", userId).catch(() => {});
+    try {
+      await supabase.from("channel_members")
+        .delete().eq("channel_id", channelId).eq("user_id", userId);
+    } catch (_) {}
   },
 
   // ── Gelöschte Accounts entfernen ──────────────────────────────────────────

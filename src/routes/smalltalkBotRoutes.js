@@ -232,25 +232,22 @@ router.post("/smalltalk", (req, res) => {
 
             let dbResult;
             if (existing) {
-              // Update vorhandenen Eintrag
+              // Update vorhandenen Eintrag (ohne optionale Spalten)
               dbResult = await supabase.from("bot_channels").update({
-                title:       chat.title || chatIdStr,
-                username:    chat.username || null,
-                type:        chat.type,
-                bot_type:    "smalltalk",
-                updated_at:  new Date()
+                title:      chat.title || chatIdStr,
+                username:   chat.username || null,
+                type:       chat.type,
+                updated_at: new Date()
               }).eq("id", chatIdStr).select("id");
               logger.info(`[SmallTalk-Bot] Channel UPDATE: ${JSON.stringify(dbResult.error || "OK")}`);
             } else {
-              // Neuen Eintrag anlegen
+              // Neuen Eintrag anlegen - nur Kern-Spalten die garantiert existieren
               dbResult = await supabase.from("bot_channels").insert([{
                 id:          chat.id,
                 title:       chat.title || chatIdStr,
                 username:    chat.username || null,
                 type:        chat.type,
-                bot_type:    "smalltalk",
                 is_active:   false,
-                is_approved: false,
                 updated_at:  new Date()
               }]).select("id");
               logger.info(`[SmallTalk-Bot] Channel INSERT: ${JSON.stringify(dbResult.error || "OK")}`);
