@@ -940,6 +940,13 @@ async function loadChannels() {
             if (sched)  openScheduleModal(sched.dataset.id);
             var scamBtn = e.target.closest('.ch-scamlist');
             if (scamBtn) loadScamlist(scamBtn.dataset.id);
+            var slTog = e.target.closest('.ch-safelist-toggle');
+            if (slTog) {
+                var enableSl = slTog.dataset.sl !== '1';
+                api.request('/channels/' + slTog.dataset.id + '/ai', 'PUT', { safelist_enabled: enableSl })
+                   .then(function(){ showToast(enableSl ? '🛡 Safelist aktiviert!' : '🛡 Safelist deaktiviert'); loadChannels(); })
+                   .catch(function(e){ alert('Fehler: ' + (e.message||String(e))); });
+            }
             if (safeEl) openSafelistModal(safeEl.dataset.id);
             if (approve) approveChannel(approve.dataset.id);
             if (reset)   resetChannelUsage(reset.dataset.id);

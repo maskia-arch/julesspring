@@ -256,6 +256,26 @@ const channelController = {
     } catch (e) { next(e); }
   },
 
+  // ── AI + Safelist Toggle ─────────────────────────────────────────────────
+  async toggleAI(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      const { ai_enabled, safelist_enabled, welcome_msg, goodbye_msg, system_prompt } = req.body;
+      const patch = { updated_at: new Date() };
+      if (ai_enabled        !== undefined) patch.ai_enabled        = Boolean(ai_enabled);
+      if (safelist_enabled  !== undefined) patch.safelist_enabled  = Boolean(safelist_enabled);
+      if (welcome_msg       !== undefined) patch.welcome_msg       = welcome_msg;
+      if (goodbye_msg       !== undefined) patch.goodbye_msg       = goodbye_msg;
+      if (system_prompt     !== undefined) patch.system_prompt     = system_prompt;
+
+      const { data, error } = await supa.from("bot_channels")
+        .update(patch).eq("id", req.params.id).select().single();
+      if (error) throw new Error(error.message);
+      this._channelCache[req.params.id] = null;
+      res.json(data);
+    } catch (e) { next(e); }
+  },
+
   _channelCache: {},
   async getChannelSettings(chatId) {
     const c = this._channelCache[chatId];

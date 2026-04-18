@@ -72,7 +72,8 @@ const safelistService = {
       feedback_id: feedbackId, proof_type: proofType,
       file_id: fileId||null, caption: caption||null, content: content||null, submitted_by: submittedBy
     }]);
-    const { data: cur } = await supabase.from("user_feedbacks").select("proof_count").eq("id", feedbackId).single().catch(() => ({ data: { proof_count: 0 } }));
+    let cur = { proof_count: 0 };
+    try { const r = await supabase.from("user_feedbacks").select("proof_count").eq("id", feedbackId).single(); if (r.data) cur = r.data; } catch (_) {}
     await supabase.from("user_feedbacks").update({ has_proofs: true, proof_count: (cur?.proof_count||0) + 1 }).eq("id", feedbackId);
   },
 
@@ -82,13 +83,15 @@ const safelistService = {
   },
 
   async approveFeedback(feedbackId, adminUserId, channel) {
-    const { data: fb } = await supabase.from("user_feedbacks").select("*").eq("id", feedbackId).single().catch(() => ({ data: null }));
+    let fb = null;
+    try { const r2 = await supabase.from("user_feedbacks").select("*").eq("id", feedbackId).single(); fb = r2.data; } catch (_) {}
     if (!fb) return null;
     let aiSummary = null;
     if (channel?.ai_enabled) aiSummary = await this.generateAiSummary(fb.channel_id, fb.target_username, fb.target_user_id);
     await supabase.from("user_feedbacks").update({ status: "approved", reviewed_by: adminUserId, ai_summary: aiSummary, updated_at: new Date() }).eq("id", feedbackId);
     if (fb.feedback_type === "negative") {
-      const token = channel?.smalltalk_bot_token || (await supabase.from("settings").select("smalltalk_bot_token").single().catch(() => ({ data: null }))).data?.smalltalk_bot_token;
+      let token = channel?.smalltalk_bot_token;
+      if (!token) { try { const r3 = await supabase.from("settings").select("smalltalk_bot_token").single(); token = r3.data?.smalltalk_bot_token; } catch (_) {} }
       const tgProfile = fb.target_user_id ? await this._fetchTgProfile(fb.target_user_id, token) : {};
       await supabase.from("scam_entries").upsert([{
         channel_id: String(fb.channel_id), user_id: fb.target_user_id,
@@ -126,9 +129,7 @@ const safelistService = {
   // Auto-Delete Tracking
   async trackBotMessage(channelId, messageId, msgType, deleteAfterMs) {
     const deleteAfter = deleteAfterMs ? new Date(Date.now() + deleteAfterMs).toISOString() : null;
-    await supabase.from("bot_messages").insert([{
-      channel_id: String(channelId), message_id: messageId, msg_type: msgType, delete_after: deleteAfter
-    }]).catch(() => {});
+    try { await supabase.from("bot_messages").insert([{ channel_id: String(channelId), message_id: messageId, msg_type: msgType, delete_after: deleteAfter }]); } catch (_) {}
   },
 
   async runAutoDelete(token) {
@@ -138,7 +139,7 @@ const safelistService = {
     const base = `https://api.telegram.org/bot${token}`;
     for (const m of msgs) {
       try { await axios.post(`${base}/deleteMessage`, { chat_id: m.channel_id, message_id: m.message_id }, { timeout: 5000 }); } catch (_) {}
-      await supabase.from("bot_messages").delete().eq("id", m.id).catch(() => {});
+      try { await supabase.from("bot_messages").delete().eq("id", m.id); } catch (_) {}
     }
     if (msgs.length) logger.info(`[AutoDelete] ${msgs.length} Nachrichten gelöscht`);
   },
@@ -146,12 +147,11 @@ const safelistService = {
   // Kontext für /ai
   async saveContextMsg(channelId, userId, username, message) {
     if (!message?.trim()) return;
-    await supabase.from("channel_context").upsert([{
-      channel_id: String(channelId), user_id: userId,
-      username: username||null, message: message.substring(0, 500), msg_date: new Date()
-    }], { onConflict: "channel_id,user_id,message" }).catch(() => {});
-    const { data: all } = await supabase.from("channel_context").select("id").eq("channel_id", String(channelId)).eq("user_id", userId).order("msg_date", { ascending: false });
-    if (all?.length > 3) await supabase.from("channel_context").delete().in("id", all.slice(3).map(r => r.id)).catch(() => {});
+    try { await supabase.from("channel_context").upsert([{ channel_id: String(channelId), user_id: userId, username: username||null, message: message.substring(0, 500), msg_date: new Date() }], { onConflict: "channel_id,user_id,message" }); } catch (_) {}
+    try {
+      const { data: all } = await supabase.from("channel_context").select("id").eq("channel_id", String(channelId)).eq("user_id", userId).order("msg_date", { ascending: false });
+      if (all?.length > 3) { await supabase.from("channel_context").delete().in("id", all.slice(3).map(r => r.id)); }
+    } catch (_) {}
   },
 
   async getContextMsgs(channelId, userId) {

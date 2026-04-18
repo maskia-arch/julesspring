@@ -125,10 +125,9 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "stats": {
-      const { data: memberCount } = await supabase_db.from("channel_members")
-        .select("id", { count: "exact", head: true }).eq("channel_id", channelId).catch(() => ({ data: null }));
-      const { data: schedCount } = await supabase_db.from("scheduled_messages")
-        .select("id", { count: "exact", head: true }).eq("channel_id", channelId).eq("is_active", true).catch(() => ({ data: null }));
+      let memberCount = null, schedCount = null;
+      try { const r1 = await supabase_db.from("channel_members").select("id", { count: "exact", head: true }).eq("channel_id", channelId); memberCount = r1.count; } catch (_) {}
+      try { const r2 = await supabase_db.from("scheduled_messages").select("id", { count: "exact", head: true }).eq("channel_id", channelId).eq("is_active", true); schedCount = r2.count; } catch (_) {}
       await tg.call("sendMessage", { chat_id: String(userId),
         text: `📊 <b>Statistiken: ${ch?.title || channelId}</b>\n\n` +
               `👥 Verfolgte Mitglieder: ${memberCount || 0}\n` +
@@ -215,10 +214,9 @@ async function handlePendingInput(tg, supabase_db, userId, text, settings, msg) 
         parse_mode: "HTML" });
 
       // Admin benachrichtigen
-      const { data: fbEntry } = await supabase_db.from("user_feedbacks")
-        .select("*").eq("id", entryId).single().catch(() => ({ data: null }));
-      const { data: chData } = await supabase_db.from("bot_channels")
-        .select("added_by_user_id").eq("id", String(pending.channelId||0)).maybeSingle().catch(() => ({ data: null }));
+      let fbEntry = null, chData = null;
+      try { const rA = await supabase_db.from("user_feedbacks").select("*").eq("id", entryId).single(); fbEntry = rA.data; } catch (_) {}
+      try { const rB = await supabase_db.from("bot_channels").select("added_by_user_id").eq("id", String(pending.channelId||0)).maybeSingle(); chData = rB.data; } catch (_) {}
       const adminId = chData?.added_by_user_id;
       if (adminId) {
         await tg.call("sendMessage", { chat_id: String(adminId),
@@ -343,7 +341,7 @@ router.post("/smalltalk", (req, res) => {
                 settings_token:    settingsToken
               }).eq("id", chatIdStr).then(
                 r  => r.error ? logger.warn("[SmallTalk-Bot] Extended fields:", r.error.message) : null
-              ).catch(e => logger.warn("[SmallTalk-Bot] Extended catch:", e.message));
+              );
 
               logger.info(`[SmallTalk-Bot] ✅ Channel erfolgreich gespeichert: ${chat.title} (${chatIdStr})`);
             }
@@ -578,10 +576,14 @@ router.post("/smalltalk", (req, res) => {
         void safelistService.saveContextMsg(chatId, from.id, from.username, text).catch(() => {});
       }
 
+      // ── Safelist/Scamlist: nur wenn aktiviert ────────────────────────────
+      const safelistActive = ch?.safelist_enabled || false;
+      const aiActive       = ch?.ai_enabled       || false;
+
       // ── /feedbacks @user oder /check @user ────────────────────────────────
       const feedbackCmds = /^\/(?:feedbacks?|check)\s+@?(\w+)/i;
       const feedbackMatch = text.match(feedbackCmds);
-      if (feedbackMatch) {
+      if (feedbackMatch && safelistActive) {
         const targetUsername = feedbackMatch[1];
         const feedbacks = await safelistService.getFeedbacks(chatId, targetUsername, null);
         const scamEntry  = await safelistService.checkScamlist(chatId, targetUsername, null);
@@ -620,7 +622,7 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
 
       // ── /safelist @user – NUR FÜR ADMINS ─────────────────────────────────
       const safelistAdminMatch = text.match(/^\/safe?list[e]?\s+@?(\w+)\s*(.*)/i);
-      if (safelistAdminMatch) {
+      if (safelistAdminMatch && safelistActive) {
         if (!await isGroupAdmin(token, chatId, from.id)) {
           const sent = await tg.send(chatId, "🔒 Nur Channel-Admins können Mitglieder verifizieren.");
           if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 10000);
@@ -643,7 +645,7 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
 
       // ── /scamlist @user – Scam-Meldung mit Proofs ────────────────────────
       const scamMatch = text.match(/^\/scam?list[e]?\s+@?(\w+)\s*(.*)/i);
-      if (scamMatch) {
+      if (scamMatch && safelistActive) {
         const [, username, reason] = scamMatch;
         const fb = await safelistService.submitFeedback({
           channelId: chatId, submittedBy: from?.id, submittedByUsername: from?.username,
@@ -668,7 +670,7 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
       }
 
       // ── "Ich habe Proofs" Bestätigung im Channel ─────────────────────────
-      if (/ich habe proofs?/i.test(text) && from?.id) {
+      if (/ich habe proofs?/i.test(text) && from?.id && safelistActive) {
         const key = "scam_confirm_" + String(from.id) + "_" + chatId;
         const pending = pendingInputs[key];
         if (pending) {
@@ -689,7 +691,7 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
       }
 
       // ── /scamlist ohne @user → Scamliste anzeigen ────────────────────────
-      if (/^\/scam?list[e]?(@\w+)?$/i.test(text)) {
+      if (/^\/scam?list[e]?(@\w+)?$/i.test(text) && safelistActive) {
         const { data: scamList } = await supabase.from("scam_entries").select("username, user_id, reason").eq("channel_id", chatId).limit(20);
         if (!scamList?.length) {
           const sent = await tg.send(chatId, "⚠️ <b>Scamliste</b>\n\nNoch keine bestätigten Einträge.");
