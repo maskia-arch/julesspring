@@ -8,6 +8,7 @@ const supabase         = require("../config/supabase");
 const logger           = require("../utils/logger");
 const { tgAdminHelper, tgApi } = require("../services/adminHelper/tgAdminHelper");
 const safelistService  = require("../services/adminHelper/safelistService");
+const { t, detectLang, SUPPORTED_LANGUAGES } = require("../services/i18n");
 
 const WELCOME_INTRO = `👋 <b>Willkommen beim TG Admin-Helper!</b>
 
@@ -72,13 +73,14 @@ async function sendSettingsMenu(tg, sendTo, channelId, ch) {
           `Wähle was du verwalten möchtest:`,
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: [
-      [{ text: "👋 Willkommensnachricht",   callback_data: `cfg_welcome_${channelId}` },
-       { text: "👋 Abschiedsnachricht",     callback_data: `cfg_goodbye_${channelId}` }],
-      [{ text: "⏰ Geplante Nachrichten",   callback_data: `cfg_schedule_${channelId}` }],
-      [{ text: "🧹 Gelöschte bereinigen",   callback_data: `cfg_clean_${channelId}` },
-       { text: "📊 Statistiken",            callback_data: `cfg_stats_${channelId}` }],
-      [{ text: "🛡 Safelist",               callback_data: `cfg_safelist_${channelId}` }],
-      [{ text: "🤖 KI-Features",            callback_data: `cfg_ai_${channelId}` }],
+      [{ text: t("btn_welcome",  lang), callback_data: `cfg_welcome_${channelId}` },
+       { text: t("btn_goodbye",  lang), callback_data: `cfg_goodbye_${channelId}` }],
+      [{ text: t("btn_schedule", lang), callback_data: `cfg_schedule_${channelId}` }],
+      [{ text: t("btn_clean",    lang), callback_data: `cfg_clean_${channelId}` },
+       { text: t("btn_stats",    lang), callback_data: `cfg_stats_${channelId}` }],
+      [{ text: t("btn_safelist", lang), callback_data: `cfg_safelist_${channelId}` }],
+      [{ text: t("btn_ai",       lang), callback_data: `cfg_ai_${channelId}` }],
+      [{ text: t("btn_language", lang), callback_data: `cfg_lang_${channelId}` }],
     ]}
   });
 }
@@ -316,27 +318,30 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "ai_summary": {
-      // Check 24h cooldown
+      // Cooldown only if last summary was successful (≥10 Token verbraucht)
       const lastSummaryAt = ch?.last_summary_at ? new Date(ch.last_summary_at) : null;
+      const lastSummaryTokens = ch?.last_summary_tokens || 0;
       const hoursSince = lastSummaryAt ? (Date.now() - lastSummaryAt.getTime()) / 3600000 : 99;
-      if (hoursSince < 24) {
+      const lang = ch?.bot_language || "de";
+      if (hoursSince < 24 && lastSummaryTokens >= 10) {
         const nextAt = new Date(lastSummaryAt.getTime() + 86400000).toLocaleTimeString("de-DE");
         await tg.call("sendMessage", { chat_id: String(userId),
-          text: `⏳ Tageszusammenfassung nur 1x pro 24h.\nNächste möglich um ${nextAt}.` });
+          text: t("summary_cooldown", lang, nextAt) });
         break;
       }
-      // Kosten-Schätzung: ~400 Output-Token für Zusammenfassung
-      const SUMMARY_TOKEN_COST = 400;
-      const tUsed2  = ch?.token_used  || 0;
-      const tLimit2 = ch?.token_limit;
+      // Schätzung: ~300 Output-Token, x2 für Admin = 600 Token
+      const SUMMARY_TOKEN_EST = 300;
+      const SUMMARY_BILLED    = SUMMARY_TOKEN_EST * 2;  // Admin zahlt 2x Output-Token
+      const tUsed2   = ch?.token_used  || 0;
+      const tLimit2  = ch?.token_limit;
       const remaining = tLimit2 ? tLimit2 - tUsed2 : Infinity;
-      const willGoNeg = tLimit2 && (tUsed2 + SUMMARY_TOKEN_COST) > tLimit2;
+      const willGoNeg = tLimit2 && (tUsed2 + SUMMARY_BILLED) > tLimit2;
 
       if (willGoNeg) {
         await tg.call("sendMessage", { chat_id: String(userId),
-          text: `⚠️ <b>Achtung!</b> Diese Zusammenfassung kostet ca. <b>${SUMMARY_TOKEN_COST} Token</b>.\n` +
+          text: `⚠️ <b>Achtung!</b> Diese Zusammenfassung kostet ca. <b>${SUMMARY_BILLED} Token</b>.\n` +
                 `Dein verbleibendes Budget: <b>${remaining.toLocaleString()} Token</b>.\n\n` +
-                `Nach der Zusammenfassung wird dein Token-Konto ins Minus gehen und die KI vorübergehend deaktiviert.\n\nTrotzdem erstellen?`,
+                `Nach der Zusammenfassung kann die KI vorübergehend deaktiviert werden.\n\nTrotzdem erstellen?`,
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [[
             { text: "✅ Ja, erstellen",   callback_data: `cfg_ai_summary_confirm_${channelId}` },
@@ -347,14 +352,15 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       }
 
       await tg.call("sendMessage", { chat_id: String(userId),
-        text: `⏳ Erstelle Tageszusammenfassung… (~${SUMMARY_TOKEN_COST} Token)` });
-      await _runDailySummary(supabase_db, channelId, userId, tg, ch);
+        text: t("summary_creating", lang, SUMMARY_BILLED) });
+      await _runDailySummary(supabase_db, channelId, userId, tg, ch, lang);
       break;
     }
     case "ai_summary_confirm": {
-      const SUMMARY_TOKEN_COST2 = 400;
-      await tg.call("sendMessage", { chat_id: String(userId), text: "⏳ Erstelle Zusammenfassung…" });
-      await _runDailySummary(supabase_db, channelId, userId, tg, ch);
+      const lang2 = ch?.bot_language || "de";
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: t("summary_creating", lang2, 600) });
+      await _runDailySummary(supabase_db, channelId, userId, tg, ch, lang2);
       break;
     }
     case "ai_threads": {
@@ -372,6 +378,40 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     }
     case "ai_abort": {
       await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Abgebrochen." });
+      break;
+    }
+    case "lang": {
+      const currentLang = ch?.bot_language || "de";
+      const langButtons = Object.entries(SUPPORTED_LANGUAGES).map(([code, label]) => [{
+        text: (code === currentLang ? "✅ " : "") + label,
+        callback_data: `cfg_setlang_${code}_${channelId}`
+      }]);
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: SUPPORTED_LANGUAGES[currentLang]
+          ? `🌐 <b>Bot-Sprache</b> | <b>Bot Language</b>\n\nAktuell: ${SUPPORTED_LANGUAGES[currentLang]}`
+          : "🌐 Sprache wählen",
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: langButtons }
+      });
+      break;
+    }
+    case "setlang": {
+      // data = "cfg_setlang_{langcode}_{channelId}" - langcode may have no underscore
+      // Smart parse already extracted action="setlang", but channelId may be wrong
+      // Re-parse: cfg_setlang_{code}_{channelId}
+      const setLangMatch = data.match(/^cfg_setlang_([a-z]{2,3})_(-?\d+)$/);
+      if (setLangMatch) {
+        const newLangCode = setLangMatch[1];
+        const setLangChanId = setLangMatch[2];
+        if (SUPPORTED_LANGUAGES[newLangCode]) {
+          await supabase_db.from("bot_channels")
+            .update({ bot_language: newLangCode, updated_at: new Date() })
+            .eq("id", setLangChanId);
+          const langLabel = SUPPORTED_LANGUAGES[newLangCode];
+          await tg.call("sendMessage", { chat_id: String(userId),
+            text: `✅ ${langLabel}`, parse_mode: "HTML" });
+        }
+      }
       break;
     }
   }
@@ -701,7 +741,7 @@ async function _createDailySummary(supabase_db, channelId) {
 }
 
 // ── _runDailySummary: Zusammenfassung ausführen + exakte Token abrechnen ────────
-async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch) {
+async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch, lang) {
   const result = await _createDailySummary(supabase_db, channelId);
   if (!result) {
     await tg.call("sendMessage", { chat_id: String(adminUserId),
@@ -709,13 +749,24 @@ async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch) {
     return;
   }
 
-  // Exakte Token abrechnen (nur Output-Token für Kanal-Volumen)
-  const actualOutTokens = result.outTokens || 0;
-  const actualUsd       = result.usd       || 0;
+  // x2 Output-Token für Admin abrechnen (Summary-Premium)
+  const rawOutTokens    = result.outTokens || 0;
+  const billedTokens    = rawOutTokens * 2;       // Admin zahlt doppelt
+  const actualUsd       = result.usd || 0;
+
+  // last_summary_at NUR setzen wenn echte Token verbraucht (≥10 = Erfolg)
+  if (rawOutTokens >= 10) {
+    try {
+      await supabase_db.from("bot_channels").update({
+        last_summary_at: new Date(),
+        last_summary_tokens: rawOutTokens
+      }).eq("id", String(channelId));
+    } catch (_) {}
+  }
 
   try {
     const rpcResult = await supabase_db.rpc("increment_channel_usage",
-      { p_id: String(channelId), p_tokens: actualOutTokens, p_usd: actualUsd });
+      { p_id: String(channelId), p_tokens: billedTokens, p_usd: actualUsd });
     if (rpcResult.error) throw rpcResult.error;
   } catch {
     try {
@@ -723,7 +774,7 @@ async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch) {
         .select("token_used, usd_spent").eq("id", String(channelId)).maybeSingle();
       if (cur) {
         await supabase_db.from("bot_channels").update({
-          token_used: (cur.token_used || 0) + actualOutTokens,
+          token_used: (cur.token_used || 0) + billedTokens,
           usd_spent:  parseFloat(((cur.usd_spent || 0) + actualUsd).toFixed(6))
         }).eq("id", String(channelId));
       }
@@ -732,10 +783,7 @@ async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch) {
     }
   }
 
-  // last_summary_at setzen
-  try {
-    await supabase_db.from("bot_channels").update({ last_summary_at: new Date() }).eq("id", String(channelId));
-  } catch (_) {}
+  // last_summary_at is set above (only on success ≥10 tokens)
 
   // Budget-Check nach Abrechnung
   let note = "";
@@ -753,7 +801,7 @@ async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch) {
 
   // Zusammenfassung senden (erst nach Abrechnung → zeigt korrekten Verbrauch)
   await tg.call("sendMessage", { chat_id: String(adminUserId),
-    text: result.text + `\n\n<i>📊 ${actualOutTokens} Token verbraucht</i>` + note,
+    text: result.text + `\n\n<i>📊 ${billedTokens} Token berechnet (${rawOutTokens} × 2)</i>` + note,
     parse_mode: "HTML" });
 }
 
@@ -1063,7 +1111,11 @@ router.post("/smalltalk", (req, res) => {
             .select("id, title, type, is_approved, ai_enabled").eq("added_by_user_id", String(from.id));
 
           if (!myChannels2?.length) {
-            const s2 = await tg.send(chatId, WELCOME_INTRO);
+            // Detect language from user's Telegram settings
+            const userLang = detectLang(from);
+            const introMsg = (typeof WELCOME_INTRO === "function" ? WELCOME_INTRO : null)
+              || require("../services/i18n").t("welcome_intro", userLang, from?.first_name || "");
+            const s2 = await tg.send(chatId, introMsg);
             if (s2?.message_id) void safelistService.trackBotMessage(chatId, s2.message_id, "temp", 10 * 60 * 1000);
             return;
           }
