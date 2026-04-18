@@ -668,6 +668,23 @@ async function loadSmallTalkStatus() {
     }
 }
 
+async function registerChannelManually() {
+    var chatId = document.getElementById('manual-chat-id')?.value?.trim();
+    if (!chatId) { alert('Chat-ID eingeben (z.B. -1001234567890)'); return; }
+    showToast('⏳ Registriere...');
+    try {
+        var result = await api.request('/channels/register', 'POST', { chat_id: chatId });
+        if (result.success) {
+            showToast('✅ ' + (result.channel?.title || chatId) + ' registriert!');
+            var el = document.getElementById('manual-chat-id');
+            if (el) el.value = '';
+            await loadChannels();
+        } else {
+            alert('Fehler: ' + (result.error || 'Unbekannt'));
+        }
+    } catch(e) { alert('Fehler: ' + (e.message || String(e))); }
+}
+
 async function scanAndLoadChannels() {
     var el = document.getElementById('channel-list');
     if (el) el.innerHTML = '<p style="color:#555;font-size:0.85rem;padding:8px;">⏳ Scanne...</p>';

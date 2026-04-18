@@ -150,6 +150,56 @@ const channelController = {
     } catch (e) { next(e); }
   },
 
+  // ── Manuell Channel nach ID registrieren ─────────────────────────────────
+  async registerChannelById(req, res, next) {
+    try {
+      const { chat_id } = req.body;
+      if (!chat_id) return res.status(400).json({ error: "chat_id fehlt" });
+
+      const { data: s } = await require("../config/supabase").from("settings")
+        .select("smalltalk_bot_token").maybeSingle();
+      const token = s?.smalltalk_bot_token;
+      if (!token) return res.status(400).json({ error: "Kein Bot-Token" });
+
+      const axios = require("axios");
+      const base  = `https://api.telegram.org/bot${token}`;
+
+      // Chat-Info direkt von Telegram holen
+      const chatResp = await axios.get(`${base}/getChat`, {
+        params: { chat_id }, timeout: 8000
+      });
+      const chat = chatResp.data?.result;
+      if (!chat) return res.status(400).json({ error: "Chat nicht gefunden" });
+
+      const supabase_local = require("../config/supabase");
+      const { data: existing } = await supabase_local.from("bot_channels")
+        .select("id").eq("id", String(chat.id)).maybeSingle();
+
+      const payload = {
+        title:      chat.title || String(chat.id),
+        username:   chat.username || null,
+        type:       chat.type,
+        bot_type:   "smalltalk",
+        is_active:  false,
+        is_approved:false,
+        updated_at: new Date()
+      };
+
+      let result;
+      if (existing) {
+        result = await supabase_local.from("bot_channels").update(payload).eq("id", String(chat.id)).select().single();
+      } else {
+        result = await supabase_local.from("bot_channels").insert([{ id: chat.id, ...payload }]).select().single();
+      }
+
+      if (result.error) return res.status(500).json({ error: result.error.message });
+      this._channelCache[String(chat.id)] = null;
+      res.json({ success: true, channel: result.data });
+    } catch (e) {
+      next(e);
+    }
+  },
+
   _channelCache: {},
   async getChannelSettings(chatId) {
     const c = this._channelCache[chatId];

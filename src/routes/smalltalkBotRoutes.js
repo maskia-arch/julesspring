@@ -221,30 +221,59 @@ router.post("/smalltalk", (req, res) => {
           const addedBy  = mcm.from;   // Der User der den Bot hinzugefügt hat
           const settingsToken = require('crypto').randomBytes(16).toString('hex');
 
-          // Basis-Felder zuerst (funktioniert auch ohne schema_v18/v19)
-          const { error: upsertErr } = await supabase.from("bot_channels").upsert([{
-            id:          chat.id,
-            title:       chat.title || String(chat.id),
-            username:    chat.username || null,
-            type:        chat.type,
-            bot_type:    "smalltalk",
-            is_active:   false,
-            is_approved: false,
-            updated_at:  new Date()
-          }], { onConflict: "id" });
+          // ── Robuste Speicherung mit vollständigem Logging ─────────────────
+          const chatIdStr = String(chat.id); // Sicherstellen: String für DB-Konsistenz
+          logger.info(`[SmallTalk-Bot] Speichere Channel: ${chat.title} (id=${chatIdStr}, type=${chat.type})`);
 
-          if (upsertErr) {
-            logger.error("[SmallTalk-Bot] Upsert Fehler:", upsertErr.message);
-          } else {
-            // Erweiterte Felder (schema_v18/v19) separat updaten - ignoriert wenn Spalten fehlen
-            await supabase.from("bot_channels").update({
-              ai_enabled:        false,
-              added_by_user_id:  addedBy?.id   || null,
-              added_by_username: addedBy?.username || null,
-              settings_token:    settingsToken
-            }).eq("id", chat.id).catch(e => logger.warn("[SmallTalk-Bot] Extended update:", e.message));
+          try {
+            // Erst prüfen ob bereits vorhanden
+            const { data: existing } = await supabase.from("bot_channels")
+              .select("id").eq("id", chatIdStr).maybeSingle();
+
+            let dbResult;
+            if (existing) {
+              // Update vorhandenen Eintrag
+              dbResult = await supabase.from("bot_channels").update({
+                title:       chat.title || chatIdStr,
+                username:    chat.username || null,
+                type:        chat.type,
+                bot_type:    "smalltalk",
+                updated_at:  new Date()
+              }).eq("id", chatIdStr).select("id");
+              logger.info(`[SmallTalk-Bot] Channel UPDATE: ${JSON.stringify(dbResult.error || "OK")}`);
+            } else {
+              // Neuen Eintrag anlegen
+              dbResult = await supabase.from("bot_channels").insert([{
+                id:          chat.id,
+                title:       chat.title || chatIdStr,
+                username:    chat.username || null,
+                type:        chat.type,
+                bot_type:    "smalltalk",
+                is_active:   false,
+                is_approved: false,
+                updated_at:  new Date()
+              }]).select("id");
+              logger.info(`[SmallTalk-Bot] Channel INSERT: ${JSON.stringify(dbResult.error || "OK")}`);
+            }
+
+            if (dbResult.error) {
+              logger.error(`[SmallTalk-Bot] DB Fehler: code=${dbResult.error.code} msg=${dbResult.error.message}`);
+            } else {
+              // Erweiterte Felder optional updaten
+              await supabase.from("bot_channels").update({
+                ai_enabled:        false,
+                added_by_user_id:  addedBy?.id   || null,
+                added_by_username: addedBy?.username || null,
+                settings_token:    settingsToken
+              }).eq("id", chatIdStr).then(
+                r  => r.error ? logger.warn("[SmallTalk-Bot] Extended fields:", r.error.message) : null
+              ).catch(e => logger.warn("[SmallTalk-Bot] Extended catch:", e.message));
+
+              logger.info(`[SmallTalk-Bot] ✅ Channel erfolgreich gespeichert: ${chat.title} (${chatIdStr})`);
+            }
+          } catch (dbErr) {
+            logger.error(`[SmallTalk-Bot] DB Exception: ${dbErr?.message || String(dbErr)}`);
           }
-          logger.info(`[SmallTalk-Bot] Channel gespeichert: ${chat.title} (${chat.id}), Fehler: ${upsertErr?.message || "keine"}`);
 
           // Nachricht an den Channel
           await tg.send(chat.id,
@@ -380,8 +409,8 @@ router.post("/smalltalk", (req, res) => {
         return;
       }
 
-      // User tracken bei jeder Nachricht
-      if (from.id) await tgAdminHelper.trackMember(chatId, from).catch(() => {});
+      // User tracken bei jeder Nachricht (from kann bei Channel-Posts fehlen)
+      if (from?.id) await tgAdminHelper.trackMember(chatId, from).catch(() => {});
 
       if (!text) return;
 

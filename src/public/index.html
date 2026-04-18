@@ -482,7 +482,11 @@
                     <h3 class="card-title">📢 Channel Bot</h3>
                     <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Channels & Gruppen wo der Bot als Admin hinzugefügt wurde. Bot erkennt sich automatisch beim Hinzufügen.</p>
                     <div id="channel-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
-                    <button onclick="scanAndLoadChannels()" class="btn btn-secondary btn-sm" style="margin-top:8px;">🔍 Scannen & Aktualisieren</button>
+                    <div style="display:flex;gap:6px;margin-top:8px;">
+                      <input type="text" id="manual-chat-id" placeholder="Chat-ID manuell (z.B. -1001234567890)" style="flex:1;padding:6px 8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.78rem;">
+                      <button onclick="registerChannelManually()" class="btn btn-success btn-sm">+ Hinzufügen</button>
+                    </div>
+                    <button onclick="scanAndLoadChannels()" class="btn btn-secondary btn-sm" style="margin-top:6px;width:100%;">🔍 Scannen & Aktualisieren</button>
                   </div>
                 </div>
 
@@ -529,8 +533,8 @@
     </div>
 </div>
 
-<script src="js/api.js?v=1411"></script>
-<script src="js/dashboard.js?v=1411"></script>
+<script src="js/api.js?v=1414"></script>
+<script src="js/dashboard.js?v=1414"></script>
 <script>
 function showSection(id) {
     document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });

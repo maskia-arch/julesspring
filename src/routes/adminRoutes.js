@@ -93,6 +93,7 @@ router.get('/traffic/sessions',       ctrl.getSessions);
 const channelCtrl = require('../controllers/channelController');
 router.get('/channels',                  channelCtrl.getChannels.bind(channelCtrl));
 router.post('/channels/scan',            channelCtrl.scanChannels.bind(channelCtrl));
+router.post('/channels/register',        channelCtrl.registerChannelById.bind(channelCtrl));
 router.put('/channels/:id',              channelCtrl.updateChannel.bind(channelCtrl));
 router.post('/channels/:id/reset-usage',         channelCtrl.resetChannelUsage.bind(channelCtrl));
 router.get('/channels/:id/kb',                   channelCtrl.getChannelKB.bind(channelCtrl));
