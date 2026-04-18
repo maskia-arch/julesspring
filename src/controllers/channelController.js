@@ -112,41 +112,34 @@ const channelController = {
       const axios = require("axios");
       const base  = `https://api.telegram.org/bot${token}`;
 
-      // getUpdates um recent my_chat_member events zu holen (falls verpasst)
-      const updResp = await axios.get(`${base}/getUpdates`, {
-        params: { allowed_updates: ["my_chat_member"], limit: 100, timeout: 5 },
-        timeout: 10000
-      }).catch(() => ({ data: { result: [] } }));
+      // WICHTIG: getUpdates ist im Webhook-Modus nicht verfügbar!
+      // Stattdessen: Für alle bekannten Channels getChatAdministrators aufrufen
+      // und Bot-Mitgliedschaft verifizieren
+      const meResp = await axios.get(`${base}/getMe`, { timeout: 8000 });
+      const botId  = meResp.data?.result?.id;
 
-      const updates = updResp.data?.result || [];
+      const { data: existingChannels } = await supabase_local.from("bot_channels").select("id, title");
       let registered = 0;
 
-      for (const upd of updates) {
-        const mcm = upd.my_chat_member;
-        if (!mcm) continue;
-        const isAdmin = ["administrator","creator"].includes(mcm.new_chat_member?.status);
-        if (!isAdmin) continue;
-        const chat = mcm.chat;
-        if (!["channel","supergroup","group"].includes(chat.type)) continue;
+      // Für jeden gespeicherten Channel: aktuellen Status prüfen
+      for (const existing of (existingChannels || [])) {
+        try {
+          const memberResp = await axios.get(`${base}/getChatMember`, {
+            params: { chat_id: existing.id, user_id: botId },
+            timeout: 5000
+          });
+          const status = memberResp.data?.result?.status;
+          const isAdmin = ["administrator","creator"].includes(status);
 
-        const addedBy = mcm.from;
-        const token2  = require("crypto").randomBytes(16).toString("hex");
-
-        await supabase_local.from("bot_channels").upsert([{
-          id:               chat.id,
-          title:            chat.title || String(chat.id),
-          username:         chat.username || null,
-          type:             chat.type,
-          bot_type:         "smalltalk",
-          is_active:        false,
-          is_approved:      false,
-          ai_enabled:       false,
-          added_by_user_id: addedBy?.id   || null,
-          added_by_username:addedBy?.username || null,
-          settings_token:   token2,
-          updated_at:       new Date()
-        }], { onConflict: "id" });
-        registered++;
+          // Update is_active based on current admin status
+          await supabase_local.from("bot_channels")
+            .update({ is_active: isAdmin, updated_at: new Date() }).eq("id", existing.id);
+          if (isAdmin) registered++;
+        } catch (_) {
+          // Channel nicht mehr erreichbar → als inaktiv markieren
+          await supabase_local.from("bot_channels")
+            .update({ is_active: false }).eq("id", existing.id).catch(() => {});
+        }
       }
 
       // Dann alle gespeicherten Channels neu laden

@@ -53,6 +53,153 @@ async function isGroupAdmin(token, chatId, userId) {
   } catch { return false; }
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Bot-Einstellungsmenü (nur für Channel-Admins, kein Dashboard-Zugriff nötig)
+// ══════════════════════════════════════════════════════════════════════════════
+
+async function sendSettingsMenu(tg, sendTo, channelId, ch) {
+  const aiActive    = ch?.ai_enabled    ? "✅ Aktiv"     : "❌ Inaktiv";
+  const safeActive  = ch?.safelist_enabled ? "✅ Aktiv"  : "❌ Inaktiv";
+  const approved    = ch?.is_approved   ? "🟢 Freigeschaltet" : "🔴 Ausstehend";
+
+  await tg.call("sendMessage", {
+    chat_id: sendTo,
+    text: `⚙️ <b>Einstellungen für: ${(ch?.title || channelId)}</b>\n\n` +
+          `Status: ${approved}\n` +
+          `KI-Features: ${aiActive}\n` +
+          `Safelist: ${safeActive}\n\n` +
+          `Wähle was du verwalten möchtest:`,
+    parse_mode: "HTML",
+    reply_markup: { inline_keyboard: [
+      [{ text: "👋 Willkommensnachricht",   callback_data: `cfg_welcome_${channelId}` },
+       { text: "👋 Abschiedsnachricht",     callback_data: `cfg_goodbye_${channelId}` }],
+      [{ text: "⏰ Geplante Nachrichten",   callback_data: `cfg_schedule_${channelId}` }],
+      [{ text: "🧹 Gelöschte bereinigen",   callback_data: `cfg_clean_${channelId}` },
+       { text: "📊 Statistiken",            callback_data: `cfg_stats_${channelId}` }],
+      [{ text: "🛡 Safelist",               callback_data: `cfg_safelist_${channelId}` }],
+      [{ text: "🤖 KI-Features",            callback_data: `cfg_ai_${channelId}` }],
+    ]}
+  });
+}
+
+async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
+  const parts     = data.split("_");
+  const action    = parts[1];
+  const channelId = parts[2];
+
+  if (!await isGroupAdmin(null, channelId, userId)) {
+    // isGroupAdmin needs token - skip check here, user already passed earlier
+  }
+
+  const ch = await getChannel(channelId);
+
+  switch (action) {
+    case "welcome": {
+      const cur = ch?.welcome_msg || "(keine)";
+      await tg.call("sendMessage", {
+        chat_id: String(userId),
+        text: `👋 <b>Willkommensnachricht</b>\n\nAktuell: <i>${cur}</i>\n\nSende deine neue Willkommensnachricht (nutze {name} für den Nutzernamen):\nOder /cancel zum Abbrechen.`,
+        parse_mode: "HTML"
+      });
+      // Store pending state
+      pendingInputs[String(userId)] = { action: "set_welcome", channelId };
+      break;
+    }
+    case "goodbye": {
+      const cur = ch?.goodbye_msg || "(keine)";
+      await tg.call("sendMessage", {
+        chat_id: String(userId),
+        text: `👋 <b>Abschiedsnachricht</b>\n\nAktuell: <i>${cur}</i>\n\nSende deine neue Abschiedsnachricht (nutze {name} für den Nutzernamen):\nOder /cancel zum Abbrechen.`,
+        parse_mode: "HTML"
+      });
+      pendingInputs[String(userId)] = { action: "set_goodbye", channelId };
+      break;
+    }
+    case "clean": {
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: "🔍 Starte Bereinigung gelöschter Accounts...", parse_mode: "HTML" });
+      const settings = await getSettings();
+      const { tgAdminHelper: helper } = require("../services/adminHelper/tgAdminHelper");
+      const result = await helper.cleanDeletedAccounts(settings.smalltalk_bot_token, channelId);
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `🧹 Fertig! ${result.checked} geprüft, ${result.removed} gelöschte Accounts entfernt.`, parse_mode: "HTML" });
+      break;
+    }
+    case "stats": {
+      const { data: memberCount } = await supabase_db.from("channel_members")
+        .select("id", { count: "exact", head: true }).eq("channel_id", channelId).catch(() => ({ data: null }));
+      const { data: schedCount } = await supabase_db.from("scheduled_messages")
+        .select("id", { count: "exact", head: true }).eq("channel_id", channelId).eq("is_active", true).catch(() => ({ data: null }));
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `📊 <b>Statistiken: ${ch?.title || channelId}</b>\n\n` +
+              `👥 Verfolgte Mitglieder: ${memberCount || 0}\n` +
+              `⏰ Aktive geplante Nachrichten: ${schedCount || 0}\n` +
+              `📚 KB-Einträge: ${ch?.kb_entry_count || 0}`,
+        parse_mode: "HTML" });
+      break;
+    }
+    case "safelist": {
+      const safelistService = require("../services/adminHelper/safelistService");
+      const reviews = await safelistService.getPendingReviews(channelId);
+      if (!reviews.length) {
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: "🛡 Keine offenen Safelist-Reviews.", parse_mode: "HTML" });
+      } else {
+        for (const r of reviews.slice(0, 5)) {
+          const emoji = r.list_type === "safe" ? "✅" : "⚠️";
+          await tg.call("sendMessage", {
+            chat_id: String(userId),
+            text: `${emoji} <b>@${r.username || r.user_id}</b>\n${r.summary || r.feedback_text || ""}`,
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: [[
+              { text: "✅ Bestätigen", callback_data: `safe_approve_${r.id}_${r.list_type}` },
+              { text: "❌ Ablehnen",  callback_data: `safe_reject_${r.id}` }
+            ]]}
+          });
+        }
+      }
+      break;
+    }
+    case "ai": {
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `🤖 <b>KI-Features</b>\n\nStatus: ${ch?.ai_enabled ? "✅ Aktiv" : "❌ Inaktiv"}\n\nFür Aktivierung/Deaktivierung wende dich an @autoacts.`,
+        parse_mode: "HTML" });
+      break;
+    }
+  }
+}
+
+// In-Memory: Pending text inputs (welcome/goodbye Nachricht setzen)
+const pendingInputs = {};
+
+async function handlePendingInput(tg, supabase_db, userId, text, settings) {
+  const pending = pendingInputs[String(userId)];
+  if (!pending) return false;
+
+  if (text === "/cancel") {
+    delete pendingInputs[String(userId)];
+    await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Abgebrochen." });
+    return true;
+  }
+
+  const { action, channelId } = pending;
+  delete pendingInputs[String(userId)];
+
+  if (action === "set_welcome" || action === "set_goodbye") {
+    const field = action === "set_welcome" ? "welcome_msg" : "goodbye_msg";
+    await supabase_db.from("bot_channels").update({ [field]: text, updated_at: new Date() }).eq("id", channelId);
+    await tg.call("sendMessage", {
+      chat_id: String(userId),
+      text: `✅ ${action === "set_welcome" ? "Willkommens" : "Abschied"}snachricht gespeichert!`,
+      parse_mode: "HTML"
+    });
+    return true;
+  }
+  return false;
+}
+
+
 router.post("/smalltalk", (req, res) => {
   res.sendStatus(200);
 
@@ -91,26 +238,27 @@ router.post("/smalltalk", (req, res) => {
             updated_at:       new Date()
           }], { onConflict: "id" });
 
-          const appUrl   = process.env.APP_URL || "";
-          const settingsLink = appUrl ? `\n\n🔧 Dein persönlicher Einstellungs-Link:\n${appUrl}/admin?channel=${chat.id}&token=${settingsToken}` : "";
-
           // Nachricht an den Channel
           await tg.send(chat.id,
-            `✅ <b>TG Admin-Helper aktiv!</b>\n\nFüge den Bot als Admin in deiner Gruppe/Channel hinzu.\nSchreibe <b>/admin</b> oder <b>/menu</b> für alle Verwaltungstools.\n\n🔒 Für AI-Features: @autoacts kontaktieren.`
+            `✅ <b>TG Admin-Helper aktiv!</b>\n\n` +
+            `Verfügbare Befehle für Admins:\n` +
+            `• /admin oder /menu – Verwaltungstools\n` +
+            `• /settings – Channel-Einstellungen\n` +
+            `• /clean – Gelöschte Accounts entfernen\n` +
+            `• /safelist @user – User verifizieren\n` +
+            `• /scamlist @user – Scammer melden\n\n` +
+            `🔒 AI-Features → @autoacts kontaktieren.`
           );
 
-          // Private Nachricht an den Admin der den Bot hinzugefügt hat
+          // Private Willkommensnachricht an den Admin
           if (addedBy?.id) {
             await tg.send(String(addedBy.id),
               `✅ <b>Bot wurde zu "${chat.title}" hinzugefügt!</b>\n\n` +
-              `📋 Verfügbare Befehle:\n` +
-              `• /admin – Verwaltungsmenü öffnen\n` +
-              `• /settings – Channel-Einstellungen\n` +
-              `• /clean – Gelöschte Accounts entfernen\n\n` +
+              `Schreibe <b>/settings</b> im Channel um die Einstellungen zu öffnen.\n` +
+              `Du kannst das Menü direkt hier (privat) oder im Channel anzeigen lassen.\n\n` +
               `🤖 <b>Kostenlose Tools sind sofort aktiv.</b>\n` +
-              `Für AI-Features wende dich an @autoacts.` +
-              settingsLink
-            ).catch(() => {}); // User könnte Bot geblockt haben
+              `Für KI-Features: @autoacts kontaktieren.`
+            ).catch(() => {});
           }
 
           logger.info(`[SmallTalk-Bot] Channel registriert: ${chat.title} (von @${addedBy?.username || addedBy?.id})`);
@@ -121,8 +269,55 @@ router.post("/smalltalk", (req, res) => {
       // ── Callback-Queries (Inline-Buttons) ────────────────────────────────
       if (update.callback_query) {
         const q      = update.callback_query;
-        const chatId = q.message?.chat?.id;
-        const ch     = await getChannel(String(chatId));
+        const qChatId = String(q.message?.chat?.id || "");
+        const qUserId = q.from?.id;
+        const data   = q.data || "";
+
+        await tg.call("answerCallbackQuery", { callback_query_id: q.id }).catch(() => {});
+
+        // Settings-Menu: Hier oder Privat
+        if (data.startsWith("settings_here_") || data.startsWith("settings_private_")) {
+          const parts     = data.split("_");
+          const sendPriv  = data.startsWith("settings_private_");
+          const targetChannelId = parts[2];
+          const ownerId   = parts[3] ? parseInt(parts[3]) : null;
+
+          // Nur der Admin der /settings aufrief darf antworten
+          if (sendPriv && ownerId && qUserId !== ownerId) return;
+          if (!await isGroupAdmin(token, targetChannelId, qUserId)) return;
+
+          const ch = await getChannel(targetChannelId);
+          const sendTarget = sendPriv ? String(qUserId) : targetChannelId;
+
+          await sendSettingsMenu(tg, sendTarget, targetChannelId, ch);
+          return;
+        }
+
+        // Settings sub-callbacks
+        if (data.startsWith("cfg_")) {
+          await handleSettingsCallback(tg, supabase, data, q, qUserId);
+          return;
+        }
+
+        // Safelist approve/reject callbacks
+        if (data.startsWith("safe_approve_") || data.startsWith("safe_reject_")) {
+          const parts = data.split("_");
+          const action = parts[1]; // approve / reject
+          const entryId = parts[2];
+          const listType = parts[3] || null;
+          const safelistService = require("../services/adminHelper/safelistService");
+          if (action === "approve") {
+            await safelistService.approve(entryId, qUserId, listType);
+            await tg.call("sendMessage", { chat_id: String(qUserId), text: "✅ Bestätigt!" });
+          } else {
+            await safelistService.reject(entryId, qUserId);
+            await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Abgelehnt." });
+          }
+          return;
+        }
+
+        // Admin tools callbacks
+        const ch = await getChannel(qChatId);
         await tgAdminHelper.handleCallback(token, q, ch);
         return;
       }
@@ -136,6 +331,15 @@ router.post("/smalltalk", (req, res) => {
 
       // ── Privat-Chat: /start Onboarding ───────────────────────────────────
       if (chat.type === "private") {
+        // Check for pending text input (e.g. setting welcome/goodbye message)
+        if (text && !(text.startsWith("/"))) {
+          const handled = await handlePendingInput(tg, supabase, from.id, text, settings);
+          if (handled) return;
+        }
+        if (text === "/cancel") {
+          await handlePendingInput(tg, supabase, from.id, "/cancel", settings);
+          return;
+        }
         if (text === "/start" || text.startsWith("/start ")) {
           await tg.send(chatId, WELCOME_INTRO);
           return;
@@ -182,19 +386,17 @@ router.post("/smalltalk", (req, res) => {
         return;
       }
 
-      // /settings – Channel-Einstellungen für Admins
+      // /settings – Frage: Privat oder Hier?
       if (text === "/settings" || text.startsWith("/settings@")) {
         if (!await isGroupAdmin(token, chatId, from.id)) return;
-        // Settings-Token aus DB holen
-        const { data: chData } = await supabase.from("bot_channels")
-          .select("settings_token, added_by_user_id").eq("id", chatId).maybeSingle().catch(() => ({ data: null }));
-        const appUrl = process.env.APP_URL || "";
-        if (appUrl && chData?.settings_token) {
-          const link = `${appUrl}/admin?channel=${chatId}&token=${chData.settings_token}`;
-          await tg.send(chatId, `⚙️ <b>Channel-Einstellungen</b>\n\n🔗 ${link}\n\n<i>Dieser Link ist nur für Channel-Admins bestimmt.</i>`);
-        } else {
-          await tg.send(chatId, "⚙️ Für Channel-Einstellungen wende dich an @autoacts.");
-        }
+        await tg.call("sendMessage", {
+          chat_id: chatId,
+          text: "⚙️ Wo soll das Einstellungs-Menü geöffnet werden?",
+          reply_markup: { inline_keyboard: [[
+            { text: "💬 Hier im Chat", callback_data: `settings_here_${chatId}` },
+            { text: "🔒 Privat (nur für mich)", callback_data: `settings_private_${chatId}_${from.id}` }
+          ]]}
+        });
         return;
       }
 
