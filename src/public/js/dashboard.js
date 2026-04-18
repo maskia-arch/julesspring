@@ -669,12 +669,14 @@ async function loadSmallTalkStatus() {
 }
 
 async function scanAndLoadChannels() {
-    showToast('⏳ Scanne Telegram-Chats...');
+    var el = document.getElementById('channel-list');
+    if (el) el.innerHTML = '<p style="color:#555;font-size:0.85rem;padding:8px;">⏳ Scanne...</p>';
     try {
         var result = await api.request('/channels/scan', 'POST');
-        showToast('✅ Scan abgeschlossen: ' + (result.registered || 0) + ' neue Channels');
+        var msg = '✅ Scan: ' + (result.registered || 0) + ' aktiv von ' + (result.scanned || 0);
+        showToast(msg);
     } catch(e) {
-        showToast('Scan: ' + e.message);
+        showToast('❌ Scan-Fehler: ' + (e.message || String(e)));
     }
     await loadChannels();
 }

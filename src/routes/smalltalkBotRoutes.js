@@ -88,9 +88,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
   const action    = parts[1];
   const channelId = parts[2];
 
-  if (!await isGroupAdmin(null, channelId, userId)) {
-    // isGroupAdmin needs token - skip check here, user already passed earlier
-  }
+  // Admin-Check bereits beim settings_* callback durchgeführt
 
   const ch = await getChannel(channelId);
 
@@ -474,8 +472,10 @@ router.post("/smalltalk", (req, res) => {
       }
 
     } catch (e) {
-      logger.error("[SmallTalk-Bot] Fehler:", e?.message || String(e));
-      if (e?.stack) logger.error("[SmallTalk-Bot] Stack:", e.stack.split('\n').slice(0,3).join(' | '));
+      const msg = e?.response?.data?.description || e?.message || String(e) || "Unbekannter Fehler";
+      const stk = e?.stack ? e.stack.split('\n').slice(0,4).join(' → ') : "kein Stack";
+      logger.error(`[SmallTalk-Bot] Fehler: ${msg}`);
+      logger.error(`[SmallTalk-Bot] Stack: ${stk}`);
     }
   });
 });

@@ -146,7 +146,7 @@ const channelController = {
       const { data: channels } = await supabase_local.from("bot_channels").select("*")
         .order("added_at", { ascending: false });
 
-      res.json({ scanned: updates.length, registered, channels: channels || [] });
+      res.json({ scanned: (existingChannels || []).length, registered, channels: channels || [] });
     } catch (e) { next(e); }
   },
 
