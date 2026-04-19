@@ -175,4 +175,74 @@ async function handleOrderLookup(chatId, invoiceId, telegramService, supabase) {
   }
 }
 
+
+// ── Sellauth Package Purchase Webhook ─────────────────────────────────────────
+// URL: https://ai-agent-lix6.onrender.com/api/webhooks/sellauth-packages
+// Sellauth calls this when a payment is completed for a channel package/refill
+// We: 1) respond immediately with 200 + deliverable text, 2) activate package async
+router.post('/sellauth-packages', async (req, res) => {
+  // Respond IMMEDIATELY with a "deliverable" text so Sellauth can display it to the customer
+  // This is what Sellauth shows as the "product" the customer bought
+  res.status(200).json({
+    success: true,
+    message: 'Dein Paket wurde automatisch aktiviert! Die Credits stehen sofort zur Verfügung. 🚀',
+    deliverable: 'Dein Paket wurde automatisch aktiviert! Die Credits stehen sofort zur Verfügung. 🚀'
+  });
+
+  // Process the actual activation in background
+  setImmediate(async () => {
+    const logger         = require('../utils/logger');
+    const packageService = require('../services/packageService');
+    const supabase       = require('../config/supabase');
+    const axios          = require('axios');
+
+    try {
+      logger.info('[PackagesWH] Webhook received: ' + JSON.stringify(req.body).substring(0, 300));
+
+      const result = await packageService.handleWebhook(req.body);
+
+      if (!result?.handled) {
+        logger.warn('[PackagesWH] Webhook not handled (payment not completed or missing data)');
+        return;
+      }
+
+      logger.info(`[PackagesWH] ✅ Activated: channel=${result.channelId} credits=${result.credits} refill=${result.isRefill}`);
+
+      // Notify admin via Telegram
+      if (result.adminId) {
+        let token = null;
+        try {
+          const { data: settings } = await supabase.from('settings')
+            .select('smalltalk_bot_token').single();
+          token = settings?.smalltalk_bot_token || null;
+        } catch (_) {}
+        token = token || process.env.TELEGRAM_BOT_TOKEN;
+
+        if (token) {
+          const exp = result.expiresAt
+            ? new Date(result.expiresAt).toLocaleDateString('de-DE')
+            : '–';
+          const text = result.isRefill
+            ? `🔋 <b>Credits aufgeladen!</b>\n\nChannel: ${result.title || result.channelId}\nNachgeladene Credits: ${(result.credits||0).toLocaleString()}\n\nDeine KI läuft weiter! 🚀`
+            : `✅ <b>Paket aktiviert!</b>\n\nChannel: ${result.title || result.channelId}\nCredits: ${(result.credits||0).toLocaleString()}\nLäuft bis: ${exp}\n\nKI-Features sind jetzt aktiv! 🚀`;
+
+          try {
+            await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
+              chat_id:    String(result.adminId),
+              text:       text,
+              parse_mode: 'HTML'
+            }, { timeout: 10000 });
+            logger.info(`[PackagesWH] Admin notified: ${result.adminId}`);
+          } catch (notifyErr) {
+            logger.warn('[PackagesWH] Admin notification failed:', notifyErr.message);
+          }
+        }
+      }
+    } catch (e) {
+      logger.error('[PackagesWH] Processing error:', e.message, e.stack);
+    }
+  });
+});
+
+
 module.exports = router;

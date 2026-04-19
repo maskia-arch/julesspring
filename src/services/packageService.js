@@ -211,12 +211,14 @@ const packageService = {
     if (!ch) { logger.warn("[Packages] Channel not found:", channelId); return { handled: false }; }
 
     try {
+      let finalExpiresAt = null;
       if (isRefill) {
         const newLimit = (ch.token_limit || 0) + credits;
         await supabase.from("bot_channels").update({
           token_limit: newLimit, token_budget_exhausted: false,
           ai_enabled: true, updated_at: new Date()
         }).eq("id", String(channelId));
+        finalExpiresAt = ch.credits_expire_at;
         logger.info(`[Packages] Refill ✅ +${credits} → ${newLimit}`);
       } else {
         const days      = purchase?.channel_packages?.duration_days || 30;
@@ -226,13 +228,14 @@ const packageService = {
           token_budget_exhausted: false, ai_enabled: true,
           credits_expire_at: expiresAt, updated_at: new Date()
         }).eq("id", String(channelId));
+        finalExpiresAt = expiresAt;
         logger.info(`[Packages] Package ✅ ${credits} credits until ${expiresAt}`);
       }
       if (purchase?.id) {
         try { await supabase.from("channel_purchases").update({ status: "completed" }).eq("id", purchase.id); }
         catch (_) {}
       }
-      return { handled: true, channelId, credits, isRefill, adminId: ch.added_by_user_id, title: ch.title };
+      return { handled: true, channelId, credits, isRefill, adminId: ch.added_by_user_id, title: ch.title, expiresAt: finalExpiresAt };
     } catch (e) {
       logger.error("[Packages] Booking error:", e.message);
       return { handled: false };
