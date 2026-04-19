@@ -174,7 +174,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
              callback_data: `cfg_sl_toggle_${channelId}` }],
           [{ text: "📋 Offene Reviews", callback_data: `cfg_sl_reviews_${channelId}` },
            { text: "📊 Übersicht",      callback_data: `cfg_sl_overview_${channelId}` }],
-          [backBtn(channelId, ch?.bot_language||"de")]
+          backBtn(channelId, ch?.bot_language||"de")
         ]}
       });
       break;
@@ -248,7 +248,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         reply_markup: { inline_keyboard: [
           [{ text: "➕ Neue Nachricht erstellen", callback_data: `cfg_sched_new_${channelId}` }],
           ...(schedMsgs?.length ? [[{ text: "🗑 Nachricht löschen", callback_data: `cfg_sched_del_${channelId}` }]] : []),
-          [backBtn(channelId, ch?.bot_language||"de")]
+          backBtn(channelId, ch?.bot_language||"de")
         ]}
       });
       break;
@@ -309,7 +309,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
           [{ text: "📰 Tageszusammenfassung", callback_data: `cfg_ai_summary_${channelId}` }],
           [{ text: "📊 Mein Token-Verbrauch", callback_data: `cfg_ai_stats_${channelId}` }],
           [{ text: "🔇 Gesperrte Themen",    callback_data: `cfg_ai_threads_${channelId}` }],
-          [backBtn(channelId, ch?.bot_language||"de")]
+          backBtn(channelId, ch?.bot_language||"de")
         ]}
       });
       break;
@@ -367,7 +367,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
           reply_markup: { inline_keyboard: [[
             { text: "✅ Ja, erstellen",   callback_data: `cfg_ai_summary_confirm_${channelId}` },
             { text: "❌ Abbrechen",       callback_data: `cfg_ai_abort_${channelId}` }
-          ],[backBtn(channelId, ch?.bot_language||"de")]]
+          ], backBtn(channelId, ch?.bot_language||"de")]
           }
         });
         break;
@@ -429,7 +429,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       if (aiOn) {
         kb.push([{ text: "🤖 KI Blacklist füllen", callback_data: `cfg_bl_ai_${channelId}` }]);
       }
-      kb.push([backBtn(channelId, ch?.bot_language||"de")]);
+      kb.push(backBtn(channelId, ch?.bot_language||"de"));
 
       await tg.call("sendMessage", { chat_id: String(userId), text: txt, parse_mode: "HTML",
         reply_markup: { inline_keyboard: kb }
@@ -451,7 +451,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         break;
       }
       const kb = blList.map(e => [{ text: `🗑 ${e.word} [${e.severity}]`, callback_data: `cfg_bl_del_${e.id}_${channelId}` }]);
-      kb.push([backBtn(channelId, ch?.bot_language||"de")]);
+      kb.push(backBtn(channelId, ch?.bot_language||"de"));
       await tg.call("sendMessage", { chat_id: String(userId), text: "Welchen Eintrag löschen?",
         reply_markup: { inline_keyboard: kb }
       });
@@ -486,7 +486,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
           ? `🌐 <b>Bot-Sprache</b> | <b>Bot Language</b>\n\nAktuell: ${SUPPORTED_LANGUAGES[currentLang]}`
           : "🌐 Sprache wählen",
         parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [...langButtons, [backBtn(channelId, currentLang)]] }
+        reply_markup: { inline_keyboard: [...langButtons, backBtn(channelId, currentLang)] }
       });
       break;
     }
@@ -505,7 +505,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
               `3. <b>@Username eingeben</b> — z.B. <code>@autoacts</code>\n\n` +
               `/cancel zum Abbrechen`,
         parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [[backBtn(channelId, ch?.bot_language||"de")]] }
+        reply_markup: { inline_keyboard: [backBtn(channelId, ch?.bot_language||"de")] }
       });
       break;
     }
