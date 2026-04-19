@@ -1726,7 +1726,10 @@ router.post("/smalltalk", (req, res) => {
               await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Checkout konnte nicht erstellt werden. Kontaktiere @autoacts." });
             }
           } catch (e2) {
-            await tg.call("sendMessage", { chat_id: String(qUserId), text: `❌ Fehler: ${e2.message}` });
+            logger.error("[Refill] Fehler:", e2.message);
+            await tg.call("sendMessage", { chat_id: String(qUserId),
+              text: `❌ Refill fehlgeschlagen:\n<i>${e2.message}</i>\n\nKontaktiere @autoacts.`,
+              parse_mode: "HTML" });
           }
           return;
         }
@@ -1807,7 +1810,8 @@ router.post("/smalltalk", (req, res) => {
           } catch (e2) {
             logger.error("[Buy] Checkout-Fehler:", e2.message);
             await tg.call("sendMessage", { chat_id: String(qUserId),
-              text: `❌ Fehler: ${e2.message}\n\nBitte kontaktiere @autoacts.` });
+              text: `❌ Checkout fehlgeschlagen:\n<i>${e2.message}</i>\n\nBitte überprüfe:\n• Sellauth API-Key korrekt?\n• Shop-ID korrekt?\n• Variant-ID im Paket eingetragen?\n\nKontaktiere @autoacts.`,
+              parse_mode: "HTML" });
           }
           return;
         }
@@ -1885,7 +1889,7 @@ router.post("/smalltalk", (req, res) => {
           await handlePendingInput(tg, supabase, from.id, "/cancel", settings, null);
           return;
         }
-        // /refill – credit top-up (no expiry extension)
+        // /refill – credit top-up (requires active subscription)
         if (/^\/refill(@\w+)?/i.test(text) || text.toLowerCase() === "credits nachladen") {
           const { data: refills } = await supabase.from("channel_refills")
             .select("*").eq("is_active", true).order("sort_order");
@@ -1894,14 +1898,24 @@ router.post("/smalltalk", (req, res) => {
             return;
           }
           const { data: myChans } = await supabase.from("bot_channels")
-            .select("id, title, type, token_used, token_limit, credits_expire_at")
+            .select("id, title, type, token_used, token_limit, credits_expire_at, ai_enabled")
             .eq("added_by_user_id", String(from.id));
           if (!myChans?.length) {
             await tg.send(chatId, "❌ Kein registrierter Channel gefunden.");
             return;
           }
+          // Only channels with active (non-expired) subscription can refill
+          const now = new Date();
+          const eligibleChans = myChans.filter(ch2 => {
+            if (!ch2.credits_expire_at) return false; // no subscription purchased yet
+            return new Date(ch2.credits_expire_at) > now;
+          });
+          if (!eligibleChans.length) {
+            await tg.send(chatId, "❌ Kein aktives Abonnement gefunden.\n\nRefill ist nur für Channel mit aktiver Laufzeit verfügbar.\n\nNutze /buy um ein Paket zu kaufen.");
+            return;
+          }
           pendingInputs[String(from.id)] = { action: "refill_select_channel", refills };
-          const chanKb = myChans.map(ch2 => {
+          const chanKb = eligibleChans.map(ch2 => {
             const used = ch2.token_used || 0;
             const lim  = ch2.token_limit || 0;
             const pct  = lim ? Math.round(used/lim*100) : 0;
