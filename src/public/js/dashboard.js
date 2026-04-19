@@ -751,7 +751,8 @@ async function removeFromScamlistUI(channelId, userId) {
 // ── Refill Options ────────────────────────────────────────────────────────────
 
 async function loadRefills() {
-    var el = document.getElementById('refills-list');
+    if (typeof loadRefillsPkg === 'function') loadRefillsPkg();
+    var el = document.getElementById('refills-list-REMOVED');
     if (!el) return;
     try {
         var list = await api.request('/refills') || [];
@@ -771,7 +772,7 @@ async function loadRefills() {
     } catch(e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(String(e))+'</p>'; }
 }
 
-function showRefillForm(r) {
+function showRefillForm(r) { if(typeof showRefillFormPkg==='function') showRefillFormPkg(r); return;
     var f = document.getElementById('refill-edit-form');
     if (!f) return;
     f.style.display = 'block';
@@ -784,8 +785,8 @@ function showRefillForm(r) {
     document.getElementById('rf-variant-id').value  = r?.sellauth_variant_id || '';
 }
 
-function hideRefillForm() { var f=document.getElementById('refill-edit-form'); if(f) f.style.display='none'; }
-function editRefill(r) { showRefillForm(r); }
+function hideRefillForm() { hideRefillFormPkg(); }
+function editRefill(r) { editRefillPkg(r); }
 
 async function saveRefill() {
     var id      = document.getElementById('rf-id')?.value;
@@ -918,8 +919,10 @@ async function savePackageBook() {
 }
 
 async function loadPackages() {
+    // Redirect to Pakete tab
+    if (typeof loadPackagesPkg === 'function') loadPackagesPkg();
     // Show webhook URL
-    var whEl = document.getElementById('webhook-url-display');
+    var whEl = document.getElementById('webhook-url-display2');
     if (whEl) {
         var appUrl = window.location.origin;
         whEl.textContent = appUrl + '/api/webhooks/sellauth-packages';
@@ -943,7 +946,7 @@ async function loadPackages() {
     } catch(e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(String(e))+'</p>'; }
 }
 
-function showPackageForm(pkg) {
+function showPackageForm(pkg) { if(typeof showPackageFormPkg==='function') showPackageFormPkg(pkg); return;
     var f = document.getElementById('package-edit-form');
     if (!f) return;
     f.style.display = 'block';
@@ -962,7 +965,7 @@ function hidePackageForm() {
     if (f) f.style.display = 'none';
 }
 
-function editPackage(pkg) { showPackageForm(pkg); }
+function editPackage(pkg) { editPackagePkg(pkg); }
 
 async function savePackage() {
     var id      = document.getElementById('pkg-id')?.value;
