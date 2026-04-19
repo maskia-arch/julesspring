@@ -1415,6 +1415,9 @@ async function loadChannels() {
                     '<button class="btn btn-secondary btn-sm ch-scamlist" data-id="'+ch.id+'" style="flex:1;">⛔ Scamliste</button>' +
                     '<button class="btn btn-secondary btn-sm ch-safelist" data-id="'+ch.id+'" style="flex:1;opacity:'+(ch.ai_enabled?'1':'0.4')+';pointer-events:'+(ch.ai_enabled?'auto':'none')+';">🛡 Safelist</button>' +
                 '</div>' +
+                '<div style="display:flex;gap:6px;margin-bottom:6px;">' +
+                    '<button onclick="openPkgBookChannel('+JSON.stringify(ch.id)+')" style="flex:1;background:#14532d;color:#4ade80;border:none;border-radius:6px;padding:6px;cursor:pointer;font-size:0.8rem;">📦 Paket buchen</button>' +
+                '</div>' +
                 '<div style="display:flex;gap:6px;">' +
                     '<button class="btn btn-secondary btn-sm ch-reset" data-id="'+ch.id+'" style="flex:1;">↺ Reset</button>' +
                     '<button class="icon-btn ch-delete" data-id="'+ch.id+'">🗑</button>' +
@@ -1494,6 +1497,45 @@ async function loadChannels() {
 var _currentKBChannel = null;
 
 function closeChannelKB() { var m=document.getElementById('channel-kb-modal'); if(m) m.style.display='none'; }
+
+// ── Package booking from Channel tab ─────────────────────────────────────────
+async function openPkgBookChannel(channelId) {
+    var ch = (_allChannels || []).find(function(x){ return x.id === channelId; });
+    var pkgs;
+    try { pkgs = await api.request('/packages'); } catch(_) { pkgs = []; }
+    if (!pkgs || !pkgs.length) { alert('Keine Pakete angelegt. Bitte zuerst unter Pakete > Channel-Pakete anlegen.'); return; }
+
+    // Build modal overlay
+    var overlay = document.createElement('div');
+    overlay.id = 'pkg-book-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px;';
+    overlay.innerHTML =
+        '<div style="background:#111;border-radius:12px;padding:20px;width:100%;max-width:400px;border:1px solid #1e3a5f;">' +
+            '<div style="font-weight:700;color:#4ade80;margin-bottom:12px;font-size:1rem;">📦 Paket buchen für ' + esc((ch && ch.title) || channelId) + '</div>' +
+            '<select id="pkg-book-select" style="width:100%;padding:10px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:12px;">' +
+                pkgs.map(function(p){
+                    return '<option value="'+p.id+'">'+esc(p.name)+' — '+p.credits.toLocaleString()+' Credits · '+parseFloat(p.price_eur).toFixed(2)+'€ · '+( p.duration_days||30)+'d</option>';
+                }).join('') +
+            '</select>' +
+            '<p style="font-size:0.75rem;color:#64748b;margin-bottom:12px;">Bucht das Paket manuell (kostenfrei). Credits werden sofort aktiviert.</p>' +
+            '<div style="display:flex;gap:8px;">' +
+                '<button onclick="confirmPkgBookChannel('+JSON.stringify(channelId)+')" style="flex:1;padding:10px;background:#14532d;color:#4ade80;border:none;border-radius:6px;cursor:pointer;font-weight:700;">✅ Buchen</button>' +
+                '<button onclick="document.getElementById(\"pkg-book-overlay\").remove()" style="flex:1;padding:10px;background:#1a1a1a;color:#94a3b8;border:none;border-radius:6px;cursor:pointer;">Abbrechen</button>' +
+            '</div>' +
+        '</div>';
+    document.body.appendChild(overlay);
+}
+
+async function confirmPkgBookChannel(channelId) {
+    var packageId = document.getElementById('pkg-book-select')?.value;
+    if (!packageId) return;
+    document.getElementById('pkg-book-overlay')?.remove();
+    try {
+        var r = await api.request('/channels/manual-package', 'POST', { channelId, packageId });
+        showToast('✅ Paket gebucht! ' + r.credits.toLocaleString() + ' Credits, läuft bis ' + new Date(r.expiresAt).toLocaleDateString('de-DE'));
+        if (typeof loadChannels === 'function') loadChannels();
+    } catch(e) { alert('Fehler: ' + (e.message || String(e))); }
+}
 
 async function openChannelKB(channelId, btnText) {
     _currentKBChannel = channelId;

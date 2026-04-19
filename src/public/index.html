@@ -512,41 +512,7 @@
                       <input type="text" id="ui-pro-note" placeholder="Notiz / Kundennummer" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
                     </div>
                     <input type="date" id="ui-pro-expires" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:10px;" title="Ablaufdatum (leer = unbegrenzt)">
-                  <div class="card" style="margin-bottom:12px;">
-                    <h3 class="card-title">🛠 Channel-Verwaltung</h3>
-                    <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">Credits manuell vergeben, Pakete buchen oder Laufzeit anpassen.</p>
-                    <div id="channel-admin-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
-                    <div id="ch-edit-form" style="display:none;margin-top:12px;background:#0d1117;border:1px solid #1e3a5f;border-radius:6px;padding:12px;">
-                      <div style="font-weight:700;color:#60a5fa;margin-bottom:8px;">✏️ <span id="ch-edit-name"></span></div>
-                      <input type="hidden" id="ch-edit-id">
-                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
-                        <input type="number" id="ch-edit-credits" placeholder="Neues Credit-Limit" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
-                        <input type="date" id="ch-edit-expires" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;" title="Ablaufdatum">
-                      </div>
-                      <div style="display:flex;gap:12px;margin-bottom:8px;font-size:0.82rem;">
-                        <label style="display:flex;align-items:center;gap:4px;"><input type="checkbox" id="ch-edit-ai"> KI aktiviert</label>
-                        <label style="display:flex;align-items:center;gap:4px;"><input type="checkbox" id="ch-edit-reset"> Credits-Verbrauch zurücksetzen</label>
-                      </div>
-                      <div style="display:flex;gap:8px;">
-                        <button onclick="saveChannelEdit()" class="btn btn-success btn-sm" style="flex:1;">💾 Speichern</button>
-                        <button onclick="document.getElementById('ch-edit-form').style.display='none'" class="btn btn-secondary btn-sm">Abbrechen</button>
-                      </div>
-                    </div>
-                    <div id="ch-pkg-form" style="display:none;margin-top:12px;background:#0d1117;border:1px solid #14532d;border-radius:6px;padding:12px;">
-                      <div style="font-weight:700;color:#4ade80;margin-bottom:8px;">📦 Paket buchen für <span id="ch-pkg-name"></span></div>
-                      <input type="hidden" id="ch-pkg-id">
-                      <select id="ch-pkg-select" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:8px;"></select>
-                      <div style="display:flex;gap:8px;">
-                        <button onclick="savePackageBook()" class="btn btn-success btn-sm" style="flex:1;">✅ Manuell buchen</button>
-                        <button onclick="document.getElementById('ch-pkg-form').style.display='none'" class="btn btn-secondary btn-sm">Abbrechen</button>
-                      </div>
-                    </div>
-                  </div>
-                    <button onclick="addProUser()" class="btn btn-success btn-sm" style="width:100%;margin-bottom:16px;">➕ Pro-Nutzer hinzufügen</button>
-                    <div id="userinfo-pro-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
-                  </div>
-
-                  <div class="card" style="margin-top:12px;">
+<div class="card" style="margin-top:12px;">
                     <h3 class="card-title">📦 Channel-Pakete</h3>
                     <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Credits und Preise für Channel-Upgrades festlegen. Channel Admins kaufen ein Paket für ihren Channel.</p>
                     <div style="background:#0d1117;border:1px solid #1e3a5f;border-radius:6px;padding:10px;margin-bottom:12px;font-size:0.78rem;">
@@ -604,7 +570,7 @@
                   </div>
                   </div>
                 </div>
-                <div id="settings-tab-pakete-cfg" class="tab-pane" style="display:none;padding:12px;">
+                <div id="settings-tab-pakete-cfg" class="tab-pane" style="padding:12px;">
 
                   <!-- Channel-Verwaltung -->
                   <div class="card" style="margin-bottom:12px;">
@@ -797,6 +763,12 @@ function showSettingsTab(tab, btn) {
         if (typeof loadKbCategories === 'function') loadKbCategories();
         if (typeof loadSmallTalkStatus === 'function') loadSmallTalkStatus();
         api.request('/settings').then(function(s){ if (s && typeof loadSmallTalkSettings === 'function') loadSmallTalkSettings(s); }).catch(function(){});
+    }
+    if (tab === 'pakete-cfg') {
+        if (typeof _initPaketeTab === 'function') _initPaketeTab();
+    }
+    if (tab === 'userinfo-cfg') {
+        if (typeof loadProUsers === 'function') setTimeout(loadProUsers, 100);
     }
 }
 
