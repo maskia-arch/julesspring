@@ -62,7 +62,8 @@ async function isGroupAdmin(token, chatId, userId) {
 function backBtn(channelId, lang) {
   const labels = { de: "◀️ Zurück", en: "◀️ Back", es: "◀️ Volver",
                    zh: "◀️ 返回", ar: "◀️ عودة", fr: "◀️ Retour" };
-  return [{ text: labels[lang] || "◀️ Zurück", callback_data: `cfg_back_${channelId}` }];
+  const cid = channelId || "0";
+  return [{ text: labels[lang] || "◀️ Zurück", callback_data: `cfg_back_${cid}` }];
 }
 
 async function sendSettingsMenu(tg, sendTo, channelId, ch) {
@@ -97,6 +98,7 @@ async function sendSettingsMenu(tg, sendTo, channelId, ch) {
       [{ text: t("btn_ai",       lang), callback_data: `cfg_ai_${channelId}` }],
       [{ text: t("btn_language", lang), callback_data: `cfg_lang_${channelId}` }],
       [{ text: "🔍 UserInfo",            callback_data: `cfg_userinfo_${channelId}` }],
+        [{ text: "🚫 Blacklist",            callback_data: `cfg_blacklist_${channelId}` }],
     ]}
   });
 }
@@ -400,6 +402,79 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Abgebrochen." });
       break;
     }
+    case "blacklist": {
+      const aiOn = ch?.ai_enabled;
+      const { data: blEntries } = await supabase_db.from("channel_blacklist")
+        .select("word, severity, category").eq("channel_id", channelId).order("category").limit(30);
+
+      let txt = `🚫 <b>Blacklist</b> — ${(blEntries||[]).length} Einträge\n\n`;
+      if (blEntries?.length) {
+        const byCategory = {};
+        blEntries.forEach(e => {
+          if (!byCategory[e.category]) byCategory[e.category] = [];
+          byCategory[e.category].push(`<code>${e.word}</code> [${e.severity}]`);
+        });
+        Object.entries(byCategory).forEach(([cat, words]) => {
+          txt += `<b>${cat}:</b> ${words.slice(0,8).join(", ")}\n`;
+        });
+      } else {
+        txt += "Noch keine Einträge.\n";
+      }
+      txt += "\nAktion wählen:";
+
+      const kb = [
+        [{ text: "➕ Wort hinzufügen",  callback_data: `cfg_bl_add_${channelId}` }],
+        [{ text: "🗑 Wort entfernen",   callback_data: `cfg_bl_remove_${channelId}` }],
+      ];
+      if (aiOn) {
+        kb.push([{ text: "🤖 KI Blacklist füllen", callback_data: `cfg_bl_ai_${channelId}` }]);
+      }
+      kb.push([backBtn(channelId, ch?.bot_language||"de")]);
+
+      await tg.call("sendMessage", { chat_id: String(userId), text: txt, parse_mode: "HTML",
+        reply_markup: { inline_keyboard: kb }
+      });
+      break;
+    }
+    case "bl_add": {
+      pendingInputs[String(userId)] = { action: "bl_add_word", channelId };
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: "🚫 <b>Wort hinzufügen</b>\n\nFormat: <code>Wort</code> oder <code>Wort|Schwere|Kategorie</code>\n\nSchwere: warn · mute · ban · tolerated\nBeispiele:\n<code>PayPal</code>\n<code>Betrug|ban|Scam</code>\n<code>Werbung|mute|Spam</code>\n\n/cancel zum Abbrechen",
+        parse_mode: "HTML" });
+      break;
+    }
+    case "bl_remove": {
+      const { data: blList } = await supabase_db.from("channel_blacklist")
+        .select("id, word, severity").eq("channel_id", channelId).limit(20);
+      if (!blList?.length) {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "Keine Einträge zum Löschen." });
+        break;
+      }
+      const kb = blList.map(e => [{ text: `🗑 ${e.word} [${e.severity}]`, callback_data: `cfg_bl_del_${e.id}_${channelId}` }]);
+      kb.push([backBtn(channelId, ch?.bot_language||"de")]);
+      await tg.call("sendMessage", { chat_id: String(userId), text: "Welchen Eintrag löschen?",
+        reply_markup: { inline_keyboard: kb }
+      });
+      break;
+    }
+    case "bl_del": {
+      // data = cfg_bl_del_{entryId}_{channelId}
+      const blDelMatch = data.match(/^cfg_bl_del_(\d+)_(-?\d+)$/);
+      if (blDelMatch) {
+        await supabase_db.from("channel_blacklist").delete().eq("id", blDelMatch[1]).eq("channel_id", blDelMatch[2]);
+        await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Eintrag gelöscht.", parse_mode: "HTML" });
+      }
+      break;
+    }
+    case "bl_ai": {
+      // AI fills blacklist by category
+      if (!ch?.ai_enabled) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ KI-Features nicht aktiviert." }); break; }
+      pendingInputs[String(userId)] = { action: "bl_ai_category", channelId };
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: "🤖 <b>KI Blacklist</b>\n\nWelche Kategorie soll die KI befüllen?\nBeispiele: Beleidigungen · Spam · Betrug · Werbung · Zahlungsanbieter\n\nGib die Kategorie ein:",
+        parse_mode: "HTML" });
+      break;
+    }
     case "lang": {
       const currentLang = ch?.bot_language || "de";
       const langButtons = Object.entries(SUPPORTED_LANGUAGES).map(([code, label]) => [{
@@ -602,6 +677,65 @@ async function handlePendingInput(tg, supabase_db, userId, text, settings, msg) 
 
     delete pendingInputs[String(userId)];
     await _runUserInfo(tg, supabase_db, userId, targetId, channelId, null, null);
+    return true;
+  }
+
+  // ── Blacklist word entry ────────────────────────────────────────────────────
+  if (action === "bl_add_word") {
+    delete pendingInputs[String(userId)];
+    const parts = text.split("|").map(s => s.trim());
+    const word     = parts[0];
+    const severity = ["warn","mute","ban","tolerated"].includes(parts[1]) ? parts[1] : "mute";
+    const category = parts[2] || "allgemein";
+    if (!word) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Kein Wort angegeben." }); return true; }
+    try {
+      await supabase_db.from("channel_blacklist").upsert([{
+        channel_id: String(channelId), word: word.toLowerCase(),
+        category, severity, created_by: userId
+      }], { onConflict: "channel_id,word" });
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✅ <b>${word}</b> hinzugefügt (${severity}, ${category}).`, parse_mode: "HTML" });
+    } catch (e) {
+      await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
+    }
+    return true;
+  }
+
+  // ── Blacklist AI fill ─────────────────────────────────────────────────────
+  if (action === "bl_ai_category") {
+    delete pendingInputs[String(userId)];
+    const category = text.trim();
+    if (!category) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Keine Kategorie angegeben." }); return true; }
+    await tg.call("sendMessage", { chat_id: String(userId), text: `⏳ KI befüllt Blacklist für "${category}"…` });
+    try {
+      const axios = require("axios");
+      const apiKey = process.env.OPENAI_API_KEY;
+      if (!apiKey) throw new Error("Kein OpenAI Key");
+      const resp = await axios.post("https://api.openai.com/v1/chat/completions",
+        { model: "gpt-4o-mini", max_tokens: 300, temperature: 0.2,
+          messages: [{ role: "user", content:
+            `Erstelle eine Liste von 20-30 deutschen Begriffen/Wörtern für die Kategorie "${category}". ` +
+            `Gib NUR die Wörter aus, einen pro Zeile, keine Nummerierung, keine Erklärungen.`
+          }]},
+        { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, timeout: 20000 }
+      );
+      const words = resp.data.choices[0].message.content.trim().split("\n")
+        .map(w => w.trim().toLowerCase()).filter(w => w.length > 1 && w.length < 50);
+
+      let added = 0;
+      for (const word of words.slice(0, 30)) {
+        try {
+          await supabase_db.from("channel_blacklist").upsert([{
+            channel_id: String(channelId), word, category, severity: "mute", created_by: userId
+          }], { onConflict: "channel_id,word" });
+          added++;
+        } catch (_) {}
+      }
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✅ <b>${added} Wörter</b> für "${category}" zur Blacklist hinzugefügt.`, parse_mode: "HTML" });
+    } catch (e) {
+      await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
+    }
     return true;
   }
 
@@ -990,9 +1124,8 @@ async function _runUserInfo(tg, supabase_db, requesterId, targetId, channelId, r
   if (!chatData) {
     const msg = await tg.call("sendMessage", { chat_id: sendTo,
       text: `❌ Keine Daten gefunden für <code>${targetId}</code>\n\nMögliche Gründe:\n• User hat keinen öffentlichen Account\n• Falsche ID / Username\n• Kein gemeinsamer Chat mit dem Bot`,
-      parse_mode: "HTML",
-      ...(replyToMsgId ? { reply_to_message_id: replyToMsgId } : {})
-    });
+      parse_mode: "HTML"
+    }).catch(() => null);
     if (msg?.message_id && sendTo !== String(requesterId)) {
       await safelistService.trackBotMessage(sendTo, msg.message_id, "temp", 5 * 60 * 1000);
     }
@@ -1043,15 +1176,119 @@ async function _runUserInfo(tg, supabase_db, requesterId, targetId, channelId, r
   const remaining = access.unlimited ? "∞" : String(FREE_QUERIES_PER_DAY - ((await supabase_db.from("userinfo_queries").select("query_count").eq("user_id", requesterId).eq("query_date", new Date().toISOString().split("T")[0]).maybeSingle().catch(() => ({ data: null }))).data?.query_count || 0));
   text += `\n<i>Abfragen heute: ${access.unlimited ? "∞" : remaining + "/" + FREE_QUERIES_PER_DAY}</i>`;
 
-  const sentMsg = await tg.call("sendMessage", { chat_id: sendTo,
-    text: text.trim(), parse_mode: "HTML",
-    ...(replyToMsgId ? { reply_to_message_id: replyToMsgId } : {})
+  const sentMsgParams = { chat_id: sendTo, text: text.trim(), parse_mode: "HTML" };
+  // Don't reply to command messages that may already be deleted
+  // Only add reply if explicitly passed
+  if (replyToMsgId) sentMsgParams.reply_to_message_id = replyToMsgId;
+  const sentMsg = await tg.call("sendMessage", sentMsgParams).catch(async (e) => {
+    if (e.message?.includes("reply") || e.message?.includes("not found")) {
+      // Retry without reply
+      delete sentMsgParams.reply_to_message_id;
+      return await tg.call("sendMessage", sentMsgParams);
+    }
+    throw e;
   });
 
   // Auto-delete after 5 min in channels (not in private admin chat)
   if (sentMsg?.message_id && sendTo !== String(requesterId)) {
     await safelistService.trackBotMessage(sendTo, sentMsg.message_id, "temp", 5 * 60 * 1000);
   }
+}
+
+
+// ── Duration parser ────────────────────────────────────────────────────────────
+function _parseDuration(str) {
+  if (!str || /^(perm|permanent)/i.test(str)) return -1; // permanent
+  const m = String(str).match(/^(\d+)([smhd])$/i);
+  if (!m) return 86400; // default 24h
+  const n = parseInt(m[1]);
+  switch (m[2].toLowerCase()) {
+    case 's': return Math.min(n, 2592000);
+    case 'm': return Math.min(n * 60, 2592000);
+    case 'h': return Math.min(n * 3600, 2592000);
+    case 'd': return Math.min(n * 86400, 2592000); // max 30d
+    default:  return 86400;
+  }
+}
+
+// ── Blacklist engine ───────────────────────────────────────────────────────────
+// Fuzzy match: normalize text (0→o, @→a, 3→e etc.) and check includes
+function _normalizeForBlacklist(text) {
+  return text.toLowerCase()
+    .replace(/0/g, 'o').replace(/3/g, 'e').replace(/4/g, 'a')
+    .replace(/1/g, 'i').replace(/5/g, 's').replace(/7/g, 't')
+    .replace(/[@$]/g, 'a').replace(/[^a-z0-9äöüß]/g, '');
+}
+
+async function _checkBlacklist(supabase_db, channelId, messageText, from, chatId, tg, token) {
+  if (!messageText?.trim()) return;
+  let entries;
+  try {
+    const { data } = await supabase_db.from("channel_blacklist")
+      .select("word, severity, tolerate_hours, category").eq("channel_id", String(channelId));
+    entries = data || [];
+  } catch (_) { return; }
+  if (!entries.length) return;
+
+  const normMsg = _normalizeForBlacklist(messageText);
+  let hit = null;
+  for (const e of entries) {
+    const normWord = _normalizeForBlacklist(e.word);
+    if (normMsg.includes(normWord)) { hit = e; break; }
+  }
+  if (!hit) return;
+
+  const targetName = from.username ? "@" + from.username : (from.first_name || String(from.id));
+  let action = hit.severity;
+
+  // Log hit
+  try {
+    await supabase_db.from("blacklist_hits").insert([{
+      channel_id: String(channelId), user_id: from.id,
+      username: from.username || null, word_hit: hit.word,
+      message_text: messageText.substring(0, 200), action_taken: action
+    }]);
+  } catch (_) {}
+
+  if (action === "tolerated") {
+    // Delete after tolerate_hours
+    const hours = hit.tolerate_hours || 24;
+    // No immediate action, schedule delete
+    return; // tolerated = allow for now
+  }
+
+  // Always delete the message first
+  // Note: we need msg.message_id — passed as part of context
+  // Action based on severity
+  let actionText = "";
+  if (action === "mute" || action === "warn") {
+    const muteSec = 12 * 3600; // 12h default
+    try {
+      await tg.call("restrictChatMember", {
+        chat_id: chatId, user_id: from.id,
+        permissions: { can_send_messages: false },
+        until_date: Math.floor(Date.now() / 1000) + muteSec
+      });
+      actionText = "12h stummgeschaltet";
+    } catch (_) {}
+  } else if (action === "ban") {
+    try {
+      await tg.call("banChatMember", { chat_id: chatId, user_id: from.id, until_date: 0 });
+      actionText = "gebannt";
+    } catch (_) {}
+  }
+
+  // Notify admin via PM
+  try {
+    const { data: ch } = await supabase_db.from("bot_channels").select("added_by_user_id").eq("id", String(channelId)).maybeSingle();
+    if (ch?.added_by_user_id) {
+      await tg.call("sendMessage", { chat_id: String(ch.added_by_user_id),
+        text: `⚠️ <b>Blacklist-Treffer</b>\n\nUser: ${targetName}\nWort: <code>${hit.word}</code> (${hit.category})\nAktion: ${actionText || "Nachricht gelöscht"}\nNachricht: <i>${messageText.substring(0, 100)}</i>`,
+        parse_mode: "HTML" });
+    }
+  } catch (_) {}
+
+  return { hit, action, actionText };
 }
 
 
@@ -1622,36 +1859,122 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
         }
 
         if (!lookupId) {
-          const hint = await tg.send(chatId, "💡 Nutze /userinfo @username, /userinfo [ID] oder antworte auf eine Nachricht mit /userinfo");
+          const hint = await tg.send(chatId, "💡 Nutze /userinfo @username, /userinfo [ID] oder als Reply auf eine Nachricht mit /userinfo");
           if (hint?.message_id) void safelistService.trackBotMessage(chatId, hint.message_id, "temp", 10000);
-        } else {
-          // Delete the command message
+          // Delete command after hint
           await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
-          await _runUserInfo(tg, supabase, from.id, lookupId, chatId, replyMsgId, chatId);
+        } else {
+          // Run first, then delete command
+          await _runUserInfo(tg, supabase, from.id, lookupId, chatId, null, chatId);
+          await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
         }
         return;
       }
 
-      // /ban – Reply auf Nachricht zum Bannen (nur Admins)
-      if ((text === "/ban" || text.startsWith("/ban ") || text.startsWith("/ban@")) && msg.reply_to_message) {
+      // ── /help – Rollenspezifische Befehle ─────────────────────────────────────
+      if (/^\/help(@\w+)?$/i.test(text)) {
+        const isAdm = await isGroupAdmin(token, chatId, from.id);
+        let helpText;
+        if (isAdm) {
+          helpText = `📋 <b>Admin-Befehle</b>\n\n` +
+            `<b>/ai [Frage]</b> – KI-Antwort anfordern\n` +
+            `<b>/ban [Grund]</b> (Reply) – User dauerhaft bannen\n` +
+            `<b>/unban [ID]</b> – User entbannen\n` +
+            `<b>/mute [Dauer] [Grund]</b> (Reply) – User stummschalten\n` +
+            `  Dauer: 1h / 12h / 24h / 7d / 30d / permanent\n` +
+            `<b>/del</b> (Reply) – Nachricht löschen\n` +
+            `<b>/pin</b> (Reply) – Nachricht pinnen\n` +
+            `<b>/userinfo [ID|@user]</b> – User-Informationen abrufen\n` +
+            `<b>/safelist @user</b> – User verifizieren\n` +
+            `<b>/scamlist @user</b> – Scam melden\n` +
+            `<b>/feedbacks @user</b> – Feedbacks einsehen\n` +
+            `<b>/clean</b> – Gelöschte Accounts entfernen\n` +
+            `<b>/settings</b> – Bot-Einstellungen (privat)`;
+        } else {
+          helpText = `📋 <b>Verfügbare Befehle</b>\n\n` +
+            (ch?.ai_enabled ? `<b>/ai [Frage]</b> – KI-Assistent befragen\n` : "") +
+            (ch?.safelist_enabled ? `<b>/feedbacks @user</b> – Feedbacks zu einem User\n<b>/check @user</b> – Status prüfen\n<b>/scamlist @user [Grund]</b> – Scammer melden\n` : "") +
+            `<b>/userinfo [ID|@user]</b> – User-Info (5x/Tag kostenlos)\n` +
+            `<b>/help</b> – Diese Hilfe`;
+        }
+        const helpMsg = await tg.send(chatId, helpText);
+        if (helpMsg?.message_id) void safelistService.trackBotMessage(chatId, helpMsg.message_id, "temp", 5 * 60 * 1000);
+        return;
+      }
+
+      // ── /ban ─────────────────────────────────────────────────────────────────
+      if (/^\/ban(@\w+)?/i.test(text) && msg.reply_to_message) {
         if (!await isGroupAdmin(token, chatId, from.id)) return;
         const banTarget = msg.reply_to_message.from;
         if (!banTarget?.id) return;
         const banReason = text.replace(/^\/ban(@\w+)?\s*/i, "").trim() || "Kein Grund angegeben";
         try {
-          await tg.call("banChatMember", { chat_id: chatId, user_id: banTarget.id, revoke_messages: false });
-          const banMsg = await tg.send(chatId,
-            `🚫 @${banTarget.username || banTarget.first_name || banTarget.id} wurde gebannt.\nGrund: ${banReason.substring(0,100)}`
-          );
-          // Auto-delete Bestätigung nach 5 Minuten
-          if (banMsg?.message_id) {
-            void safelistService.trackBotMessage(chatId, banMsg.message_id, "temp", 5 * 60 * 1000);
-          }
-          // Original-Nachricht löschen
+          // Ban + prevent future joins (until_date=0 = permanent)
+          await tg.call("banChatMember", { chat_id: chatId, user_id: banTarget.id, until_date: 0, revoke_messages: false });
+          const target = banTarget.username ? "@" + banTarget.username : (banTarget.first_name || String(banTarget.id));
+          const banMsg = await tg.send(chatId, `🚫 ${target} wurde gebannt.\nGrund: ${banReason.substring(0,100)}`);
+          if (banMsg?.message_id) void safelistService.trackBotMessage(chatId, banMsg.message_id, "temp", 5 * 60 * 1000);
+          await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+        } catch (e2) { logger.warn("[Ban]", e2.message); }
+        return;
+      }
+
+      // ── /unban ────────────────────────────────────────────────────────────────
+      if (/^\/unban(@\w+)?\s+(\S+)/i.test(text)) {
+        if (!await isGroupAdmin(token, chatId, from.id)) return;
+        const unbanId = text.match(/^\/unban(@\w+)?\s+(\S+)/i)?.[2];
+        if (!unbanId) return;
+        try {
+          await tg.call("unbanChatMember", { chat_id: chatId, user_id: unbanId, only_if_banned: false });
+          const unbanMsg = await tg.send(chatId, `✅ User <code>${unbanId}</code> wurde entbannt.`);
+          if (unbanMsg?.message_id) void safelistService.trackBotMessage(chatId, unbanMsg.message_id, "temp", 15000);
           await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
         } catch (e2) {
-          logger.warn("[Ban] Fehler:", e2.message);
+          const errMsg = await tg.send(chatId, `❌ Entbannen fehlgeschlagen: ${e2.message}`);
+          if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 10000);
         }
+        return;
+      }
+
+      // ── /mute ─────────────────────────────────────────────────────────────────
+      const muteMatch = text.match(/^\/mute(@\w+)?(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?/i);
+      const muteTarget = msg.reply_to_message?.from || null;
+      const muteByIdMatch = !msg.reply_to_message && text.match(/^\/mute(@\w+)?\s+(\d+)(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?/i);
+
+      if ((muteMatch && muteTarget) || muteByIdMatch) {
+        if (!await isGroupAdmin(token, chatId, from.id)) return;
+        let targetId, targetName, durationStr, muteReason;
+
+        if (muteByIdMatch) {
+          targetId   = muteByIdMatch[2];
+          durationStr = muteByIdMatch[3] || "24h";
+          muteReason  = muteByIdMatch[4] || "";
+          targetName  = `<code>${targetId}</code>`;
+        } else {
+          targetId    = muteTarget.id;
+          targetName  = muteTarget.username ? "@" + muteTarget.username : (muteTarget.first_name || String(muteTarget.id));
+          durationStr = muteMatch[2] || "24h";
+          muteReason  = muteMatch[3] || "";
+        }
+
+        // Parse duration
+        const durationSeconds = _parseDuration(durationStr);
+        const untilDate = durationSeconds === -1 ? 0 : Math.floor(Date.now() / 1000) + durationSeconds;
+        const displayDur = durationSeconds === -1 ? "permanent" : durationStr;
+
+        try {
+          await tg.call("restrictChatMember", {
+            chat_id: chatId,
+            user_id: targetId,
+            permissions: { can_send_messages: false, can_send_other_messages: false, can_add_web_page_previews: false },
+            until_date: untilDate
+          });
+          const muteMsg = await tg.send(chatId,
+            `🔇 ${targetName} wurde ${displayDur} stummgeschaltet.${muteReason ? "\nGrund: " + muteReason.substring(0,100) : ""}`
+          );
+          if (muteMsg?.message_id) void safelistService.trackBotMessage(chatId, muteMsg.message_id, "temp", 5 * 60 * 1000);
+          await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+        } catch (e2) { logger.warn("[Mute]", e2.message); }
         return;
       }
 
