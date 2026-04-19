@@ -113,15 +113,17 @@ const packageService = {
     const result = await _createCheckoutSession(
       pkg.sellauth_product_id, pkg.sellauth_variant_id, channelId, creds
     );
-    await supabase.from("channel_purchases").insert([{
-      channel_id:          String(channelId),
-      package_id:          pkg.id,
-      sellauth_invoice_id: result.invoiceId,
-      credits_added:       pkg.credits,
-      expires_at:          new Date(Date.now() + (pkg.duration_days || 30) * 86400000).toISOString(),
-      status:              "pending",
-      meta:                { package_name: pkg.name, price_eur: pkg.price_eur }
-    }]).catch(e => logger.warn("[Packages] purchase log:", e.message));
+    try {
+      await supabase.from("channel_purchases").insert([{
+        channel_id:          String(channelId),
+        package_id:          pkg.id,
+        sellauth_invoice_id: result.invoiceId,
+        credits_added:       pkg.credits,
+        expires_at:          new Date(Date.now() + (pkg.duration_days || 30) * 86400000).toISOString(),
+        status:              "pending",
+        meta:                { package_name: pkg.name, price_eur: pkg.price_eur }
+      }]);
+    } catch (e) { logger.warn("[Packages] purchase log:", e.message); }
     return result;
   },
 
@@ -132,15 +134,17 @@ const packageService = {
     const result = await _createCheckoutSession(
       refill.sellauth_product_id, refill.sellauth_variant_id, channelId, creds
     );
-    await supabase.from("channel_purchases").insert([{
-      channel_id:          String(channelId),
-      package_id:          null,
-      sellauth_invoice_id: result.invoiceId,
-      credits_added:       refill.credits,
-      expires_at:          new Date(Date.now() + 365 * 86400000).toISOString(),
-      status:              "pending",
-      meta:                { type: "refill", refill_name: refill.name, price_eur: refill.price_eur }
-    }]).catch(e => logger.warn("[Packages] refill log:", e.message));
+    try {
+      await supabase.from("channel_purchases").insert([{
+        channel_id:          String(channelId),
+        package_id:          null,
+        sellauth_invoice_id: result.invoiceId,
+        credits_added:       refill.credits,
+        expires_at:          new Date(Date.now() + 365 * 86400000).toISOString(),
+        status:              "pending",
+        meta:                { type: "refill", refill_name: refill.name, price_eur: refill.price_eur }
+      }]);
+    } catch (e) { logger.warn("[Packages] refill log:", e.message); }
     return result;
   },
 
@@ -225,8 +229,8 @@ const packageService = {
         logger.info(`[Packages] Package ✅ ${credits} credits until ${expiresAt}`);
       }
       if (purchase?.id) {
-        await supabase.from("channel_purchases")
-          .update({ status: "completed" }).eq("id", purchase.id).catch(() => {});
+        try { await supabase.from("channel_purchases").update({ status: "completed" }).eq("id", purchase.id); }
+        catch (_) {}
       }
       return { handled: true, channelId, credits, isRefill, adminId: ch.added_by_user_id, title: ch.title };
     } catch (e) {
