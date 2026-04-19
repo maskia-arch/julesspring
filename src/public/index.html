@@ -498,6 +498,45 @@
                 </div>
 
                 <!-- Smalltalk Settings -->
+                <div id="settings-tab-userinfo-cfg" class="tab-pane">
+                  <div class="card">
+                    <h3 class="card-title">🔍 UserInfo Pro</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Nutzer mit unbegrenzten UserInfo-Abfragen. Kostenlose User: 5 Abfragen/Tag bot-übergreifend.</p>
+                    <div class="form-group">
+                      <label>Telegram ID *</label>
+                      <input type="number" id="ui-pro-id" placeholder="z.B. 123456789" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:6px;">
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                      <input type="text" id="ui-pro-username" placeholder="@username (optional)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      <input type="text" id="ui-pro-note" placeholder="Notiz / Kundennummer" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                    </div>
+                    <input type="date" id="ui-pro-expires" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:10px;" title="Ablaufdatum (leer = unbegrenzt)">
+                    <button onclick="addProUser()" class="btn btn-success btn-sm" style="width:100%;margin-bottom:16px;">➕ Pro-Nutzer hinzufügen</button>
+                    <div id="userinfo-pro-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                  </div>
+
+                  <div class="card" style="margin-top:12px;">
+                    <h3 class="card-title">📦 Channel-Pakete</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Credits und Preise für Channel-Upgrades festlegen. Channel Admins kaufen ein Paket für ihren Channel.</p>
+                    <div id="packages-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                    <div id="package-edit-form" style="margin-top:12px;display:none;">
+                      <input type="hidden" id="pkg-id">
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="text"   id="pkg-name"    placeholder="Name (z.B. Starter)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="number" id="pkg-price"   placeholder="Preis (€)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="number" id="pkg-credits" placeholder="Credits" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="text"   id="pkg-desc"    placeholder="Beschreibung" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                      <div style="display:flex;gap:8px;">
+                        <button onclick="savePackage()" class="btn btn-success btn-sm" style="flex:1;">💾 Speichern</button>
+                        <button onclick="hidePackageForm()" class="btn btn-secondary btn-sm">Abbrechen</button>
+                      </div>
+                    </div>
+                    <button onclick="showPackageForm()" class="btn btn-secondary btn-sm" style="width:100%;margin-top:10px;">➕ Paket anlegen</button>
+                  </div>
+                </div>
                 <div id="settings-tab-smalltalk-cfg" class="tab-pane">
                   <div class="card">
                     <h3 class="card-title">💬 Smalltalk-Agent</h3>

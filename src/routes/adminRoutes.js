@@ -119,4 +119,9 @@ router.get('/userinfo-pro',               channelCtrl.getProUsers.bind(channelCt
 router.post('/userinfo-pro',              channelCtrl.addProUser.bind(channelCtrl));
 router.delete('/userinfo-pro/:userId',    channelCtrl.removeProUser.bind(channelCtrl));
 
+// Channel packages
+router.get('/packages',          channelCtrl.getPackages.bind(channelCtrl));
+router.post('/packages',         channelCtrl.upsertPackage.bind(channelCtrl));
+router.delete('/packages/:id',   channelCtrl.deletePackage.bind(channelCtrl));
+
 module.exports = router;

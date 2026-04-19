@@ -211,13 +211,86 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "sl_overview": {
-      const { data: scamList } = await supabase_db.from("scam_entries").select("username, user_id").eq("channel_id", channelId).limit(20);
-      const { data: safeList } = await supabase_db.from("user_feedbacks").select("target_username").eq("channel_id", channelId).eq("feedback_type", "positive").eq("status", "approved").limit(20);
-      let txt = `📊 <b>Safelist-Übersicht</b>\n\n`;
-      txt += `✅ Verifizierte User: ${safeList?.length || 0}\n`;
-      txt += `⛔ Scamliste: ${scamList?.length || 0}\n\n`;
-      if (scamList?.length) txt += `⛔ Scammer:\n` + scamList.slice(0,5).map(s => `• @${s.username||s.user_id}`).join("\n");
-      await tg.call("sendMessage", { chat_id: String(userId), text: txt, parse_mode: "HTML" });
+      const { data: safeList } = await supabase_db.from("user_feedbacks")
+        .select("id, target_username, target_user_id, feedback_text")
+        .eq("channel_id", channelId).eq("feedback_type", "positive").eq("status", "approved").limit(20);
+      const { data: scamList } = await supabase_db.from("scam_entries")
+        .select("user_id, username, reason").eq("channel_id", channelId).limit(20);
+
+      let txt = `📊 <b>Listen-Übersicht</b>\n\n`;
+      txt += `✅ Safelist: ${safeList?.length || 0} Einträge\n`;
+      txt += `⛔ Scamliste: ${scamList?.length || 0} Einträge\n`;
+
+      const kb = [
+        [{ text: `✅ Safelist anzeigen (${safeList?.length||0})`,   callback_data: `cfg_sl_safeview_${channelId}` }],
+        [{ text: `⛔ Scamliste anzeigen (${scamList?.length||0})`, callback_data: `cfg_sl_scamview_${channelId}` }],
+        backBtn(channelId, ch?.bot_language||"de")
+      ];
+      await tg.call("sendMessage", { chat_id: String(userId), text: txt, parse_mode: "HTML",
+        reply_markup: { inline_keyboard: kb }
+      });
+      break;
+    }
+    case "sl_safeview": {
+      const { data: safeList } = await supabase_db.from("user_feedbacks")
+        .select("id, target_username, target_user_id, feedback_text, submitted_by_username")
+        .eq("channel_id", channelId).eq("feedback_type", "positive").eq("status", "approved").limit(20);
+      if (!safeList?.length) {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Safelist ist leer." });
+        break;
+      }
+      // Show paginated list with delete buttons
+      const kb = safeList.map(e => [{
+        text: `🗑 @${e.target_username||e.target_user_id}`,
+        callback_data: `cfg_sl_safedel_${e.id}_${channelId}`
+      }]);
+      kb.push(backBtn(channelId, ch?.bot_language||"de"));
+      const lines = safeList.map(e =>
+        `✅ @${e.target_username||e.target_user_id}` +
+        (e.feedback_text ? ` — ${e.feedback_text.substring(0,60)}` : "") +
+        (e.submitted_by_username ? ` (von @${e.submitted_by_username})` : "")
+      ).join("\n");
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✅ <b>Safelist</b>\n\n${lines}\n\nZum Löschen tippe den Eintrag:`,
+        parse_mode: "HTML", reply_markup: { inline_keyboard: kb }
+      });
+      break;
+    }
+    case "sl_safedel": {
+      const slDelMatch = data.match(/^cfg_sl_safedel_(\d+)_(-?\d+)$/);
+      if (slDelMatch) {
+        await supabase_db.from("user_feedbacks").delete().eq("id", slDelMatch[1]).eq("channel_id", slDelMatch[2]);
+        await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Safelist-Eintrag gelöscht." });
+      }
+      break;
+    }
+    case "sl_scamview": {
+      const { data: scamList } = await supabase_db.from("scam_entries")
+        .select("user_id, username, reason, created_at").eq("channel_id", channelId).limit(20);
+      if (!scamList?.length) {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "⛔ Scamliste ist leer." });
+        break;
+      }
+      const kb = scamList.map(e => [{
+        text: `🗑 @${e.username||e.user_id}`,
+        callback_data: `cfg_sl_scamdel_${e.user_id}_${channelId}`
+      }]);
+      kb.push(backBtn(channelId, ch?.bot_language||"de"));
+      const lines = scamList.map(e =>
+        `⛔ @${e.username||e.user_id}` + (e.reason ? ` — ${e.reason.substring(0,60)}` : "")
+      ).join("\n");
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `⛔ <b>Scamliste</b>\n\n${lines}\n\nZum Löschen tippe den Eintrag:`,
+        parse_mode: "HTML", reply_markup: { inline_keyboard: kb }
+      });
+      break;
+    }
+    case "sl_scamdel": {
+      const scamDelMatch = data.match(/^cfg_sl_scamdel_(\d+)_(-?\d+)$/);
+      if (scamDelMatch) {
+        await supabase_db.from("scam_entries").delete().eq("user_id", scamDelMatch[1]).eq("channel_id", scamDelMatch[2]);
+        await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Scamliste-Eintrag gelöscht." });
+      }
       break;
     }
     case "schedule": {
@@ -294,8 +367,8 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         break;
       }
       const tokenInfo = ch.token_limit
-        ? `🔋 Token-Budget: ${ch.token_used||0} / ${ch.token_limit} (${Math.round((ch.token_used||0)/ch.token_limit*100)}%)`
-        : "🔋 Token-Budget: unbegrenzt";
+        ? `🔋 Credit-Budget: ${ch.token_used||0} / ${ch.token_limit} (${Math.round((ch.token_used||0)/ch.token_limit*100)}%)`
+        : "🔋 Credit-Budget: unbegrenzt";
       const lastSumm = ch.last_summary_at
         ? `Letzte Zusammenfassung: ${new Date(ch.last_summary_at).toLocaleDateString("de-DE")}`
         : "Noch keine Zusammenfassung erstellt";
@@ -307,7 +380,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         reply_markup: { inline_keyboard: [
           [{ text: "✏️ System-Prompt",       callback_data: `cfg_ai_prompt_${channelId}` }],
           [{ text: "📰 Tageszusammenfassung", callback_data: `cfg_ai_summary_${channelId}` }],
-          [{ text: "📊 Mein Token-Verbrauch", callback_data: `cfg_ai_stats_${channelId}` }],
+          [{ text: "📊 Mein Credit-Verbrauch", callback_data: `cfg_ai_stats_${channelId}` }],
           [{ text: "🔇 Gesperrte Themen",    callback_data: `cfg_ai_threads_${channelId}` }],
           backBtn(channelId, ch?.bot_language||"de")
         ]}
@@ -328,18 +401,18 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       const pct = tLimit ? Math.round(tUsed / tLimit * 100) : 0;
       const bar = tLimit ? `[${"█".repeat(Math.min(10, Math.round(pct/10)))}${"░".repeat(Math.max(0, 10 - Math.round(pct/10)))}] ${pct}%` : "";
       await tg.call("sendMessage", { chat_id: String(userId),
-        text: `📊 <b>Token-Verbrauch</b>\n\n` +
+        text: `📊 <b>Credit-Verbrauch</b>\n\n` +
               `🔋 ${tUsed.toLocaleString()} / ${tLimit ? tLimit.toLocaleString() : "∞"} Token\n` +
               (bar ? `${bar}\n` : "") +
               `\nStatus: ${exhausted ? "⛔ Budget erschöpft" : "✅ Aktiv"}\n\n` +
               (exhausted
-                ? "⚠️ Dein Token-Budget ist aufgebraucht. Kontaktiere @autoacts um Token aufzuladen."
+                ? "⚠️ Dein Credit-Budget ist aufgebraucht. Kontaktiere @autoacts um Token aufzuladen."
                 : `Für Token-Aufladung: @autoacts`),
         parse_mode: "HTML" });
       break;
     }
     case "ai_summary": {
-      // Cooldown only if last summary was successful (≥10 Token verbraucht)
+      // Cooldown only if last summary was successful (≥10 Credits verbraucht)
       const lastSummaryAt = ch?.last_summary_at ? new Date(ch.last_summary_at) : null;
       const lastSummaryTokens = ch?.last_summary_tokens || 0;
       const hoursSince = lastSummaryAt ? (Date.now() - lastSummaryAt.getTime()) / 3600000 : 99;
@@ -350,9 +423,9 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
           text: t("summary_cooldown", lang, nextAt) });
         break;
       }
-      // Schätzung: ~300 Output-Token, x2 für Admin = 600 Token
+      // Schätzung: ~300 Credits, x2 für Admin = 600 Credits
       const SUMMARY_TOKEN_EST = 300;
-      const SUMMARY_BILLED    = SUMMARY_TOKEN_EST * 2;  // Admin zahlt 2x Output-Token
+      const SUMMARY_BILLED    = SUMMARY_TOKEN_EST * 2;  // Admin zahlt 2x Credits
       const tUsed2   = ch?.token_used  || 0;
       const tLimit2  = ch?.token_limit;
       const remaining = tLimit2 ? tLimit2 - tUsed2 : Infinity;
@@ -458,11 +531,17 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "bl_del": {
-      // data = cfg_bl_del_{entryId}_{channelId}
-      const blDelMatch = data.match(/^cfg_bl_del_(\d+)_(-?\d+)$/);
-      if (blDelMatch) {
-        await supabase_db.from("channel_blacklist").delete().eq("id", blDelMatch[1]).eq("channel_id", blDelMatch[2]);
-        await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Eintrag gelöscht.", parse_mode: "HTML" });
+      // data = cfg_bl_del_{entryId}_{channelId} — smart parser may split wrong, use own regex
+      const blDelFull = data.match(/^cfg_bl_del_(\d+)_(-?\d+)$/);
+      if (blDelFull) {
+        const delId = blDelFull[1];
+        const delChan = blDelFull[2];
+        try {
+          await supabase_db.from("channel_blacklist").delete().eq("id", delId).eq("channel_id", delChan);
+          await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Eintrag gelöscht.", parse_mode: "HTML" });
+        } catch (e) {
+          await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
+        }
       }
       break;
     }
@@ -834,7 +913,7 @@ async function handlePendingInput(tg, supabase_db, userId, text, settings, msg) 
 }
 
 
-// ── Token-Budget prüfen und ggf. AI deaktivieren ──────────────────────────────
+// ── Credit-Budget prüfen und ggf. AI deaktivieren ──────────────────────────────
 async function _checkTokenBudget(supabase_db, channel, tg, token) {
   if (!channel?.token_limit || channel?.token_budget_exhausted) return;
   if ((channel.token_used || 0) >= channel.token_limit) {
@@ -848,10 +927,10 @@ async function _checkTokenBudget(supabase_db, channel, tg, token) {
     // Admin benachrichtigen
     if (channel.added_by_user_id && token) {
       await tg.call("sendMessage", { chat_id: String(channel.added_by_user_id),
-        text: `⚠️ <b>Token-Budget für "${channel.title}" erschöpft!</b>\n\n` +
+        text: `⚠️ <b>Credit-Budget für "${channel.title}" erschöpft!</b>\n\n` +
               `Verbraucht: ${channel.token_used.toLocaleString()} / ${channel.token_limit.toLocaleString()} Token\n\n` +
               `KI-Features wurden deaktiviert. Alle anderen Features laufen weiter.\n` +
-              `Token aufladen: @autoacts`,
+              `Credits aufladen: @autoacts`,
         parse_mode: "HTML" }).catch(() => {});
     }
     return true; // Budget exhausted
@@ -976,12 +1055,12 @@ async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch, lan
     return;
   }
 
-  // x2 Output-Token für Admin abrechnen (Summary-Premium)
+  // x2 Credits für Admin abrechnen (Summary-Premium)
   const rawOutTokens    = result.outTokens || 0;
   const billedTokens    = rawOutTokens * 2;       // Admin zahlt doppelt
   const actualUsd       = result.usd || 0;
 
-  // last_summary_at NUR setzen wenn echte Token verbraucht (≥10 = Erfolg)
+  // last_summary_at NUR setzen wenn echte Credits verbraucht (≥10 = Erfolg)
   if (rawOutTokens >= 10) {
     try {
       await supabase_db.from("bot_channels").update({
@@ -1022,13 +1101,13 @@ async function _runDailySummary(supabase_db, channelId, adminUserId, tg, ch, lan
         await supabase_db.from("bot_channels")
           .update({ ai_enabled: false, token_budget_exhausted: true }).eq("id", String(channelId));
       } catch (_) {}
-      note = "\n\n⚠️ Token-Budget überschritten. KI vorübergehend deaktiviert. Token aufladen: @autoacts";
+      note = "\n\n⚠️ Credit-Budget überschritten. KI vorübergehend deaktiviert. Credits aufladen: @autoacts";
     }
   } catch (_) {}
 
   // Zusammenfassung senden (erst nach Abrechnung → zeigt korrekten Verbrauch)
   await tg.call("sendMessage", { chat_id: String(adminUserId),
-    text: result.text + `\n\n<i>📊 Dir wurden ${billedTokens} Token berechnet.</i>` + note,
+    text: result.text + `\n\n<i>📊 Dir wurden ${billedTokens} Credits berechnet.</i>` + note,
     parse_mode: "HTML" });
 }
 
@@ -1193,6 +1272,34 @@ async function _runUserInfo(tg, supabase_db, requesterId, targetId, channelId, r
   if (sentMsg?.message_id && sendTo !== String(requesterId)) {
     await safelistService.trackBotMessage(sendTo, sentMsg.message_id, "temp", 5 * 60 * 1000);
   }
+}
+
+
+// ── Feedback-Erkennung ─────────────────────────────────────────────────────────
+function _detectFeedback(text) {
+  if (!text || text.length < 5 || text.length > 500) return null;
+
+  // Must contain @username
+  const usernameMatch = text.match(/@([\w\d_]+)/);
+  if (!usernameMatch) return null;
+  const username = usernameMatch[1];
+
+  const lower = text.toLowerCase();
+
+  // Positive indicators
+  const posKeywords = /\b(safe|seriös|serioes|vertrauenswürdig|vertrauenswuerdig|empfehlung|empfehle|recommend|legit|trusted|zuverlässig|zuverlaessig|top|super|gut|guter|sehr gut|bestätigt|bestaetigt|verifiziert|real|echt|ok|alles gut|hat geliefert|hat gezahlt|pünktlich|puenktlich)\b/i;
+
+  // Negative indicators
+  const negKeywords = /\b(scam|betrug|betrüger|betrueger|fake|nicht safe|unsicher|achtung|warning|vorsicht|schwindler|unzuverlässig|unzuverlaessig|nie wieder|schlechte erfahrung|kein empfehlung|nicht empfehlen|gestohlen|abgezockt|lügt|luegt|abzocke|falsch|unecht)\b/i;
+
+  const isPositive = posKeywords.test(lower);
+  const isNegative = negKeywords.test(lower);
+
+  // Need clear signal, not both
+  if (isPositive && !isNegative) return { username, type: "positive" };
+  if (isNegative && !isPositive) return { username, type: "negative" };
+
+  return null; // Ambiguous or no feedback
 }
 
 
@@ -1425,6 +1532,47 @@ router.post("/smalltalk", (req, res) => {
           const sendTarget = sendPriv ? String(qUserId) : targetChannelId;
 
           await sendSettingsMenu(tg, sendTarget, targetChannelId, ch);
+          return;
+        }
+
+        // Feedback confirmation callbacks (fb_confirm_pos/neg/no)
+        if (data.startsWith("fb_confirm_")) {
+          const parts3 = data.split("_");
+          // fb_confirm_{pos|neg|no}_{username}_{submitterId}_{channelId}
+          const fbType = parts3[2]; // pos | neg | no
+          if (fbType === "no") {
+            // Forward to channel admin
+            const qChanId = parts3[parts3.length - 1];
+            const origMsg = q.message?.text || "";
+            const { data: chAdmin } = await supabase.from("bot_channels")
+              .select("added_by_user_id").eq("id", String(qChanId)).maybeSingle().catch(() => ({ data: null }));
+            if (chAdmin?.added_by_user_id) {
+              await tg.call("sendMessage", { chat_id: String(chAdmin.added_by_user_id),
+                text: `❓ Feedback-Einordnung unklar\n\nNachricht:\n<i>${origMsg.substring(0,200)}</i>\n\nBitte manuell einordnen.`,
+                parse_mode: "HTML" });
+            }
+            await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
+            await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "Weitergeleitet." });
+            return;
+          }
+          // pos or neg
+          const feedbackType = fbType === "pos" ? "positive" : "negative";
+          const targetUsername = parts3[3];
+          const submitterId    = parts3[4];
+          const chanId3        = parts3[5];
+          try {
+            const fbResult = await safelistService.submitFeedback({
+              channelId: chanId3, submittedBy: submitterId, submittedByUsername: null,
+              targetUsername, feedbackType,
+              feedbackText: q.message?.reply_to_message?.text?.substring(0, 300) || ""
+            });
+            if (fbResult?.id) {
+              const ch3 = await getChannel(chanId3);
+              await safelistService.approveFeedback(fbResult.id, qUserId, ch3);
+            }
+          } catch (_) {}
+          await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
+          await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: feedbackType === "positive" ? "✅ Als Positiv gespeichert" : "⚠️ Als Negativ gespeichert" });
           return;
         }
 
@@ -1713,6 +1861,23 @@ router.post("/smalltalk", (req, res) => {
       // ── Kontext-Tracking: alle User-Nachrichten speichern ─────────────────
       if (text && from?.id && !text.startsWith("/")) {
         void safelistService.saveContextMsg(chatId, from.id, from.username, text);
+      }
+
+      // ── Intelligente Feedback-Erkennung ──────────────────────────────────
+      if (text && from?.id && !text.startsWith("/") && ch?.safelist_enabled && !from.is_bot) {
+        const fbDetect = _detectFeedback(text);
+        if (fbDetect) {
+          const confirmMsg = await tg.call("sendMessage", { chat_id: chatId,
+            text: `💬 Feedback erkannt für @${fbDetect.username}\n<i>${text.substring(0,100)}</i>\n\nEinordnung:`,
+            parse_mode: "HTML", reply_to_message_id: msg.message_id,
+            reply_markup: { inline_keyboard: [[
+              { text: "✅ Positiv", callback_data: `fb_confirm_pos_${fbDetect.username}_${from.id}_${chatId}` },
+              { text: "⚠️ Negativ", callback_data: `fb_confirm_neg_${fbDetect.username}_${from.id}_${chatId}` },
+              { text: "❌ Keins",   callback_data: `fb_confirm_no_${chatId}` }
+            ]]}
+          }).catch(() => null);
+          if (confirmMsg?.message_id) void safelistService.trackBotMessage(chatId, confirmMsg.message_id, "temp", 2*60*1000);
+        }
       }
 
       // ── Safelist/Scamlist: nur wenn aktiviert ────────────────────────────

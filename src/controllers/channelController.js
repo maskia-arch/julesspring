@@ -277,6 +277,42 @@ const channelController = {
     } catch (e) { next(e); }
   },
 
+  // ── Channel Packages ────────────────────────────────────────────────────────
+  async getPackages(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      const { data } = await supa.from("channel_packages").select("*").eq("is_active", true).order("sort_order");
+      res.json(data || []);
+    } catch (e) { next(e); }
+  },
+
+  async upsertPackage(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      const { id, name, credits, price_eur, description, sort_order } = req.body;
+      if (!name || !credits || !price_eur) return res.status(400).json({ error: "name, credits, price_eur erforderlich" });
+      const patch = { name, credits: parseInt(credits), price_eur: parseFloat(price_eur),
+                      description: description || null, sort_order: sort_order || 0, updated_at: new Date() };
+      let data;
+      if (id) {
+        const r = await supa.from("channel_packages").update(patch).eq("id", id).select().single();
+        data = r.data;
+      } else {
+        const r = await supa.from("channel_packages").insert([patch]).select().single();
+        data = r.data;
+      }
+      res.json(data);
+    } catch (e) { next(e); }
+  },
+
+  async deletePackage(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      await supa.from("channel_packages").update({ is_active: false }).eq("id", req.params.id);
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
   // ── UserInfo Pro Management ────────────────────────────────────────────────
   async getProUsers(req, res, next) {
     try {
