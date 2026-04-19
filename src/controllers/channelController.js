@@ -351,6 +351,65 @@ const channelController = {
     } catch (e) { next(e); }
   },
 
+  // ── Manual Channel Management ──────────────────────────────────────────────
+  async getChannelAdminList(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      const { data } = await supa.from("bot_channels")
+        .select("id, title, type, token_used, token_limit, credits_expire_at, ai_enabled, token_budget_exhausted")
+        .order("title");
+      res.json(data || []);
+    } catch (e) { next(e); }
+  },
+
+  async manualCreditPatch(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      const { channelId, credits, expiresAt, aiEnabled } = req.body;
+      if (!channelId) return res.status(400).json({ error: "channelId required" });
+
+      const patch = { updated_at: new Date() };
+      if (credits !== undefined)  patch.token_limit = parseInt(credits);
+      if (expiresAt !== undefined) patch.credits_expire_at = expiresAt || null;
+      if (aiEnabled !== undefined) {
+        patch.ai_enabled = !!aiEnabled;
+        if (aiEnabled) patch.token_budget_exhausted = false;
+      }
+      // Reset used counter if requested
+      if (req.body.resetUsed) patch.token_used = 0;
+
+      await supa.from("bot_channels").update(patch).eq("id", String(channelId));
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  async manualPackageBook(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      const { channelId, packageId } = req.body;
+      if (!channelId || !packageId) return res.status(400).json({ error: "channelId, packageId required" });
+
+      const { data: pkg } = await supa.from("channel_packages").select("*").eq("id", packageId).single();
+      if (!pkg) return res.status(404).json({ error: "Paket nicht gefunden" });
+
+      const days = pkg.duration_days || 30;
+      const expiresAt = new Date(Date.now() + days * 86400000).toISOString();
+
+      await supa.from("bot_channels").update({
+        token_limit: pkg.credits, token_used: 0, token_budget_exhausted: false,
+        ai_enabled: true, credits_expire_at: expiresAt, updated_at: new Date()
+      }).eq("id", String(channelId));
+
+      await supa.from("channel_purchases").insert([{
+        channel_id: String(channelId), package_id: pkg.id,
+        credits_added: pkg.credits, expires_at: expiresAt,
+        status: "manual", meta: { booked_by: "admin_dashboard" }
+      }]).catch(() => {});
+
+      res.json({ success: true, credits: pkg.credits, expiresAt });
+    } catch (e) { next(e); }
+  },
+
   // ── UserInfo Pro Management ────────────────────────────────────────────────
   async getProUsers(req, res, next) {
     try {

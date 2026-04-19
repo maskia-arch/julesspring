@@ -124,6 +124,11 @@ router.get('/packages',          channelCtrl.getPackages.bind(channelCtrl));
 router.post('/packages',         channelCtrl.upsertPackage.bind(channelCtrl));
 router.delete('/packages/:id',   channelCtrl.deletePackage.bind(channelCtrl));
 
+// Manual channel management
+router.get('/channels/admin-list',          channelCtrl.getChannelAdminList.bind(channelCtrl));
+router.post('/channels/manual-credits',     channelCtrl.manualCreditPatch.bind(channelCtrl));
+router.post('/channels/manual-package',     channelCtrl.manualPackageBook.bind(channelCtrl));
+
 // Refill routes
 router.get('/refills',         channelCtrl.getRefills.bind(channelCtrl));
 router.post('/refills',        channelCtrl.upsertRefill.bind(channelCtrl));

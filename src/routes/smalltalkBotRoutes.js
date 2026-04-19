@@ -1704,15 +1704,11 @@ router.post("/smalltalk", (req, res) => {
           const roChanId = roMatch[2];
           delete pendingInputs[String(qUserId)];
           const { data: refill } = await (async () => { try { return await supabase.from("channel_refills").select("*").eq("id", refillId).single(); } catch { return { data: null }; } })();
-          const { data: settingsRow } = await (async () => { try { return await supabase.from("settings").select("sellauth_api_key, sellauth_shop_id, sellauth_shop_url").single(); } catch { return { data: null }; } })();
           if (!refill) { await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Refill nicht gefunden." }); return; }
           await tg.call("sendMessage", { chat_id: String(qUserId), text: "⏳ Erstelle Checkout…" });
           try {
             const packageService = require("../services/packageService");
-            const result = await packageService.generateRefillUrl(
-              refill, roChanId,
-              settingsRow?.sellauth_shop_url, settingsRow?.sellauth_api_key, settingsRow?.sellauth_shop_id
-            );
+            const result = await packageService.generateRefillUrl(refill, roChanId);
             if (result.checkoutUrl) {
               await tg.call("sendMessage", { chat_id: String(qUserId),
                 text: `🔋 <b>${refill.name}</b>\n\n` +
@@ -1776,8 +1772,6 @@ router.post("/smalltalk", (req, res) => {
           delete pendingInputs[String(qUserId)];
 
           const { data: pkg } = await (async () => { try { return await supabase.from("channel_packages").select("*").eq("id", pkgId).single(); } catch { return { data: null }; } })();
-          const { data: settingsRow } = await (async () => { try { return await supabase.from("settings").select("sellauth_api_key, sellauth_shop_id, sellauth_shop_url").single(); } catch { return { data: null }; } })();
-
           if (!pkg) {
             await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Paket nicht gefunden." });
             return;
@@ -1787,10 +1781,7 @@ router.post("/smalltalk", (req, res) => {
 
           try {
             const packageService = require("../services/packageService");
-            const result = await packageService.generateCheckoutUrl(
-              pkg, chanId4,
-              settingsRow?.sellauth_shop_url, settingsRow?.sellauth_api_key, settingsRow?.sellauth_shop_id
-            );
+            const result = await packageService.generateCheckoutUrl(pkg, chanId4);
 
             if (result.checkoutUrl) {
               await tg.call("sendMessage", { chat_id: String(qUserId),

@@ -71,6 +71,7 @@ async function initDashboard() {
     setTimeout(function() { _safeRun(loadProUsers); }, 4200);
     setTimeout(function() { _safeRun(loadPackages); }, 4500);
     setTimeout(function() { _safeRun(loadRefills); }, 4800);
+    setTimeout(function() { _safeRun(loadChannelAdminList); }, 5100);
     setTimeout(function() { _safeRun(loadChannelCosts); }, 4000);
 
     // Intervalle
@@ -808,6 +809,112 @@ async function deleteRefill(id) {
     if (!confirm('Refill-Option löschen?')) return;
     try { await api.request('/refills/'+id, 'DELETE'); loadRefills(); }
     catch(e) { alert(e.message||String(e)); }
+}
+
+
+// ── Manual Channel Management ─────────────────────────────────────────────────
+
+var _allChannels = [];
+var _allPackages = [];
+
+async function loadChannelAdminList() {
+    try {
+        var [chs, pkgs] = await Promise.all([
+            api.request('/channels/admin-list'),
+            api.request('/packages')
+        ]);
+        _allChannels = chs || [];
+        _allPackages = pkgs || [];
+        renderChannelAdminList();
+    } catch(e) {
+        var el = document.getElementById('channel-admin-list');
+        if (el) el.innerHTML = '<p style="color:#ef4444;">'+esc(String(e))+'</p>';
+    }
+}
+
+function renderChannelAdminList() {
+    var el = document.getElementById('channel-admin-list');
+    if (!el) return;
+    if (!_allChannels.length) { el.innerHTML = '<p style="color:#555;font-size:0.85rem;">Keine Channels registriert.</p>'; return; }
+    el.innerHTML = _allChannels.map(function(ch) {
+        var used = ch.token_used || 0;
+        var lim  = ch.token_limit || 0;
+        var pct  = lim ? Math.min(100, Math.round(used/lim*100)) : 0;
+        var exp  = ch.credits_expire_at ? new Date(ch.credits_expire_at).toLocaleDateString('de-DE') : '–';
+        var barColor = pct > 85 ? '#ef4444' : pct > 60 ? '#f59e0b' : '#4ade80';
+        return '<div style="background:#111;border-radius:8px;padding:12px;margin-bottom:8px;">' +
+            '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">' +
+                '<div style="font-weight:700;">'+(ch.title||ch.id)+'</div>' +
+                '<div style="font-size:0.7rem;color:'+(ch.ai_enabled?'#4ade80':'#ef4444')+';">'+(ch.ai_enabled?'✅ Aktiv':'❌ Inaktiv')+'</div>' +
+            '</div>' +
+            '<div style="font-size:0.72rem;color:#64748b;margin-bottom:6px;">'+used.toLocaleString()+' / '+lim.toLocaleString()+' Credits ('+pct+'%) · Läuft bis: '+exp+'</div>' +
+            '<div style="height:4px;background:#1a1a1a;border-radius:2px;margin-bottom:8px;">' +
+                '<div style="height:4px;width:'+pct+'%;background:'+barColor+';border-radius:2px;"></div>' +
+            '</div>' +
+            '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+                '<button onclick="openChannelEdit('+JSON.stringify(ch.id)+')" style="background:#1e3a5f;color:#60a5fa;border:none;border-radius:4px;padding:4px 10px;font-size:0.75rem;cursor:pointer;">✏️ Credits/Laufzeit</button>' +
+                '<button onclick="openPackageBook('+JSON.stringify(ch.id)+')" style="background:#14532d;color:#4ade80;border:none;border-radius:4px;padding:4px 10px;font-size:0.75rem;cursor:pointer;">📦 Paket buchen</button>' +
+            '</div>' +
+        '</div>';
+    }).join('');
+}
+
+function openChannelEdit(channelId) {
+    document.getElementById('ch-edit-id').value = channelId;
+    var ch = _allChannels.find(function(c){ return c.id === channelId; });
+    if (ch) {
+        document.getElementById('ch-edit-credits').value = ch.token_limit || '';
+        var exp = ch.credits_expire_at ? ch.credits_expire_at.split('T')[0] : '';
+        document.getElementById('ch-edit-expires').value = exp;
+        document.getElementById('ch-edit-ai').checked = !!ch.ai_enabled;
+        document.getElementById('ch-edit-name').textContent = ch.title || channelId;
+    }
+    document.getElementById('ch-edit-form').style.display = 'block';
+    document.getElementById('ch-pkg-form').style.display = 'none';
+}
+
+function openPackageBook(channelId) {
+    document.getElementById('ch-pkg-id').value = channelId;
+    var ch = _allChannels.find(function(c){ return c.id === channelId; });
+    document.getElementById('ch-pkg-name').textContent = ch?.title || channelId;
+    // Populate package dropdown
+    var sel = document.getElementById('ch-pkg-select');
+    sel.innerHTML = _allPackages.map(function(p){
+        return '<option value="'+p.id+'">'+esc(p.name)+' — '+p.credits.toLocaleString()+' Credits · '+parseFloat(p.price_eur).toFixed(2)+'€</option>';
+    }).join('');
+    document.getElementById('ch-pkg-form').style.display = 'block';
+    document.getElementById('ch-edit-form').style.display = 'none';
+}
+
+async function saveChannelEdit() {
+    var channelId = document.getElementById('ch-edit-id').value;
+    var credits   = document.getElementById('ch-edit-credits').value;
+    var expires   = document.getElementById('ch-edit-expires').value;
+    var aiEnabled = document.getElementById('ch-edit-ai').checked;
+    var resetUsed = document.getElementById('ch-edit-reset').checked;
+    try {
+        await api.request('/channels/manual-credits', 'POST', {
+            channelId, credits: credits||undefined,
+            expiresAt: expires ? expires+'T00:00:00.000Z' : undefined,
+            aiEnabled, resetUsed
+        });
+        showToast('✅ Channel gespeichert!');
+        document.getElementById('ch-edit-form').style.display = 'none';
+        loadChannelAdminList();
+    } catch(e) { alert(e.message||String(e)); }
+}
+
+async function savePackageBook() {
+    var channelId = document.getElementById('ch-pkg-id').value;
+    var packageId = document.getElementById('ch-pkg-select').value;
+    if (!packageId) { alert('Bitte Paket wählen'); return; }
+    if (!confirm('Paket manuell (kostenfrei) für diesen Channel buchen?')) return;
+    try {
+        var result = await api.request('/channels/manual-package', 'POST', { channelId, packageId });
+        showToast('✅ Paket gebucht! '+result.credits.toLocaleString()+' Credits, läuft bis '+new Date(result.expiresAt).toLocaleDateString('de-DE'));
+        document.getElementById('ch-pkg-form').style.display = 'none';
+        loadChannelAdminList();
+    } catch(e) { alert(e.message||String(e)); }
 }
 
 async function loadPackages() {
