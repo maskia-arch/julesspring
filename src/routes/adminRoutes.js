@@ -124,12 +124,33 @@ router.get('/packages',          channelCtrl.getPackages.bind(channelCtrl));
 router.post('/packages',         channelCtrl.upsertPackage.bind(channelCtrl));
 router.delete('/packages/:id',   channelCtrl.deletePackage.bind(channelCtrl));
 
+// Refill routes
+router.get('/refills',         channelCtrl.getRefills.bind(channelCtrl));
+router.post('/refills',        channelCtrl.upsertRefill.bind(channelCtrl));
+router.delete('/refills/:id',  channelCtrl.deleteRefill.bind(channelCtrl));
+
 // Sellauth webhook for package purchases (no auth required - Sellauth signs it)
 router.post('/webhooks/sellauth-packages', async (req, res) => {
   res.sendStatus(200); // respond first
   try {
     const packageService = require("../services/packageService");
-    const result = await packageService.handleWebhook(req.body);
+    // Detect if this is a refill or a full package
+    const body = req.body;
+    const invoiceId = String(body?.data?.id || body?.id || "");
+    const customFields = body?.data?.custom_fields || body?.custom_fields || [];
+    const isRefill = customFields.some(f => f.name === "type" && f.value === "refill");
+    let result;
+    if (isRefill) {
+      const cfChannel = customFields.find(f => f.name === "channel_id");
+      const channelId = cfChannel?.value;
+      // Get credits from pending purchase
+      const { data: purch } = await require("../config/supabase").from("channel_purchases")
+        .select("credits_added").eq("sellauth_invoice_id", invoiceId).maybeSingle().catch(() => ({ data: null }));
+      const credits = purch?.credits_added || 0;
+      result = await packageService.handleRefillWebhook(invoiceId, channelId, credits);
+    } else {
+      result = await packageService.handleWebhook(body);
+    }
     if (result.handled && result.adminId) {
       // Notify admin via Telegram
       const supabase = require("../config/supabase");
@@ -140,11 +161,9 @@ router.post('/webhooks/sellauth-packages', async (req, res) => {
         const exp = result.expiresAt ? new Date(result.expiresAt).toLocaleDateString("de-DE") : "?";
         await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
           chat_id: String(result.adminId),
-          text: `✅ <b>Paket aktiviert!</b>\n\n` +
-                `Channel: ${result.title || result.channelId}\n` +
-                `Credits: ${(result.credits||0).toLocaleString()}\n` +
-                `Läuft bis: ${exp}\n\n` +
-                `KI-Features sind jetzt aktiv! 🚀`,
+          text: result.isRefill
+            ? `🔋 <b>Credits aufgeladen!</b>\n\nChannel: ${result.title || result.channelId}\nNachgeladene Credits: ${(result.credits||0).toLocaleString()}\n\nDie KI läuft weiter! 🚀`
+            : `✅ <b>Paket aktiviert!</b>\n\nChannel: ${result.title || result.channelId}\nCredits: ${(result.credits||0).toLocaleString()}\nLäuft bis: ${exp}\n\nKI-Features sind jetzt aktiv! 🚀`,
           parse_mode: "HTML"
         }, { timeout: 10000 }).catch(() => {});
       }

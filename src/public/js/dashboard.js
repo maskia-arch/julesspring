@@ -70,6 +70,7 @@ async function initDashboard() {
     setTimeout(function() { _safeRun(loadChannels); }, 3500);
     setTimeout(function() { _safeRun(loadProUsers); }, 4200);
     setTimeout(function() { _safeRun(loadPackages); }, 4500);
+    setTimeout(function() { _safeRun(loadRefills); }, 4800);
     setTimeout(function() { _safeRun(loadChannelCosts); }, 4000);
 
     // Intervalle
@@ -744,6 +745,70 @@ async function removeFromScamlistUI(channelId, userId) {
 
 
 // ── Channel Packages ──────────────────────────────────────────────────────────
+
+
+// ── Refill Options ────────────────────────────────────────────────────────────
+
+async function loadRefills() {
+    var el = document.getElementById('refills-list');
+    if (!el) return;
+    try {
+        var list = await api.request('/refills') || [];
+        if (!list.length) { el.innerHTML = '<p style="color:#555;font-size:0.85rem;">Keine Refill-Optionen. Anlegen für Credit-Nachladung.</p>'; return; }
+        el.innerHTML = list.map(function(r) {
+            return '<div style="background:#111;border-radius:6px;padding:10px;margin-bottom:6px;display:flex;align-items:center;gap:8px;">' +
+                '<div style="flex:1;">' +
+                    '<div style="font-weight:700;color:#4ade80;">🔋 ' + esc(r.name) + '</div>' +
+                    '<div style="font-size:0.75rem;color:#94a3b8;">+' + (r.credits||0).toLocaleString() + ' Credits · ' + parseFloat(r.price_eur||0).toFixed(2) + ' € · ' +
+                    (r.sellauth_variant_id ? 'Variant: ' + esc(r.sellauth_variant_id) : 'Kein Variant') + '</div>' +
+                    (r.description ? '<div style="font-size:0.7rem;color:#555;">' + esc(r.description) + '</div>' : '') +
+                '</div>' +
+                '<button onclick="editRefill(' + JSON.stringify(r).replace(/"/g,"&quot;") + ')" style="background:#1e3a5f;color:#60a5fa;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:0.75rem;">✏️</button>' +
+                '<button onclick="deleteRefill(\''+r.id+'\')" class="icon-btn">🗑</button>' +
+            '</div>';
+        }).join('');
+    } catch(e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(String(e))+'</p>'; }
+}
+
+function showRefillForm(r) {
+    var f = document.getElementById('refill-edit-form');
+    if (!f) return;
+    f.style.display = 'block';
+    document.getElementById('rf-id').value         = r?.id    || '';
+    document.getElementById('rf-name').value        = r?.name  || '';
+    document.getElementById('rf-price').value       = r?.price_eur || '';
+    document.getElementById('rf-credits').value     = r?.credits   || '';
+    document.getElementById('rf-desc').value        = r?.description || '';
+    document.getElementById('rf-product-id').value  = r?.sellauth_product_id || '';
+    document.getElementById('rf-variant-id').value  = r?.sellauth_variant_id || '';
+}
+
+function hideRefillForm() { var f=document.getElementById('refill-edit-form'); if(f) f.style.display='none'; }
+function editRefill(r) { showRefillForm(r); }
+
+async function saveRefill() {
+    var id      = document.getElementById('rf-id')?.value;
+    var name    = document.getElementById('rf-name')?.value?.trim();
+    var price   = document.getElementById('rf-price')?.value;
+    var credits = document.getElementById('rf-credits')?.value;
+    var desc    = document.getElementById('rf-desc')?.value?.trim();
+    var prodId  = document.getElementById('rf-product-id')?.value?.trim();
+    var varId   = document.getElementById('rf-variant-id')?.value?.trim();
+    if (!name || !price || !credits) { alert('Name, Preis und Credits sind Pflicht'); return; }
+    try {
+        await api.request('/refills', 'POST', { id: id||undefined, name, price_eur: price, credits,
+          description: desc||null, sellauth_product_id: prodId||null, sellauth_variant_id: varId||null });
+        showToast('✅ Refill gespeichert!');
+        hideRefillForm();
+        loadRefills();
+    } catch(e) { alert(e.message||String(e)); }
+}
+
+async function deleteRefill(id) {
+    if (!confirm('Refill-Option löschen?')) return;
+    try { await api.request('/refills/'+id, 'DELETE'); loadRefills(); }
+    catch(e) { alert(e.message||String(e)); }
+}
 
 async function loadPackages() {
     // Show webhook URL

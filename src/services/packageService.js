@@ -168,4 +168,92 @@ const packageService = {
   }
 };
 
+// ── Refill Checkout ──────────────────────────────────────────────────────────
+packageService.generateRefillUrl = async function(refill, channelId, shopUrl, apiKey, shopId) {
+  if (!refill.sellauth_product_id) {
+    throw new Error("Refill hat keine Sellauth Product-ID");
+  }
+  try {
+    const resp = await axios.post(
+      `https://api.sellauth.com/v1/shops/${shopId}/invoices`,
+      {
+        items: [{
+          product_id: refill.sellauth_product_id,
+          ...(refill.sellauth_variant_id ? { variant_id: refill.sellauth_variant_id } : {}),
+          quantity: 1
+        }],
+        custom_fields: [
+          { name: "channel_id", value: String(channelId) },
+          { name: "type", value: "refill" }
+        ]
+      },
+      {
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json", Accept: "application/json" },
+        timeout: 15000
+      }
+    );
+    const invoice = resp.data;
+    const cleanShop = (shopUrl || "").replace(/\/$/, "");
+    const checkoutUrl = invoice.unique_id ? `${cleanShop}/checkout/${invoice.unique_id}` : null;
+
+    // Log pending refill purchase
+    if (invoice?.id && channelId) {
+      const supabase = require("../config/supabase");
+      await supabase.from("channel_purchases").insert([{
+        channel_id:          String(channelId),
+        package_id:          null,
+        sellauth_invoice_id: String(invoice.id),
+        credits_added:       refill.credits,
+        expires_at:          new Date(Date.now() + 365 * 86400000).toISOString(), // refill doesn't extend expiry
+        status:              "pending",
+        meta:                { type: "refill", refill_name: refill.name, price_eur: refill.price_eur }
+      }]).catch(() => {});
+    }
+    return { checkoutUrl, invoiceId: invoice.id };
+  } catch (e) {
+    const cleanShop = (shopUrl || "").replace(/\/$/, "");
+    let url = `${cleanShop}/product/${refill.sellauth_product_id}`;
+    if (refill.sellauth_variant_id) url += `?variant=${refill.sellauth_variant_id}`;
+    if (channelId) url += `${url.includes("?") ? "&" : "?"}ref=${channelId}_refill`;
+    return { checkoutUrl: url, invoiceId: null };
+  }
+};
+
+// ── Webhook: handle refill vs package purchase ────────────────────────────────
+const _originalHandleWebhook = packageService.handleWebhook;
+packageService.handleWebhook = async function(payload) {
+  const result = await _originalHandleWebhook.call(this, payload);
+  return result;
+};
+
+// Refill-specific webhook (when meta.type==="refill", don't reset token_used, just ADD credits)
+packageService.handleRefillWebhook = async function(invoiceId, channelId, credits) {
+  const supabase = require("../config/supabase");
+  try {
+    const { data: ch } = await supabase.from("bot_channels")
+      .select("token_used, token_limit, added_by_user_id, title, credits_expire_at")
+      .eq("id", String(channelId)).maybeSingle();
+
+    if (!ch) return { handled: false };
+
+    // Refill: ADD credits to existing limit, keep expiry
+    const newLimit = (ch.token_limit || 0) + credits;
+    await supabase.from("bot_channels").update({
+      token_limit:        newLimit,
+      token_budget_exhausted: false,
+      ai_enabled:         true,
+      updated_at:         new Date()
+    }).eq("id", String(channelId));
+
+    await supabase.from("channel_purchases").update({ status: "completed" })
+      .eq("sellauth_invoice_id", String(invoiceId)).catch(() => {});
+
+    logger.info(`[Refill] ✅ Channel ${channelId}: +${credits} Credits (Total: ${newLimit})`);
+    return { handled: true, channelId, credits, adminId: ch.added_by_user_id, title: ch.title, isRefill: true };
+  } catch (e) {
+    logger.error("[Refill] Webhook-Fehler:", e.message);
+    return { handled: false };
+  }
+};
+
 module.exports = packageService;

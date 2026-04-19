@@ -1655,6 +1655,78 @@ router.post("/smalltalk", (req, res) => {
           return;
         }
 
+        // Refill: channel selected
+        if (data.startsWith("refill_chan_")) {
+          const refChanId = data.split("_")[2];
+          const pend = pendingInputs[String(qUserId)] || {};
+          const refills = pend.refills || [];
+          let showRefills = refills;
+          if (!showRefills.length) {
+            const { data: r } = await supabase.from("channel_refills").select("*").eq("is_active", true).order("sort_order");
+            showRefills = r || [];
+          }
+          // Get channel stats
+          const { data: chStat } = await supabase.from("bot_channels")
+            .select("token_used, token_limit, credits_expire_at, title").eq("id", refChanId).maybeSingle();
+          const used = chStat?.token_used || 0;
+          const lim  = chStat?.token_limit || 0;
+          const exp  = chStat?.credits_expire_at ? new Date(chStat.credits_expire_at).toLocaleDateString("de-DE") : "–";
+          const kb = showRefills.map(r => [{
+            text: `🔋 ${r.name} — ${r.credits.toLocaleString()} Credits · ${parseFloat(r.price_eur).toFixed(2)} €`,
+            callback_data: "refill_opt_" + r.id + "_" + refChanId
+          }]);
+          kb.push([{ text: "❌ Abbrechen", callback_data: "buy_cancel" }]);
+          await tg.call("editMessageText", {
+            chat_id: String(qUserId), message_id: q.message?.message_id,
+            text: `🔋 <b>Credits nachladen für "${chStat?.title||refChanId}"</b>\n\n` +
+                  `Verbraucht: ${used.toLocaleString()} / ${lim.toLocaleString()} Credits\n` +
+                  `Gültig bis: ${exp}\n\n` +
+                  `⚠️ Refill verlängert NICHT die Laufzeit, fügt nur Credits hinzu.`,
+            parse_mode: "HTML", reply_markup: { inline_keyboard: kb }
+          }).catch(async () => {
+            await tg.call("sendMessage", { chat_id: String(qUserId),
+              text: `🔋 Refill-Optionen für "${chStat?.title||refChanId}":`,
+              parse_mode: "HTML", reply_markup: { inline_keyboard: kb }
+            });
+          });
+          return;
+        }
+
+        // Refill option selected → generate checkout
+        if (data.startsWith("refill_opt_")) {
+          const roMatch = data.match(/^refill_opt_(\d+)_(-?\d+)$/);
+          if (!roMatch) return;
+          const refillId = parseInt(roMatch[1]);
+          const roChanId = roMatch[2];
+          delete pendingInputs[String(qUserId)];
+          const { data: refill } = await supabase.from("channel_refills").select("*").eq("id", refillId).single().catch(() => ({ data: null }));
+          const { data: settingsRow } = await supabase.from("settings").select("sellauth_api_key, sellauth_shop_id, sellauth_shop_url").single().catch(() => ({ data: null }));
+          if (!refill) { await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Refill nicht gefunden." }); return; }
+          await tg.call("sendMessage", { chat_id: String(qUserId), text: "⏳ Erstelle Checkout…" });
+          try {
+            const packageService = require("../services/packageService");
+            const result = await packageService.generateRefillUrl(
+              refill, roChanId,
+              settingsRow?.sellauth_shop_url, settingsRow?.sellauth_api_key, settingsRow?.sellauth_shop_id
+            );
+            if (result.checkoutUrl) {
+              await tg.call("sendMessage", { chat_id: String(qUserId),
+                text: `🔋 <b>${refill.name}</b>\n\n` +
+                      `+${refill.credits.toLocaleString()} Credits\n` +
+                      `💰 ${parseFloat(refill.price_eur).toFixed(2)} €\n\n` +
+                      `Credits werden sofort nach Zahlung gutgeschrieben.`,
+                parse_mode: "HTML",
+                reply_markup: { inline_keyboard: [[{ text: "💳 Jetzt nachladen", url: result.checkoutUrl }]] }
+              });
+            } else {
+              await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Checkout konnte nicht erstellt werden. Kontaktiere @autoacts." });
+            }
+          } catch (e2) {
+            await tg.call("sendMessage", { chat_id: String(qUserId), text: `❌ Fehler: ${e2.message}` });
+          }
+          return;
+        }
+
         // Package purchase: channel selected
         if (data.startsWith("buy_chan_")) {
           const buyChanId = data.split("_")[2];
@@ -1809,6 +1881,37 @@ router.post("/smalltalk", (req, res) => {
           await handlePendingInput(tg, supabase, from.id, "/cancel", settings, null);
           return;
         }
+        // /refill – credit top-up (no expiry extension)
+        if (/^\/refill(@\w+)?/i.test(text) || text.toLowerCase() === "credits nachladen") {
+          const { data: refills } = await supabase.from("channel_refills")
+            .select("*").eq("is_active", true).order("sort_order");
+          if (!refills?.length) {
+            await tg.send(chatId, "❌ Keine Refill-Optionen verfügbar. Kontaktiere @autoacts.");
+            return;
+          }
+          const { data: myChans } = await supabase.from("bot_channels")
+            .select("id, title, type, token_used, token_limit, credits_expire_at")
+            .eq("added_by_user_id", String(from.id));
+          if (!myChans?.length) {
+            await tg.send(chatId, "❌ Kein registrierter Channel gefunden.");
+            return;
+          }
+          pendingInputs[String(from.id)] = { action: "refill_select_channel", refills };
+          const chanKb = myChans.map(ch2 => {
+            const used = ch2.token_used || 0;
+            const lim  = ch2.token_limit || 0;
+            const pct  = lim ? Math.round(used/lim*100) : 0;
+            return [{ text: `${ch2.type==="channel"?"📢":"👥"} ${ch2.title||ch2.id} (${pct}% verbraucht)`,
+                callback_data: "refill_chan_" + ch2.id }];
+          });
+          const rm = await tg.call("sendMessage", { chat_id: chatId,
+            text: "🔋 <b>Credits nachladen</b>\n\nFür welchen Channel?",
+            parse_mode: "HTML", reply_markup: { inline_keyboard: chanKb }
+          });
+          if (rm?.message_id) void safelistService.trackBotMessage(chatId, rm.message_id, "temp", 10*60*1000);
+          return;
+        }
+
         // /buy – package purchase flow
         if (/^\/buy(@\w+)?/i.test(text) || text.toLowerCase() === "credits kaufen") {
           const { data: pkgs } = await supabase.from("channel_packages")
@@ -2293,7 +2396,18 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
           }
         }
       } else if (aiMatch && ch && ch.token_budget_exhausted) {
-        const sent = await tg.send(chatId, "⚠️ KI aktuell nicht verfügbar. Richte dich an den Channel-Admin für mehr Informationen.");
+        const sent = await tg.send(chatId, "⚠️ KI aktuell nicht verfügbar. Credits erschöpft – der Channel-Admin kann Credits nachladen.");
+        // PM to admin with refill offer
+        if (ch?.added_by_user_id && token) {
+          const { data: refills2 } = await supabase.from("channel_refills").select("id, name, credits, price_eur").eq("is_active", true).order("credits").limit(3).catch(() => ({ data: [] }));
+          if (refills2?.length) {
+            const rfKb = refills2.map(r => [{ text: `🔋 ${r.name} +${r.credits.toLocaleString()} Credits · ${parseFloat(r.price_eur).toFixed(2)} €`, callback_data: "refill_opt_" + r.id + "_" + chatId }]);
+            await tg.call("sendMessage", { chat_id: String(ch.added_by_user_id),
+              text: `⚠️ <b>Credits für "${ch.title||chatId}" erschöpft!</b>\n\nChannel-Mitglieder können die KI nicht mehr nutzen. Lade jetzt Credits nach:`,
+              parse_mode: "HTML", reply_markup: { inline_keyboard: rfKb }
+            }).catch(() => {});
+          }
+        }
         if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 15000);
       } else if (aiMatch && ch && !ch.ai_enabled) {
         const sent = await tg.send(chatId, "🔒 AI-Features sind für diesen Channel noch nicht freigeschaltet.\n\nWende dich an @autoacts für die Aktivierung.");

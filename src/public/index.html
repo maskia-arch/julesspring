@@ -545,6 +545,32 @@
                       </div>
                     </div>
                     <button onclick="showPackageForm()" class="btn btn-secondary btn-sm" style="width:100%;margin-top:10px;">➕ Paket anlegen</button>
+
+                  <div class="card" style="margin-top:12px;">
+                    <h3 class="card-title">🔋 Refill-Optionen</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">Credit-Nachladung ohne Laufzeitverlängerung. Nutzbar wenn Credits erschöpft sind.</p>
+                    <div id="refills-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                    <div id="refill-edit-form" style="margin-top:12px;display:none;">
+                      <input type="hidden" id="rf-id">
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="text"   id="rf-name"       placeholder="Name (z.B. 1.000 Credits)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="number" id="rf-price"      placeholder="Preis (€)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="number" id="rf-credits"    placeholder="Credits" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="text"   id="rf-desc"       placeholder="Beschreibung (optional)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="text" id="rf-product-id" placeholder="Sellauth Product-ID" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="text" id="rf-variant-id"  placeholder="Sellauth Variant-ID" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                      <div style="display:flex;gap:8px;">
+                        <button onclick="saveRefill()" class="btn btn-success btn-sm" style="flex:1;">💾 Speichern</button>
+                        <button onclick="hideRefillForm()" class="btn btn-secondary btn-sm">Abbrechen</button>
+                      </div>
+                    </div>
+                    <button onclick="showRefillForm()" class="btn btn-secondary btn-sm" style="width:100%;margin-top:10px;">➕ Refill anlegen</button>
+                  </div>
                   </div>
                 </div>
                 <div id="settings-tab-smalltalk-cfg" class="tab-pane">
