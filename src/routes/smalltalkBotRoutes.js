@@ -1685,7 +1685,8 @@ router.post("/smalltalk", (req, res) => {
             text: `🔋 <b>Credits nachladen für "${chStat?.title||refChanId}"</b>\n\n` +
                   `Verbraucht: ${used.toLocaleString()} / ${lim.toLocaleString()} Credits\n` +
                   `Gültig bis: ${exp}\n\n` +
-                  `⚠️ Refill verlängert NICHT die Laufzeit, fügt nur Credits hinzu.`,
+                  `ℹ️ Refills verlängern NICHT die Laufzeit.\n` +
+                  `💎 Ungenutzte Refills laufen NIE ab und dienen als Notfallreserve.`,
             parse_mode: "HTML", reply_markup: { inline_keyboard: kb }
           }).catch(async () => {
             await tg.call("sendMessage", { chat_id: String(qUserId),
@@ -1787,7 +1788,8 @@ router.post("/smalltalk", (req, res) => {
               await tg.call("sendMessage", { chat_id: String(qUserId),
                 text: `✅ <b>${pkg.name} — ${pkg.credits.toLocaleString()} Credits</b>\n\n` +
                       `💰 Preis: ${parseFloat(pkg.price_eur).toFixed(2)} €\n` +
-                      `📅 Laufzeit: ${pkg.duration_days || 30} Tage\n\n` +
+                      `📅 Laufzeit: ${pkg.duration_days || 30} Tage <i>(ab Kaufdatum)</i>\n` +
+                      `ℹ️ Während dein Paket läuft, kannst du Refills als Notfall-Vorrat kaufen.\n\n` +
                       `Zum Bezahlen tippst du auf den Button:`,
                 parse_mode: "HTML",
                 reply_markup: { inline_keyboard: [[
@@ -1895,18 +1897,10 @@ router.post("/smalltalk", (req, res) => {
             await tg.send(chatId, "❌ Kein registrierter Channel gefunden.");
             return;
           }
-          // Only channels with active (non-expired) subscription can refill
-          const now = new Date();
-          const eligibleChans = myChans.filter(ch2 => {
-            if (!ch2.credits_expire_at) return false; // no subscription purchased yet
-            return new Date(ch2.credits_expire_at) > now;
-          });
-          if (!eligibleChans.length) {
-            await tg.send(chatId, "❌ Kein aktives Abonnement gefunden.\n\nRefill ist nur für Channel mit aktiver Laufzeit verfügbar.\n\nNutze /buy um ein Paket zu kaufen.");
-            return;
-          }
+          // v1.4.47-2: Refills can be stockpiled as emergency reserve even without active package.
+          // Untouched refills never expire; they activate only once consumed.
           pendingInputs[String(from.id)] = { action: "refill_select_channel", refills };
-          const chanKb = eligibleChans.map(ch2 => {
+          const chanKb = myChans.map(ch2 => {
             const used = ch2.token_used || 0;
             const lim  = ch2.token_limit || 0;
             const pct  = lim ? Math.round(used/lim*100) : 0;

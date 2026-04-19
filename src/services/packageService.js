@@ -109,6 +109,20 @@ const packageService = {
   async generateCheckoutUrl(pkg, channelId) {
     if (!pkg.sellauth_variant_id) throw new Error(`Paket "${pkg.name}": Variant-ID fehlt.`);
     if (!pkg.sellauth_product_id) throw new Error(`Paket "${pkg.name}": Product-ID fehlt.`);
+
+    // v1.4.47: Block if an active package already exists for this channel
+    try {
+      const { data: active } = await supabase.rpc("get_active_package", { p_channel_id: String(channelId) });
+      if (active && active.length > 0) {
+        const a = active[0];
+        const expStr = a.expires_at ? new Date(a.expires_at).toLocaleDateString("de-DE") : "noch nicht aktiviert";
+        throw new Error(`Dieser Channel hat bereits ein aktives Paket (läuft ${expStr}). Für mehr Credits kannst du stattdessen ein Refill-Paket kaufen.`);
+      }
+    } catch (e) {
+      if (e.message?.startsWith("Dieser Channel")) throw e;
+      // RPC not available → continue (migrate before deploy)
+    }
+
     const creds = await _loadCreds();
     const result = await _createCheckoutSession(
       pkg.sellauth_product_id, pkg.sellauth_variant_id, channelId, creds
@@ -119,8 +133,10 @@ const packageService = {
         package_id:          pkg.id,
         sellauth_invoice_id: result.invoiceId,
         credits_added:       pkg.credits,
+        duration_days:       pkg.duration_days || 30,
         expires_at:          new Date(Date.now() + (pkg.duration_days || 30) * 86400000).toISOString(),
         status:              "pending",
+        kind:                "package",
         meta:                { package_name: pkg.name, price_eur: pkg.price_eur }
       }]);
     } catch (e) { logger.warn("[Packages] purchase log:", e.message); }
@@ -140,8 +156,10 @@ const packageService = {
         package_id:          null,
         sellauth_invoice_id: result.invoiceId,
         credits_added:       refill.credits,
+        duration_days:       30,           // refill shares package's expiry, but set a sane default
         expires_at:          new Date(Date.now() + 365 * 86400000).toISOString(),
         status:              "pending",
+        kind:                "refill",
         meta:                { type: "refill", refill_name: refill.name, price_eur: refill.price_eur }
       }]);
     } catch (e) { logger.warn("[Packages] refill log:", e.message); }
@@ -211,31 +229,56 @@ const packageService = {
     if (!ch) { logger.warn("[Packages] Channel not found:", channelId); return { handled: false }; }
 
     try {
-      let finalExpiresAt = null;
-      if (isRefill) {
-        const newLimit = (ch.token_limit || 0) + credits;
-        await supabase.from("bot_channels").update({
-          token_limit: newLimit, token_budget_exhausted: false,
-          ai_enabled: true, updated_at: new Date()
-        }).eq("id", String(channelId));
-        finalExpiresAt = ch.credits_expire_at;
-        logger.info(`[Packages] Refill ✅ +${credits} → ${newLimit}`);
+      // Determine kind: prefer explicit column, fallback to meta.type / package_id
+      const purchaseKind = purchase?.kind
+        || (purchase?.meta?.type === "refill" ? "refill" : "package");
+      const days = purchase?.channel_packages?.duration_days || purchase?.duration_days || 30;
+
+      const update = {
+        status:        "completed",
+        kind:          purchaseKind,
+        duration_days: days,
+        credits_used:  0,
+        forfeited:     false
+      };
+
+      if (purchaseKind === "package") {
+        // Package: 30-day countdown starts IMMEDIATELY on purchase
+        update.activated_at = new Date().toISOString();
       } else {
-        const days      = purchase?.channel_packages?.duration_days || 30;
-        const expiresAt = new Date(Date.now() + days * 86400000).toISOString();
-        await supabase.from("bot_channels").update({
-          token_limit: credits, token_used: 0,
-          token_budget_exhausted: false, ai_enabled: true,
-          credits_expire_at: expiresAt, updated_at: new Date()
-        }).eq("id", String(channelId));
-        finalExpiresAt = expiresAt;
-        logger.info(`[Packages] Package ✅ ${credits} credits until ${expiresAt}`);
+        // Refill: lazy activation — starts only on first credit consumption
+        update.activated_at = null;
       }
+
       if (purchase?.id) {
-        try { await supabase.from("channel_purchases").update({ status: "completed" }).eq("id", purchase.id); }
-        catch (_) {}
+        try {
+          await supabase.from("channel_purchases").update(update).eq("id", purchase.id);
+        } catch (e) { logger.warn("[Packages] purchase status update:", e.message); }
       }
-      return { handled: true, channelId, credits, isRefill, adminId: ch.added_by_user_id, title: ch.title, expiresAt: finalExpiresAt };
+
+      // Recompute aggregates into bot_channels
+      try {
+        await supabase.rpc("recompute_channel_budget", { p_channel_id: String(channelId) });
+      } catch (e) { logger.warn("[Packages] recompute_channel_budget:", e.message); }
+
+      // Read refreshed channel for admin notification
+      let finalExpiresAt = null;
+      try {
+        const { data: fresh } = await supabase.from("bot_channels")
+          .select("credits_expire_at, token_limit, token_used").eq("id", String(channelId)).maybeSingle();
+        finalExpiresAt = fresh?.credits_expire_at || null;
+        logger.info(`[Packages] ${purchaseKind === "refill" ? "Refill" : "Package"} ✅ ${credits} credits added to channel ${channelId} (limit:${fresh?.token_limit} used:${fresh?.token_used})`);
+      } catch (_) {}
+
+      return {
+        handled:   true,
+        channelId,
+        credits,
+        isRefill:  purchaseKind === "refill",
+        adminId:   ch.added_by_user_id,
+        title:     ch.title,
+        expiresAt: finalExpiresAt
+      };
     } catch (e) {
       logger.error("[Packages] Booking error:", e.message);
       return { handled: false };

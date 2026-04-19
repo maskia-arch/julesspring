@@ -392,21 +392,42 @@ const channelController = {
       const { data: pkg } = await supa.from("channel_packages").select("*").eq("id", packageId).single();
       if (!pkg) return res.status(404).json({ error: "Paket nicht gefunden" });
 
+      // v1.4.47: Block if there's already an active package
+      try {
+        const { data: active } = await supa.rpc("get_active_package", { p_channel_id: String(channelId) });
+        if (active && active.length > 0) {
+          const a = active[0];
+          const expStr = a.expires_at ? new Date(a.expires_at).toLocaleDateString("de-DE") : "–";
+          return res.status(409).json({ error: `Channel hat bereits ein aktives Paket (läuft ${expStr}). Warte auf Ablauf oder verwende ein Refill.` });
+        }
+      } catch (_) {}
+
       const days = pkg.duration_days || 30;
+      const nowIso = new Date().toISOString();
       const expiresAt = new Date(Date.now() + days * 86400000).toISOString();
 
-      await supa.from("bot_channels").update({
-        token_limit: pkg.credits, token_used: 0, token_budget_exhausted: false,
-        ai_enabled: true, credits_expire_at: expiresAt, updated_at: new Date()
-      }).eq("id", String(channelId));
+      // Insert completed package row (admin manual, 30-day countdown starts now)
+      try {
+        await supa.from("channel_purchases").insert([{
+          channel_id:    String(channelId),
+          package_id:    pkg.id,
+          credits_added: pkg.credits,
+          credits_used:  0,
+          duration_days: days,
+          activated_at:  nowIso,
+          forfeited:     false,
+          status:        "completed",
+          kind:          "package",
+          meta:          { booked_by: "admin_dashboard", package_name: pkg.name }
+        }]);
+      } catch (e) { return next(e); }
 
-      await supa.from("channel_purchases").insert([{
-        channel_id: String(channelId), package_id: pkg.id,
-        credits_added: pkg.credits, expires_at: expiresAt,
-        status: "manual", meta: { booked_by: "admin_dashboard" }
-      }]).catch(() => {});
+      // Recompute aggregates into bot_channels
+      try {
+        await supa.rpc("recompute_channel_budget", { p_channel_id: String(channelId) });
+      } catch (_) {}
 
-      res.json({ success: true, credits: pkg.credits, expiresAt });
+      res.json({ success: true, credits: pkg.credits, expiresAt, durationDays: days });
     } catch (e) { next(e); }
   },
 

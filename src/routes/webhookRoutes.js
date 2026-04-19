@@ -181,13 +181,11 @@ async function handleOrderLookup(chatId, invoiceId, telegramService, supabase) {
 // Sellauth calls this when a payment is completed for a channel package/refill
 // We: 1) respond immediately with 200 + deliverable text, 2) activate package async
 router.post('/sellauth-packages', async (req, res) => {
-  // Respond IMMEDIATELY with a "deliverable" text so Sellauth can display it to the customer
-  // This is what Sellauth shows as the "product" the customer bought
-  res.status(200).json({
-    success: true,
-    message: 'Dein Paket wurde automatisch aktiviert! Die Credits stehen sofort zur Verfügung. 🚀',
-    deliverable: 'Dein Paket wurde automatisch aktiviert! Die Credits stehen sofort zur Verfügung. 🚀'
-  });
+  // Sellauth displays the response body as the "deliverable" to the customer.
+  // Plain text (not JSON) renders cleanly in the order confirmation page.
+  res.status(200)
+     .set('Content-Type', 'text/plain; charset=utf-8')
+     .send('Dein Paket wurde automatisch aktiviert! Die Credits stehen ab sofort für deinen Channel zur Verfügung und laufen 30 Tage ab erster Nutzung. Viel Erfolg! 🚀');
 
   // Process the actual activation in background
   setImmediate(async () => {

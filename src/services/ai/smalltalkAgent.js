@@ -161,25 +161,45 @@ const smalltalkAgent = {
   },
 
   async _trackUsage(chatId, tokens, usd) {
-    // Sofort zählen – kein void (fire & forget kann Race Conditions erzeugen)
+    const logger = require("../../utils/logger");
+    // v1.4.47: Consume credits from oldest active package (FIFO).
+    // Starts 30-day lifetime on first consumption (activated_at set by RPC).
     try {
-      const result = await supabase.rpc("increment_channel_usage", { p_id: String(chatId), p_tokens: tokens, p_usd: usd });
-      if (result.error) throw result.error;
-    } catch (rpcErr) {
-      // Fallback: direktes atomares Update
+      const { data: result, error } = await supabase.rpc("consume_channel_credits", {
+        p_channel_id: String(chatId),
+        p_tokens:     tokens
+      });
+      if (error) throw error;
+      // Always also track USD spend directly
       try {
         const { data: ch } = await supabase.from("bot_channels")
-          .select("token_used, usd_spent").eq("id", String(chatId)).maybeSingle();
+          .select("usd_spent").eq("id", String(chatId)).maybeSingle();
         if (ch) {
           await supabase.from("bot_channels").update({
-            token_used:     (ch.token_used || 0) + tokens,
-            usd_spent:      parseFloat(((ch.usd_spent || 0) + usd).toFixed(6)),
-            last_active_at: new Date()
+            usd_spent: parseFloat(((ch.usd_spent || 0) + usd).toFixed(6))
           }).eq("id", String(chatId));
         }
-      } catch (fallbackErr) {
-        require("../../utils/logger").warn("[Smalltalk] Token-Tracking fehlgeschlagen:", fallbackErr.message);
+      } catch (_) {}
+      if (result?.remaining_unpaid > 0) {
+        logger.warn(`[Smalltalk] Channel ${chatId} consumed ${result.consumed}/${tokens} tokens (${result.remaining_unpaid} over limit)`);
       }
+      return;
+    } catch (rpcErr) {
+      logger.warn("[Smalltalk] consume_channel_credits RPC failed, falling back:", rpcErr.message);
+    }
+    // Fallback: legacy direct update (pre-v33 schema)
+    try {
+      const { data: ch } = await supabase.from("bot_channels")
+        .select("token_used, usd_spent").eq("id", String(chatId)).maybeSingle();
+      if (ch) {
+        await supabase.from("bot_channels").update({
+          token_used:     (ch.token_used || 0) + tokens,
+          usd_spent:      parseFloat(((ch.usd_spent || 0) + usd).toFixed(6)),
+          last_active_at: new Date()
+        }).eq("id", String(chatId));
+      }
+    } catch (fallbackErr) {
+      logger.warn("[Smalltalk] Token-Tracking fehlgeschlagen:", fallbackErr.message);
     }
   },
 

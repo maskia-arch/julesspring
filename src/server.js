@@ -55,6 +55,22 @@ const server = app.listen(port, () => {
       }, 60000);
       logger.info('[Server] Smalltalk scheduled messages: aktiv');
     } catch(e) { logger.warn('[Server] Smalltalk Scheduler:', e.message); }
+
+    // Package Expiry: hourly sweep — marks expired packages as forfeited
+    // and recomputes bot_channels budgets.  v1.4.47
+    try {
+      const supabase = require('./config/supabase');
+      const runSweep = async () => {
+        try {
+          const { data, error } = await supabase.rpc('expire_channel_packages');
+          if (error) throw error;
+          if (data && data > 0) logger.info(`[PackageExpiry] ${data} channel(s) had packages expired`);
+        } catch (e) { logger.warn('[PackageExpiry] sweep failed:', e.message); }
+      };
+      setTimeout(runSweep, 30000);            // first run 30s after boot
+      setInterval(runSweep, 60 * 60 * 1000);  // hourly
+      logger.info('[Server] Package expiry sweeper: aktiv');
+    } catch(e) { logger.warn('[Server] Package Expiry Scheduler:', e.message); }
   }, 5000);
 });
 
