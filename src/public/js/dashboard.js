@@ -751,8 +751,10 @@ async function removeFromScamlistUI(channelId, userId) {
 // ── Refill Options ────────────────────────────────────────────────────────────
 
 async function loadRefills() {
-    if (typeof loadRefillsPkg === 'function') loadRefillsPkg();
-    var el = document.getElementById('refills-list-REMOVED');
+    // v1.4.43: redirect to Pakete tab
+    if (typeof loadRefillsPkg === 'function') { try { await loadRefillsPkg(); } catch(_){} }
+    return;
+    var el = document.getElementById('refills-list');
     if (!el) return;
     try {
         var list = await api.request('/refills') || [];
@@ -772,7 +774,7 @@ async function loadRefills() {
     } catch(e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(String(e))+'</p>'; }
 }
 
-function showRefillForm(r) { if(typeof showRefillFormPkg==='function') showRefillFormPkg(r); return;
+function showRefillForm(r) {
     var f = document.getElementById('refill-edit-form');
     if (!f) return;
     f.style.display = 'block';
@@ -785,8 +787,8 @@ function showRefillForm(r) { if(typeof showRefillFormPkg==='function') showRefil
     document.getElementById('rf-variant-id').value  = r?.sellauth_variant_id || '';
 }
 
-function hideRefillForm() { hideRefillFormPkg(); }
-function editRefill(r) { editRefillPkg(r); }
+function hideRefillForm() { var f=document.getElementById('refill-edit-form'); if(f) f.style.display='none'; }
+function editRefill(r) { showRefillForm(r); }
 
 async function saveRefill() {
     var id      = document.getElementById('rf-id')?.value;
@@ -919,10 +921,12 @@ async function savePackageBook() {
 }
 
 async function loadPackages() {
-    // Redirect to Pakete tab
-    if (typeof loadPackagesPkg === 'function') loadPackagesPkg();
+    // v1.4.43: redirect to Pakete tab
+    if (typeof loadPackagesPkg === 'function') { try { await loadPackagesPkg(); } catch(_){} }
+    return;
+    // Legacy code below (unreachable)
     // Show webhook URL
-    var whEl = document.getElementById('webhook-url-display2');
+    var whEl = document.getElementById('webhook-url-display');
     if (whEl) {
         var appUrl = window.location.origin;
         whEl.textContent = appUrl + '/api/webhooks/sellauth-packages';
@@ -946,7 +950,7 @@ async function loadPackages() {
     } catch(e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(String(e))+'</p>'; }
 }
 
-function showPackageForm(pkg) { if(typeof showPackageFormPkg==='function') showPackageFormPkg(pkg); return;
+function showPackageForm(pkg) {
     var f = document.getElementById('package-edit-form');
     if (!f) return;
     f.style.display = 'block';
@@ -965,7 +969,7 @@ function hidePackageForm() {
     if (f) f.style.display = 'none';
 }
 
-function editPackage(pkg) { editPackagePkg(pkg); }
+function editPackage(pkg) { showPackageForm(pkg); }
 
 async function savePackage() {
     var id      = document.getElementById('pkg-id')?.value;

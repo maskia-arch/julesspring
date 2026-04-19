@@ -1,4 +1,505 @@
-<div id="settings-tab-userinfo-cfg" class="tab-pane">
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>AI Admin</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0d0d0d">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-overlay">
+    <div class="login-box">
+        <div style="font-size:2.2rem;margin-bottom:0.4rem;">🤖</div>
+        <h2>AI Assistant Admin</h2>
+        <input type="text"     id="username" placeholder="Benutzername" autocomplete="username"     onkeydown="if(event.key==='Enter')handleLogin()">
+        <input type="password" id="password" placeholder="Passwort"     autocomplete="current-password" onkeydown="if(event.key==='Enter')handleLogin()">
+        <button onclick="handleLogin()">Anmelden</button>
+        <p id="login-error" style="color:#ff6b6b;font-size:0.85rem;margin-top:8px;display:none;"></p>
+    </div>
+</div>
+
+<!-- APP -->
+<div id="admin-app">
+
+    <!-- TOP NAVBAR -->
+    <nav class="navbar">
+        <div class="nav-logo">AI <span id="version-tag" class="version-tag"></span></div>
+        <button onclick="hardRefresh()" title="Daten neu laden" style="background:none;border:1px solid #2e2e2e;color:#94a3b8;padding:5px 9px;border-radius:7px;cursor:pointer;font-size:0.85rem;white-space:nowrap;margin-right:4px;" id="refresh-btn">↺</button>
+        <div class="nav-links">
+            <button class="nav-btn" onclick="showSection('chats')"     id="nav-chats">💬 Chats <span id="learning-badge" class="badge" style="display:none;">0</span></button>
+            <button class="nav-btn" onclick="showSection('traffic')"   id="nav-traffic">📊 Traffic</button>
+            <button class="nav-btn" onclick="showSection('learning')"  id="nav-learning">🧠 Lernen</button>
+            <button class="nav-btn" onclick="showSection('knowledge')" id="nav-knowledge">📚 Wissen</button>
+            <button class="nav-btn" onclick="showSection('sellauth')"  id="nav-sellauth">🛒 Sellauth</button>
+            <button class="nav-btn" onclick="showSection('security')"  id="nav-security">🛡</button>
+            <button class="nav-btn" onclick="showSection('settings')"  id="nav-settings">⚙️</button>
+            <button class="nav-btn nav-logout" onclick="handleLogout()">↩</button>
+        </div>
+    </nav>
+
+    <!-- STATS BAR -->
+    <div class="stats-bar">
+        <div class="stat-card"><div class="stat-label">Chats</div><div class="stat-val" id="s-chats">–</div></div>
+        <div class="stat-card"><div class="stat-label">Manuell</div><div class="stat-val" id="s-manual">–</div></div>
+        <div class="stat-card"><div class="stat-label">Wissen</div><div class="stat-val" id="s-knowledge">–</div></div>
+        <div class="stat-card"><div class="stat-label">Kosten</div><div class="stat-val" id="s-cost">–</div><div class="stat-sub" id="s-tokens"></div></div>
+    </div>
+
+    <!-- CONTENT -->
+    <div id="app-content">
+
+        <!-- ══ CHATS ══════════════════════════════════════════════════════ -->
+        <section id="chats-section" class="app-section chat-section">
+            <div class="chat-list-panel">
+                <div class="panel-header">
+                    <span class="panel-title">Chats</span>
+                    <button onclick="loadChats()" class="icon-btn" title="Aktualisieren">↻</button>
+                </div>
+                <div class="chat-search-wrap">
+                    <input type="text" id="chat-search" class="chat-search" placeholder="🔍 Suchen…" oninput="filterChats(this.value)" autocomplete="off">
+                </div>
+                <div id="chat-list" class="chat-list-scroll"></div>
+            </div>
+            <div class="chat-window" id="chat-window">
+                <div class="chat-placeholder">
+                    <span style="font-size:2.5rem;">💬</span>
+                    <p>Chat auswählen</p>
+                </div>
+            </div>
+        </section>
+
+        <!-- ══ LEARNING ═══════════════════════════════════════════════════ -->
+        <!-- ══ TRAFFIC ══════════════════════════════════════════════════════════════ -->
+        <section id="traffic-section" class="app-section">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+                <h2 class="section-title" style="margin:0;">📊 Website Traffic</h2>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button onclick="loadTraffic('24h')"   id="traffic-btn-24h"   class="btn btn-secondary btn-sm">24h</button>
+                    <button onclick="loadTraffic('week')"  id="traffic-btn-week"  class="btn btn-primary btn-sm">7 Tage</button>
+                    <button onclick="loadTraffic('month')" id="traffic-btn-month" class="btn btn-secondary btn-sm">30 Tage</button>
+                </div>
+            </div>
+
+            <!-- Totals -->
+            <div class="stats-grid" id="traffic-totals" style="margin-bottom:16px;">
+                <div class="stat-card"><div class="stat-label">BESUCHER</div><div class="stat-value" id="t-visitors">–</div></div>
+                <div class="stat-card"><div class="stat-label">SEITENAUFRUFE</div><div class="stat-value" id="t-pageviews">–</div></div>
+                <div class="stat-card"><div class="stat-label">WIDGET CHATS</div><div class="stat-value" id="t-wchats">–</div></div>
+                <div class="stat-card"><div class="stat-label">TELEGRAM CHATS</div><div class="stat-value" id="t-tchats">–</div></div>
+            </div>
+
+            <!-- Live Besucher -->
+            <div class="card" style="border-color:#1e3a5f;margin-bottom:12px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                    <h3 class="card-title" style="margin:0;">🟢 Live Besucher</h3>
+                    <span id="live-count" style="background:#1e3a5f;color:#60a5fa;padding:3px 10px;border-radius:12px;font-size:0.8rem;font-weight:700;">0 online</span>
+                </div>
+                <div id="live-visitors-list" style="max-height:200px;overflow-y:auto;">
+                    <p style="color:#555;font-size:0.85rem;">Lädt...</p>
+                </div>
+            </div>
+
+            <!-- Aktivitäts-Feed -->
+            <div class="card" style="margin-bottom:12px;">
+                <h3 class="card-title">📋 Letzte Aktivitäten</h3>
+                <div id="activity-feed" style="max-height:180px;overflow-y:auto;font-size:0.8rem;color:#94a3b8;">
+                    <p style="color:#555;">Lädt...</p>
+                </div>
+            </div>
+
+            <!-- Chart -->
+            <div class="card">
+                <h3 class="card-title" id="traffic-chart-title">Besucher & Chats – 7 Tage</h3>
+                <canvas id="traffic-chart" height="200" style="width:100%;"></canvas>
+                <div id="traffic-legend" style="display:flex;gap:16px;margin-top:10px;font-size:0.78rem;color:#94a3b8;flex-wrap:wrap;"></div>
+            </div>
+        </section>
+
+        <section id="learning-section" class="app-section">
+            <h2 class="section-title">🧠 Learning Center</h2>
+            <p class="section-desc">Fragen die die KI nicht beantworten konnte. Deine Antworten fließen direkt in die Wissensdatenbank — auch bei leerem Wissenskontext wird hier automatisch ein Eintrag erstellt.</p>
+            <div id="learning-list"></div>
+        </section>
+
+        <!-- ══ WISSEN ══════════════════════════════════════════════════════ -->
+        <section id="knowledge-section" class="app-section">
+            <h2 class="section-title">📚 Wissensdatenbank</h2>
+            <div class="tab-bar">
+                <button class="tab-btn active" onclick="showKbTab('browse',this)">📋 Einträge</button>
+                <button class="tab-btn" onclick="showKbTab('manual',this)">✍️ Manuell</button>
+                <button class="tab-btn" onclick="showKbTab('scraper',this)">🌐 Scraper</button>
+            </div>
+
+            <div id="kb-tab-browse" class="tab-pane active">
+                <div class="kb-layout">
+                    <div class="kb-sidebar">
+                        <div class="kb-sidebar-header">
+                            Kategorien
+                            <button onclick="toggleAddCat()" class="icon-btn" style="width:28px;height:28px;">+</button>
+                        </div>
+                        <div id="add-cat-form" class="add-cat-form" style="display:none;">
+                            <input type="text" id="new-cat-name" placeholder="Name" style="margin-bottom:6px;">
+                            <div style="display:flex;gap:6px;">
+                                <input type="color" id="new-cat-color" value="#4a9eff" style="width:40px;padding:3px;background:#1a1a1a;border:1px solid #444;border-radius:5px;">
+                                <input type="text" id="new-cat-icon" placeholder="🏷" style="width:50px;text-align:center;">
+                                <button onclick="addCategory()" class="btn btn-primary btn-sm" style="flex:1;">OK</button>
+                            </div>
+                        </div>
+                        <div id="kb-cat-list">
+                            <div class="kb-cat-item active" onclick="filterKbByCategory(null)" id="kb-cat-all">
+                                <span>🗂</span><span style="flex:1;">Alle</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="kb-main" id="kb-entries-list"></div>
+                </div>
+            </div>
+
+            <div id="kb-tab-manual" class="tab-pane">
+                <div class="card">
+                    <div class="form-group">
+                        <label>Kategorie</label>
+                        <select id="manual-cat-id" class="form-control"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Titel <span class="label-hint">(optional)</span></label>
+                        <input type="text" id="manual-kb-title" placeholder="z.B. eSIM Deutschland Tarife">
+                    </div>
+                    <div class="form-group">
+                        <label>Inhalt</label>
+                        <textarea id="manual-kb-content" rows="9"
+                            placeholder="Füge hier relevante Infos ein.&#10;&#10;Beispiel für einen Tarif:&#10;Produkt: eSIM Deutschland 10GB&#10;Preis: 12.99€&#10;Geschwindigkeit: bis 50 Mbit/s&#10;FUP Drosselung nach: 10GB auf 1 Mbit/s&#10;Kauflink: https://..."></textarea>
+                        <p class="hint">💡 Tipp: Gib auch Details wie Geschwindigkeit, Drosselung nach FUP, Gültigkeit etc. an — dann kann die KI alle Fragen beantworten.</p>
+                    </div>
+                    <button id="save-manual-kb" onclick="saveManualKnowledge()" class="btn btn-success btn-full">
+                        💾 Wissen speichern & KI trainieren
+                    </button>
+                </div>
+            </div>
+
+            <div id="kb-tab-scraper" class="tab-pane">
+                <div class="card">
+                    <div class="form-group">
+                        <label>Kategorie</label>
+                        <select id="scrape-cat-id" class="form-control"></select>
+                    </div>
+                    <div class="form-group">
+                        <label>Basis-URL</label>
+                        <div class="input-row">
+                            <input type="text" id="scrape-url" placeholder="https://deine-website.de">
+                            <button id="url-discover" onclick="discoverLinks()" class="btn btn-primary">🔍</button>
+                        </div>
+                        <p class="hint">⚠️ Cloudflare-Seiten: 3 Retries. Bei anhaltenden Fehlern → manuell eingeben.</p>
+                    </div>
+                    <div id="link-list"></div>
+                    <button id="start-scrape" onclick="startScraping()" style="display:none;" class="btn btn-success btn-full" style="margin-top:10px;">▶ Seiten scrapen</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- ══ SELLAUTH ════════════════════════════════════════════════════ -->
+        <section id="sellauth-section" class="app-section">
+            <h2 class="section-title">🛒 Sellauth</h2>
+            <div class="card" style="margin-bottom:12px;">
+                <p style="color:#888;font-size:0.85rem;margin-bottom:12px;">
+                    Erst unter <button onclick="showSection('settings');showSettingsTab('sellauth-cfg',null)" style="background:none;border:none;color:#4a9eff;cursor:pointer;padding:0;font-size:inherit;text-decoration:underline;">⚙️ Settings → Sellauth</button> konfigurieren und speichern.
+                </p>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                    <button onclick="testSellauth()" class="btn btn-secondary btn-sm">🔌 Testen</button>
+                    <button onclick="loadSellauthPreview()" class="btn btn-secondary btn-sm">👁 Vorschau</button>
+                    <button onclick="syncSellauth()" id="btn-sync-sellauth" class="btn btn-success btn-sm">🔄 Synchronisieren</button>
+                </div>
+                <p class="hint" style="margin-top:8px;">Sync erstellt pro Variante einen Eintrag mit dem Produktlink (ohne ?variant=ID — Varianten werden auf der Produktseite ausgewählt).</p>
+            </div>
+            <div id="sa-preview" style="display:none;">
+                <h3 style="margin:0 0 10px;font-size:0.95rem;">Produkte (<span id="sa-product-count">0</span>)</h3>
+                <div id="sa-product-list"></div>
+            </div>
+        </section>
+
+        <!-- ══ SICHERHEIT ══════════════════════════════════════════════════ -->
+        <section id="security-section" class="app-section">
+            <h2 class="section-title">🛡 Sicherheit</h2>
+            <div class="card" style="margin-bottom:12px;">
+                <h3 class="card-title">Nutzer bannen</h3>
+                <div class="form-group">
+                    <input type="text" id="ban-identifier" placeholder="Telegram-ID oder IP">
+                </div>
+                <div class="form-group">
+                    <input type="text" id="ban-reason" placeholder="Grund (optional)">
+                </div>
+                <button onclick="handleBan()" class="btn btn-danger btn-full">⛔ Bannen</button>
+            </div>
+            <div class="card">
+                <table class="data-table">
+                    <thead><tr><th>ID</th><th>Grund</th><th>Datum</th><th></th></tr></thead>
+                    <tbody id="blacklist-body"></tbody>
+                </table>
+            </div>
+        
+            <!-- Geflaggte Chats -->
+            <div class="card" style="margin-top:16px;border-color:#431407;">
+                <h3 class="card-title">🚩 Geflaggte Chats (Auto-Erkennung)</h3>
+                <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">3 Flags = automatischer System-Bann. KI wird bei Verdacht stumm geschaltet.</p>
+                <div id="flagged-list"><p style="color:#555;font-size:0.85rem;">Lädt...</p></div>
+            </div>
+        </section>
+
+        <!-- ══ SETTINGS ════════════════════════════════════════════════════ -->
+        <section id="settings-section" class="app-section">
+            <h2 class="section-title">⚙️ Einstellungen</h2>
+            <div class="tab-bar">
+                <button class="tab-btn active" onclick="showSettingsTab('bot',this)">🤖 Bot</button>
+                <button class="tab-btn" onclick="showSettingsTab('model',this)">🔬 Modell</button>
+                <button class="tab-btn" onclick="showSettingsTab('sellauth-cfg',this)">🛒 Sellauth</button>
+                <button class="tab-btn" onclick="showSettingsTab('telegram-cfg',this)">✈️ Telegram</button>
+                <button class="tab-btn" onclick="showSettingsTab('widget-cfg',this)">🔗 Widget</button>
+                <button class="tab-btn" onclick="showSettingsTab('coupon-cfg',this)">🎟️ Coupon</button>
+                <button class="tab-btn" onclick="showSettingsTab('channel-cfg',this)">📢 Channel</button>
+                <button class="tab-btn" onclick="showSettingsTab('pakete-cfg',this)">📦 Pakete</button>
+                <button class="tab-btn" onclick="showSettingsTab('smalltalk-cfg',this)">💬 Smalltalk</button>
+                <button class="tab-btn" onclick="showSettingsTab('userinfo-cfg',this)">🔍 UserInfo</button>
+            </div>
+
+            <div id="settings-tab-bot" class="tab-pane active">
+                <div class="card">
+                    <div class="form-group">
+                        <label>👋 /start Begrüßungsnachricht</label>
+                        <textarea id="welcome-message" rows="3" placeholder="Willkommen! 👋 Wie kann ich dir helfen?"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>🤖 System Prompt</label>
+                        <textarea id="system-prompt" rows="8" placeholder="Du bist ein hilfreicher Assistent für..."></textarea>
+                        <p class="hint">Persönlichkeit & Rolle der KI. Wichtig: Erkläre was die KI ist und wem sie hilft.</p>
+                    </div>
+                    <div class="form-group">
+                        <label>🚫 Negativ-Prompts</label>
+                        <textarea id="negative-prompt" rows="3" placeholder="Sprich nie über Konkurrenten.&#10;Gib keine Preisgarantien."></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>🔄 Übergabe-Nachricht</label>
+                        <input type="text" id="manual-msg-template" placeholder="Ein Mitarbeiter übernimmt gleich. 👤">
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
+                </div>
+                <div class="card" style="border-color:#1e3a5f;">
+                    <h3 class="card-title">🔔 Push-Benachrichtigungen</h3>
+                    <div id="push-status"><p style="color:#666;font-size:0.875rem;">Wird geladen...</p></div>
+                </div>
+            </div>
+
+            <div id="settings-tab-model" class="tab-pane">
+                <div class="card">
+                    <div class="form-group">
+                        <label>Modell</label>
+                        <select id="ai-model" class="form-control">
+                            <option value="deepseek-chat">deepseek-chat (Standard)</option>
+                            <option value="deepseek-reasoner">deepseek-reasoner / R1</option>
+                        </select>
+                    </div>
+                    <div class="settings-grid">
+                        <div class="form-group">
+                            <label>Max. Tokens: <span id="token-disp" class="label-val">1024</span></label>
+                            <input type="range" id="ai-max-tokens" min="256" max="4096" step="128" value="1024" oninput="document.getElementById('token-disp').textContent=this.value">
+                        </div>
+                        <div class="form-group">
+                            <label>Temperature: <span id="temp-disp" class="label-val">0.50</span></label>
+                            <input type="range" id="ai-temperature" min="0" max="1" step="0.05" value="0.5" oninput="document.getElementById('temp-disp').textContent=parseFloat(this.value).toFixed(2)">
+                            <p class="hint">0=präzise · 1=kreativ. Empfehlung: 0.3–0.5</p>
+                        </div>
+                        <div class="form-group">
+                            <label>RAG-Schwelle: <span id="thresh-disp" class="label-val">0.45</span></label>
+                            <input type="range" id="rag-threshold" min="0.20" max="0.80" step="0.05" value="0.45" oninput="document.getElementById('thresh-disp').textContent=parseFloat(this.value).toFixed(2)">
+                            <p class="hint">Niedriger = mehr Treffer. Empfehlung: 0.40–0.50</p>
+                        </div>
+                        <div class="form-group">
+                            <label>RAG Anzahl: <span id="count-disp" class="label-val">8</span></label>
+                            <input type="range" id="rag-match-count" min="3" max="20" step="1" value="8" oninput="document.getElementById('count-disp').textContent=this.value">
+                            <p class="hint">Wie viele Wissenseinträge in den Prompt. 6–10 empfohlen.</p>
+                        </div>
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
+                </div>
+
+                <div class="card" style="border-color:#1e3a5f;">
+                    <h3 class="card-title">💰 Token-Optimierung</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Spart bis zu 70% Input-Tokens durch Chat-Zusammenfassungen.</p>
+                    <div class="form-group">
+                        <label>History-Tiefe: letzte <span id="hist-disp" class="label-val">4</span> Nachrichten</label>
+                        <input type="range" id="max-history-msgs" min="2" max="16" step="1" value="4" oninput="document.getElementById('hist-disp').textContent=this.value">
+                        <p class="hint">Nur die letzten N Nachrichten werden an die KI gesendet.</p>
+                    </div>
+                    <div class="form-group">
+                        <label>Zusammenfassung alle <span id="summ-disp" class="label-val">5</span> Nachrichten</label>
+                        <input type="range" id="summary-interval" min="3" max="20" step="1" value="5" oninput="document.getElementById('summ-disp').textContent=this.value">
+                        <p class="hint">Ältere Nachrichten werden automatisch zusammengefasst.</p>
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-success btn-sm">💾 Speichern</button>
+                </div>
+            </div>
+
+            <div id="settings-tab-sellauth-cfg" class="tab-pane">
+                <div class="card">
+                    <h3 class="card-title">Sellauth Zugangsdaten</h3>
+                    <div class="form-group">
+                        <label>API Key</label>
+                        <input type="password" id="sellauth-api-key" placeholder="sa_..." autocomplete="off">
+                        <p class="hint">Dashboard → Account → API Access</p>
+                    </div>
+                    <div class="form-group">
+                        <label>Shop ID</label>
+                        <input type="text" id="sellauth-shop-id" placeholder="12345" autocomplete="off">
+                        <p class="hint">Dashboard → Account → API Access</p>
+                    </div>
+                    <div class="form-group">
+                        <label>Shop URL</label>
+                        <input type="text" id="sellauth-shop-url" placeholder="https://valueshop25.sellauth.com" autocomplete="off">
+                        <p class="hint">Produktlinks: [Shop URL]/[produkt-pfad]</p>
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
+                </div>
+            </div>
+
+            <div id="settings-tab-telegram-cfg" class="tab-pane">
+                <div class="card">
+                    <h3 class="card-title">✈️ Telegram Webhook</h3>
+                    <div class="form-group">
+                        <label>App-URL (Render.com)</label>
+                        <input type="text" id="webhook-app-url" placeholder="https://dein-bot.onrender.com">
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                        <button onclick="setTelegramWebhook()" class="btn btn-primary">✅ Setzen</button>
+                        <button onclick="checkWebhookStatus()" class="btn btn-secondary">📊 Status</button>
+                    </div>
+                    <div id="webhook-result" style="margin-top:10px;font-size:0.85rem;"></div>
+                </div>
+            </div>
+
+            <div id="settings-tab-widget-cfg" class="tab-pane">
+                <div class="card">
+                    <h3 class="card-title">🔗 Widget Einbettung</h3>
+                    <p class="hint" style="margin-bottom:14px;">Kopiere einen Code-Schnipsel und füge ihn vor dem &lt;/body&gt; Tag ein.</p>
+
+                    <div class="form-group">
+                        <label>Standard (empfohlen)</label>
+                        <textarea id="embed-standard" rows="3" readonly onclick="this.select()" style="font-size:0.75rem;font-family:monospace;color:#93c5fd;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;resize:none;width:100%;"></textarea>
+                        <button onclick="copyEmbed('embed-standard')" class="btn btn-secondary btn-sm btn-full" style="margin-top:6px;">📋 Kopieren</button>
+                        <p class="hint">Für alle Websites. Vor &lt;/body&gt; einfügen.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Asynchron (Performance)</label>
+                        <textarea id="embed-async" rows="7" readonly onclick="this.select()" style="font-size:0.75rem;font-family:monospace;color:#93c5fd;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;resize:none;width:100%;"></textarea>
+                        <button onclick="copyEmbed('embed-async')" class="btn btn-secondary btn-sm btn-full" style="margin-top:6px;">📋 Kopieren</button>
+                        <p class="hint">Lädt nicht-blockierend. Ideal für Shops.</p>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Google Tag Manager</label>
+                        <textarea id="embed-gtm" rows="6" readonly onclick="this.select()" style="font-size:0.75rem;font-family:monospace;color:#93c5fd;background:#0d1929;border:1px solid #1e3a5f;border-radius:8px;resize:none;width:100%;"></textarea>
+                        <button onclick="copyEmbed('embed-gtm')" class="btn btn-secondary btn-sm btn-full" style="margin-top:6px;">📋 Kopieren</button>
+                        <p class="hint">GTM: Custom HTML Tag erstellen.</p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title">⚙️ Widget Einstellungen</h3>
+                    <div class="form-group">
+                        <label>Bot-Name</label>
+                        <input type="text" id="widget-bot-name" placeholder="ValueShop25 Support">
+                    </div>
+                    <div class="form-group">
+                        <label>Primärfarbe</label>
+                        <div style="display:flex;gap:10px;align-items:center;">
+                            <input type="color" id="widget-color" value="#0a4f8c" oninput="document.getElementById('widget-color-val').textContent=this.value" style="width:48px;height:40px;padding:2px;background:#1a1a1a;border:1px solid #444;border-radius:6px;cursor:pointer;">
+                            <span id="widget-color-val" style="color:#94a3b8;font-size:0.875rem;font-family:monospace;">#0a4f8c</span>
+                        </div>
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
+                </div>
+            </div>
+            <div id="settings-tab-coupon-cfg" class="tab-pane">
+                <!-- Active Coupon Card -->
+                <div class="card" id="active-coupon-card" style="border-color:#14532d;margin-bottom:12px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                        <h3 class="card-title" style="margin:0;">🎟️ Aktiver Tages-Coupon</h3>
+                        <button onclick="loadActiveCoupon()" class="btn btn-secondary btn-sm">↺</button>
+                    </div>
+                    <div id="active-coupon-display">
+                        <p style="color:#555;font-size:0.85rem;">Lädt...</p>
+                    </div>
+                    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                        <button onclick="createCouponNow()" class="btn btn-primary btn-sm">⚡ Jetzt neuen Coupon erstellen</button>
+                        <button onclick="toggleCouponHistory(this)" class="btn btn-secondary btn-sm" id="verlauf-btn">📋 Verlauf</button>
+                    </div>
+                    <!-- Verlauf Dropdown (inline, initially hidden) -->
+                    <div id="coupon-history-dropdown" style="display:none;margin-top:12px;border-top:1px solid #1e3a5f;padding-top:12px;">
+                        <div id="coupon-history-list">
+                            <p style="color:#555;font-size:0.85rem;">Lädt...</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Coupon Global Settings -->
+                <div class="card">
+                    <h3 class="card-title">⚙️ Allgemeine Einstellungen</h3>
+                    <div class="form-group">
+                        <label style="display:flex;align-items:center;gap:10px;">
+                            <input type="checkbox" id="coupon-enabled" style="width:18px;height:18px;">
+                            Tägl. Coupon-System aktiviert
+                        </label>
+                        <p class="hint">Erstellt täglich automatisch einen neuen Coupon in Sellauth.</p>
+                    </div>
+                    <div class="form-group">
+                        <label>Erneuerung täglich um <span id="schedule-hour-disp" class="label-val">0</span>:00 Uhr</label>
+                        <input type="range" id="coupon-schedule-hour" min="0" max="23" step="1" value="0"
+                            oninput="document.getElementById('schedule-hour-disp').textContent=this.value">
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-success btn-sm">💾 Speichern</button>
+                </div>
+
+                <!-- Weekly Planner -->
+                <div class="card" style="margin-top:12px;">
+                    <h3 class="card-title">📅 Wochenplan</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Rabatt pro Wochentag festlegen. Deaktivierte Tage erstellen keinen Coupon.</p>
+                    <div id="week-schedule-list">
+                        <p style="color:#555;font-size:0.85rem;">Lädt...</p>
+                    </div>
+                    <button onclick="saveWeekSchedule()" class="btn btn-success btn-full" style="margin-top:12px;">💾 Wochenplan speichern</button>
+                </div>
+</div><!-- /settings-tab-coupon-cfg -->
+
+                <!-- Channel Settings -->
+                <div id="settings-tab-channel-cfg" class="tab-pane">
+                  <div class="card">
+                    <h3 class="card-title">📢 Channel Bot</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Channels & Gruppen wo der Bot als Admin hinzugefügt wurde. Bot erkennt sich automatisch beim Hinzufügen.</p>
+                    <div id="channel-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                    <button onclick="scanAndLoadChannels()" class="btn btn-secondary btn-sm" style="margin-top:8px;">🔍 Scannen &amp; Aktualisieren</button>
+                  </div>
+                  <div class="card" style="margin-top:12px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                      <h3 class="card-title" style="margin:0;">🔗 Channel-Gruppen</h3>
+                      <button onclick="createChannelGroupUI()" class="btn btn-secondary btn-sm">+ Neu</button>
+                    </div>
+                    <p style="font-size:0.78rem;color:#888;margin-bottom:8px;">Verknüpfte Channels teilen Datenbank und System-Prompt.</p>
+                    <div id="channel-groups-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                  </div>
+                  <div style="display:none">
+                  </div>
+                </div>
+
+                <!-- Smalltalk Settings -->
+                <div id="settings-tab-userinfo-cfg" class="tab-pane">
                   <div class="card">
                     <h3 class="card-title">🔍 UserInfo Pro</h3>
                     <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Nutzer mit unbegrenzten UserInfo-Abfragen. Kostenlose User: 5 Abfragen/Tag bot-übergreifend.</p>
@@ -11,8 +512,65 @@
                       <input type="text" id="ui-pro-note" placeholder="Notiz / Kundennummer" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
                     </div>
                     <input type="date" id="ui-pro-expires" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:10px;" title="Ablaufdatum (leer = unbegrenzt)">
+<div class="card" style="display:none;margin-top:12px;">
+                    <h3 class="card-title">📦 Channel-Pakete</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Credits und Preise für Channel-Upgrades festlegen. Channel Admins kaufen ein Paket für ihren Channel.</p>
+                    <div style="background:#0d1117;border:1px solid #1e3a5f;border-radius:6px;padding:10px;margin-bottom:12px;font-size:0.78rem;">
+                      <div style="color:#60a5fa;font-weight:700;margin-bottom:4px;">📡 Sellauth Webhook URL</div>
+                      <div style="font-family:monospace;color:#94a3b8;word-break:break-all;" id="webhook-url-display-DEPRECATED">Lädt…</div>
+                      <div style="color:#555;margin-top:4px;">In Sellauth → Settings → Webhooks → diese URL eintragen</div>
+                    </div>
+                    <div id="packages-list-DEPRECATED"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                    <div id="package-edit-form-DEPRECATED" style="margin-top:12px;display:none;">
+                      <input type="hidden" id="pkg-id-DEPRECATED">
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="text"   id="pkg-name-DEPRECATED"    placeholder="Name (z.B. Starter)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="number" id="pkg-price-DEPRECATED"   placeholder="Preis (€)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="number" id="pkg-credits-DEPRECATED" placeholder="Credits" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="text"   id="pkg-desc"    placeholder="Beschreibung" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="text" id="pkg-product-id" placeholder="Sellauth Product-ID" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="text" id="pkg-variant-id"  placeholder="Sellauth Variant-ID" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                      <input type="number" id="pkg-days" value="30" placeholder="Laufzeit in Tagen" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:8px;">
+                      </div>
+                      <div style="display:flex;gap:8px;">
+                        <button onclick="savePackage()" class="btn btn-success btn-sm" style="flex:1;">💾 Speichern</button>
+                        <button onclick="hidePackageForm()" class="btn btn-secondary btn-sm">Abbrechen</button>
+                      </div>
+                    </div>
+                    <button onclick="showPackageForm()" class="btn btn-secondary btn-sm" style="width:100%;margin-top:10px;">➕ Paket anlegen</button>
+
+                  <div class="card" style="display:none;margin-top:12px;">
+                    <h3 class="card-title">🔋 Refill-Optionen</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">Credit-Nachladung ohne Laufzeitverlängerung. Nutzbar wenn Credits erschöpft sind.</p>
+                    <div id="refills-list-DEPRECATED"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                    <div id="refill-edit-form-DEPRECATED" style="margin-top:12px;display:none;">
+                      <input type="hidden" id="rf-id-DEPRECATED">
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="text"   id="rf-name-DEPRECATED"       placeholder="Name (z.B. 1.000 Credits)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="number" id="rf-price"      placeholder="Preis (€)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="number" id="rf-credits"    placeholder="Credits" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="text"   id="rf-desc"       placeholder="Beschreibung (optional)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="text" id="rf-product-id" placeholder="Sellauth Product-ID" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="text" id="rf-variant-id"  placeholder="Sellauth Variant-ID" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                      <div style="display:flex;gap:8px;">
+                        <button onclick="saveRefill()" class="btn btn-success btn-sm" style="flex:1;">💾 Speichern</button>
+                        <button onclick="hideRefillForm()" class="btn btn-secondary btn-sm">Abbrechen</button>
+                      </div>
+                    </div>
+                    <button onclick="showRefillForm()" class="btn btn-secondary btn-sm" style="width:100%;margin-top:10px;">➕ Refill anlegen</button>
+                  </div>
+                  </div>
                 </div>
-<div id="settings-tab-pakete-cfg" class="tab-pane" style="padding:12px;">
+                <div id="settings-tab-pakete-cfg" class="tab-pane" style="padding:12px;">
 
                   <!-- Channel-Verwaltung -->
                   <div class="card" style="margin-bottom:12px;">
