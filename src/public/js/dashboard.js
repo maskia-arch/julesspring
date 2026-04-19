@@ -990,6 +990,199 @@ async function deletePackage(id) {
     catch(e) { alert(e.message||String(e)); }
 }
 
+
+// ── Pakete Tab ────────────────────────────────────────────────────────────────
+// All package/refill/channel-mgmt functions mirrored for the new Pakete tab
+
+var _pkgTabLoaded = false;
+
+function _initPaketeTab() {
+    if (_pkgTabLoaded) return;
+    _pkgTabLoaded = true;
+    // Webhook URL
+    var wh = document.getElementById('webhook-url-display2');
+    if (wh) wh.textContent = window.location.origin + '/api/webhooks/sellauth-packages';
+    _safeRun(loadChannelAdminListPkg);
+    _safeRun(loadPackagesPkg);
+    _safeRun(loadRefillsPkg);
+}
+
+// ── Channel admin list (mirrored for Pakete tab) ──────────────────────────────
+async function loadChannelAdminListPkg() {
+    var el = document.getElementById('channel-admin-list-pkg'); if (!el) return;
+    try {
+        var [chs, pkgs] = await Promise.all([api.request('/channels/admin-list'), api.request('/packages')]);
+        _allChannels = chs || []; _allPackages = pkgs || [];
+        var html = (_allChannels.length ? _allChannels : []).map(function(ch) {
+            var used = ch.token_used||0, lim = ch.token_limit||0, pct = lim?Math.min(100,Math.round(used/lim*100)):0;
+            var exp = ch.credits_expire_at ? new Date(ch.credits_expire_at).toLocaleDateString('de-DE') : '–';
+            var bc = pct>85?'#ef4444':pct>60?'#f59e0b':'#4ade80';
+            return '<div style="background:#111;border-radius:8px;padding:12px;margin-bottom:8px;">' +
+                '<div style="display:flex;justify-content:space-between;margin-bottom:6px;">' +
+                    '<div style="font-weight:700;">'+(ch.title||ch.id)+'</div>' +
+                    '<div style="font-size:0.7rem;color:'+(ch.ai_enabled?'#4ade80':'#ef4444')+';">'+(ch.ai_enabled?'✅':'❌')+'</div>' +
+                '</div>' +
+                '<div style="font-size:0.72rem;color:#64748b;margin-bottom:6px;">'+used.toLocaleString()+' / '+lim.toLocaleString()+' Credits · Bis: '+exp+'</div>' +
+                '<div style="height:4px;background:#1a1a1a;border-radius:2px;margin-bottom:8px;"><div style="height:4px;width:'+pct+'%;background:'+bc+';border-radius:2px;"></div></div>' +
+                '<div style="display:flex;gap:6px;">' +
+                    '<button onclick="openChannelEditPkg('+JSON.stringify(ch.id)+')" style="background:#1e3a5f;color:#60a5fa;border:none;border-radius:4px;padding:4px 10px;font-size:0.75rem;cursor:pointer;">✏️ Credits/Laufzeit</button>' +
+                    '<button onclick="openPackageBookPkg('+JSON.stringify(ch.id)+')" style="background:#14532d;color:#4ade80;border:none;border-radius:4px;padding:4px 10px;font-size:0.75rem;cursor:pointer;">📦 Paket buchen</button>' +
+                '</div></div>';
+        }).join('') || '<p style="color:#555;font-size:0.85rem;">Keine Channels.</p>';
+        el.innerHTML = html;
+    } catch(e) { if (el) el.innerHTML = '<p style="color:#ef4444;">'+esc(String(e))+'</p>'; }
+}
+
+function openChannelEditPkg(channelId) {
+    var ch = _allChannels.find(function(c){ return c.id===channelId; });
+    document.getElementById('ch-edit-id-pkg').value = channelId;
+    if (ch) {
+        document.getElementById('ch-edit-credits-pkg').value = ch.token_limit||'';
+        document.getElementById('ch-edit-expires-pkg').value = ch.credits_expire_at ? ch.credits_expire_at.split('T')[0] : '';
+        document.getElementById('ch-edit-ai-pkg').checked = !!ch.ai_enabled;
+        document.getElementById('ch-edit-name-pkg').textContent = ch.title||channelId;
+    }
+    document.getElementById('ch-edit-form-pkg').style.display = 'block';
+    document.getElementById('ch-pkg-form-pkg').style.display = 'none';
+}
+
+function openPackageBookPkg(channelId) {
+    var ch = _allChannels.find(function(c){ return c.id===channelId; });
+    document.getElementById('ch-pkg-id-pkg').value = channelId;
+    document.getElementById('ch-pkg-name-pkg').textContent = ch?.title||channelId;
+    var sel = document.getElementById('ch-pkg-select-pkg');
+    sel.innerHTML = _allPackages.map(function(p){ return '<option value="'+p.id+'">'+esc(p.name)+' — '+p.credits.toLocaleString()+' Credits · '+parseFloat(p.price_eur).toFixed(2)+'€</option>'; }).join('');
+    document.getElementById('ch-pkg-form-pkg').style.display = 'block';
+    document.getElementById('ch-edit-form-pkg').style.display = 'none';
+}
+
+async function saveChannelEditPkg() {
+    var channelId=document.getElementById('ch-edit-id-pkg').value;
+    var credits=document.getElementById('ch-edit-credits-pkg').value;
+    var expires=document.getElementById('ch-edit-expires-pkg').value;
+    var aiEnabled=document.getElementById('ch-edit-ai-pkg').checked;
+    var resetUsed=document.getElementById('ch-edit-reset-pkg').checked;
+    try {
+        await api.request('/channels/manual-credits','POST',{channelId,credits:credits||undefined,expiresAt:expires?expires+'T00:00:00.000Z':undefined,aiEnabled,resetUsed});
+        showToast('✅ Channel gespeichert!');
+        document.getElementById('ch-edit-form-pkg').style.display='none';
+        loadChannelAdminListPkg();
+    } catch(e) { alert(e.message||String(e)); }
+}
+
+async function savePackageBookPkg() {
+    var channelId=document.getElementById('ch-pkg-id-pkg').value;
+    var packageId=document.getElementById('ch-pkg-select-pkg').value;
+    if (!packageId) { alert('Bitte Paket wählen'); return; }
+    if (!confirm('Paket manuell buchen?')) return;
+    try {
+        var r=await api.request('/channels/manual-package','POST',{channelId,packageId});
+        showToast('✅ Paket gebucht! '+r.credits.toLocaleString()+' Credits bis '+new Date(r.expiresAt).toLocaleDateString('de-DE'));
+        document.getElementById('ch-pkg-form-pkg').style.display='none';
+        loadChannelAdminListPkg();
+    } catch(e) { alert(e.message||String(e)); }
+}
+
+// ── Packages (Pakete tab) ─────────────────────────────────────────────────────
+async function loadPackagesPkg() {
+    var el=document.getElementById('packages-list-pkg'); if(!el) return;
+    var wh=document.getElementById('webhook-url-display2'); if(wh) wh.textContent=window.location.origin+'/api/webhooks/sellauth-packages';
+    try {
+        var pkgs=await api.request('/packages')||[];
+        _allPackages=pkgs;
+        if(!pkgs.length){el.innerHTML='<p style="color:#555;font-size:0.85rem;">Keine Pakete. Starter, Pro, Ultimate anlegen.</p>';return;}
+        el.innerHTML=pkgs.map(function(p){
+            return '<div style="background:#111;border-radius:6px;padding:10px;margin-bottom:6px;display:flex;align-items:center;gap:8px;">' +
+                '<div style="flex:1;">' +
+                    '<div style="font-weight:700;color:#60a5fa;">'+esc(p.name)+'</div>' +
+                    '<div style="font-size:0.75rem;color:#94a3b8;">'+(p.credits||0).toLocaleString()+' Credits · '+parseFloat(p.price_eur||0).toFixed(2)+' €</div>' +
+                    (p.sellauth_product_id?'<div style="font-size:0.68rem;color:#555;">P:'+esc(String(p.sellauth_product_id))+' V:'+esc(String(p.sellauth_variant_id||'–'))+'</div>':'<div style="font-size:0.68rem;color:#ef4444;">⚠️ Variant-ID fehlt</div>') +
+                '</div>' +
+                '<button onclick="editPackagePkg('+JSON.stringify(p).replace(/"/g,"&quot;")+')" style="background:#1e3a5f;color:#60a5fa;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:0.75rem;">✏️</button>' +
+                '<button onclick="deletePackagePkg(\''+p.id+'\')" class="icon-btn">🗑</button>' +
+            '</div>';
+        }).join('');
+    } catch(e) { el.innerHTML='<p style="color:#ef4444;">'+esc(String(e))+'</p>'; }
+}
+
+function showPackageFormPkg(pkg) { document.getElementById('package-edit-form-pkg').style.display='block'; if(!pkg){['pkg-id-pkg','pkg-name-pkg','pkg-price-pkg','pkg-credits-pkg','pkg-desc-pkg','pkg-product-id-pkg','pkg-variant-id-pkg'].forEach(function(id){var el=document.getElementById(id);if(el)el.value='';});document.getElementById('pkg-days-pkg').value=30;}}
+function hidePackageFormPkg() { document.getElementById('package-edit-form-pkg').style.display='none'; }
+function editPackagePkg(p) { showPackageFormPkg(p); document.getElementById('pkg-id-pkg').value=p?.id||''; document.getElementById('pkg-name-pkg').value=p?.name||''; document.getElementById('pkg-price-pkg').value=p?.price_eur||''; document.getElementById('pkg-credits-pkg').value=p?.credits||''; document.getElementById('pkg-desc-pkg').value=p?.description||''; document.getElementById('pkg-product-id-pkg').value=p?.sellauth_product_id||''; document.getElementById('pkg-variant-id-pkg').value=p?.sellauth_variant_id||''; document.getElementById('pkg-days-pkg').value=p?.duration_days||30; }
+
+async function loadVariantsPkg() {
+    var pid=document.getElementById('pkg-product-id-pkg').value.trim();
+    if(!pid){alert('Bitte zuerst die Product-ID eingeben');return;}
+    var sel=document.getElementById('pkg-variant-lookup-pkg');
+    sel.innerHTML='<option>Lädt…</option>';
+    try {
+        var data=await api.request('/sellauth/product/'+pid+'/variants');
+        if(!data.variants?.length){sel.innerHTML='<option>Keine Varianten gefunden</option>';return;}
+        sel.innerHTML=data.variants.map(function(v){return '<option value="'+v.id+'">'+esc(v.name)+' (ID: '+v.id+') — '+parseFloat(v.price||0).toFixed(2)+' €</option>';}).join('');
+        sel.onchange=function(){document.getElementById('pkg-variant-id-pkg').value=sel.value;};
+        showToast('✅ '+data.variants.length+' Varianten geladen für "'+esc(data.product_name)+'"');
+    } catch(e) { sel.innerHTML='<option>Fehler: '+esc(e.message)+'</option>'; }
+}
+
+async function savePackagePkg() {
+    var id=document.getElementById('pkg-id-pkg').value; var name=document.getElementById('pkg-name-pkg').value.trim();
+    var price=document.getElementById('pkg-price-pkg').value; var credits=document.getElementById('pkg-credits-pkg').value;
+    var desc=document.getElementById('pkg-desc-pkg').value.trim(); var prodId=document.getElementById('pkg-product-id-pkg').value.trim();
+    var varId=document.getElementById('pkg-variant-id-pkg').value.trim(); var days=document.getElementById('pkg-days-pkg').value||30;
+    if(!name||!price||!credits){alert('Name, Preis und Credits sind Pflicht');return;}
+    try { await api.request('/packages','POST',{id:id||undefined,name,price_eur:price,credits,description:desc||null,sellauth_product_id:prodId||null,sellauth_variant_id:varId||null,duration_days:parseInt(days)}); showToast('✅ Paket gespeichert!'); hidePackageFormPkg(); loadPackagesPkg(); } catch(e){alert(e.message||String(e));}
+}
+
+async function deletePackagePkg(id) { if(!confirm('Paket löschen?'))return; try{await api.request('/packages/'+id,'DELETE');loadPackagesPkg();}catch(e){alert(e.message||String(e));} }
+
+// ── Refills (Pakete tab) ──────────────────────────────────────────────────────
+async function loadRefillsPkg() {
+    var el=document.getElementById('refills-list-pkg'); if(!el) return;
+    try {
+        var list=await api.request('/refills')||[];
+        if(!list.length){el.innerHTML='<p style="color:#555;font-size:0.85rem;">Keine Refill-Optionen.</p>';return;}
+        el.innerHTML=list.map(function(r){
+            return '<div style="background:#111;border-radius:6px;padding:10px;margin-bottom:6px;display:flex;align-items:center;gap:8px;">' +
+                '<div style="flex:1;">' +
+                    '<div style="font-weight:700;color:#4ade80;">🔋 '+esc(r.name)+'</div>' +
+                    '<div style="font-size:0.75rem;color:#94a3b8;">+'+r.credits.toLocaleString()+' Credits · '+parseFloat(r.price_eur||0).toFixed(2)+' €</div>' +
+                    (r.sellauth_variant_id?'<div style="font-size:0.68rem;color:#555;">P:'+esc(String(r.sellauth_product_id||'–'))+' V:'+esc(String(r.sellauth_variant_id))+'</div>':'<div style="font-size:0.68rem;color:#ef4444;">⚠️ Variant-ID fehlt</div>') +
+                '</div>' +
+                '<button onclick="editRefillPkg('+JSON.stringify(r).replace(/"/g,"&quot;")+')" style="background:#1e3a5f;color:#60a5fa;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:0.75rem;">✏️</button>' +
+                '<button onclick="deleteRefillPkg(\''+r.id+'\')" class="icon-btn">🗑</button>' +
+            '</div>';
+        }).join('');
+    } catch(e) { el.innerHTML='<p style="color:#ef4444;">'+esc(String(e))+'</p>'; }
+}
+
+function showRefillFormPkg(r) { document.getElementById('refill-edit-form-pkg').style.display='block'; }
+function hideRefillFormPkg() { document.getElementById('refill-edit-form-pkg').style.display='none'; }
+function editRefillPkg(r) { showRefillFormPkg(r); document.getElementById('rf-id-pkg').value=r?.id||''; document.getElementById('rf-name-pkg').value=r?.name||''; document.getElementById('rf-price-pkg').value=r?.price_eur||''; document.getElementById('rf-credits-pkg').value=r?.credits||''; document.getElementById('rf-desc-pkg').value=r?.description||''; document.getElementById('rf-product-id-pkg').value=r?.sellauth_product_id||''; document.getElementById('rf-variant-id-pkg').value=r?.sellauth_variant_id||''; }
+
+async function loadVariantsRefillPkg() {
+    var pid=document.getElementById('rf-product-id-pkg').value.trim();
+    if(!pid){alert('Bitte zuerst Product-ID eingeben');return;}
+    var sel=document.getElementById('rf-variant-lookup-pkg');
+    sel.innerHTML='<option>Lädt…</option>';
+    try {
+        var data=await api.request('/sellauth/product/'+pid+'/variants');
+        if(!data.variants?.length){sel.innerHTML='<option>Keine Varianten</option>';return;}
+        sel.innerHTML=data.variants.map(function(v){return '<option value="'+v.id+'">'+esc(v.name)+' (ID: '+v.id+') — '+parseFloat(v.price||0).toFixed(2)+' €</option>';}).join('');
+        sel.onchange=function(){document.getElementById('rf-variant-id-pkg').value=sel.value;};
+        showToast('✅ '+data.variants.length+' Varianten geladen');
+    } catch(e) { sel.innerHTML='<option>Fehler: '+esc(e.message)+'</option>'; }
+}
+
+async function saveRefillPkg() {
+    var id=document.getElementById('rf-id-pkg').value; var name=document.getElementById('rf-name-pkg').value.trim();
+    var price=document.getElementById('rf-price-pkg').value; var credits=document.getElementById('rf-credits-pkg').value;
+    var desc=document.getElementById('rf-desc-pkg').value.trim(); var prodId=document.getElementById('rf-product-id-pkg').value.trim();
+    var varId=document.getElementById('rf-variant-id-pkg').value.trim();
+    if(!name||!price||!credits){alert('Name, Preis und Credits sind Pflicht');return;}
+    try { await api.request('/refills','POST',{id:id||undefined,name,price_eur:price,credits,description:desc||null,sellauth_product_id:prodId||null,sellauth_variant_id:varId||null}); showToast('✅ Refill gespeichert!'); hideRefillFormPkg(); loadRefillsPkg(); } catch(e){alert(e.message||String(e));}
+}
+
+async function deleteRefillPkg(id) { if(!confirm('Refill löschen?'))return; try{await api.request('/refills/'+id,'DELETE');loadRefillsPkg();}catch(e){alert(e.message||String(e));} }
+
 async function loadProUsers() {
     var el = document.getElementById('userinfo-pro-list');
     if (!el) return;

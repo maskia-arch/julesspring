@@ -119,6 +119,41 @@ router.get('/userinfo-pro',               channelCtrl.getProUsers.bind(channelCt
 router.post('/userinfo-pro',              channelCtrl.addProUser.bind(channelCtrl));
 router.delete('/userinfo-pro/:userId',    channelCtrl.removeProUser.bind(channelCtrl));
 
+// Sellauth product variant lookup
+router.get('/sellauth/product/:productId/variants', async (req, res, next) => {
+  try {
+    const axios    = require("axios");
+    const supabase = require("../config/supabase");
+    const { productId } = req.params;
+
+    // Load credentials
+    let apiKey = null, shopId = null;
+    try {
+      const r = await supabase.from("settings").select("sellauth_api_key, sellauth_shop_id").single();
+      apiKey = r.data?.sellauth_api_key || null;
+      shopId = r.data?.sellauth_shop_id || null;
+    } catch (_) {}
+    apiKey = apiKey || process.env.SELLAUTH_API_KEY;
+    shopId = shopId || process.env.SELLAUTH_SHOP_ID;
+
+    if (!apiKey || !shopId) return res.status(400).json({ error: "API-Key oder Shop-ID fehlen" });
+
+    const { data: product } = await axios.get(
+      `https://api.sellauth.com/v1/shops/${shopId}/products/${productId}`,
+      { headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" }, timeout: 10000 }
+    );
+
+    const variants = (product?.variants || []).map(v => ({
+      id: v.id, name: v.name, price: v.price, stock: v.stock
+    }));
+    res.json({ product_id: product?.id, product_name: product?.name, variants });
+  } catch (e) {
+    const status = e.response?.status;
+    const msg = e.response?.data?.message || e.message;
+    res.status(status || 500).json({ error: msg });
+  }
+});
+
 // Channel packages
 router.get('/packages',          channelCtrl.getPackages.bind(channelCtrl));
 router.post('/packages',         channelCtrl.upsertPackage.bind(channelCtrl));
