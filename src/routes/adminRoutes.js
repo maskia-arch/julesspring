@@ -124,4 +124,34 @@ router.get('/packages',          channelCtrl.getPackages.bind(channelCtrl));
 router.post('/packages',         channelCtrl.upsertPackage.bind(channelCtrl));
 router.delete('/packages/:id',   channelCtrl.deletePackage.bind(channelCtrl));
 
+// Sellauth webhook for package purchases (no auth required - Sellauth signs it)
+router.post('/webhooks/sellauth-packages', async (req, res) => {
+  res.sendStatus(200); // respond first
+  try {
+    const packageService = require("../services/packageService");
+    const result = await packageService.handleWebhook(req.body);
+    if (result.handled && result.adminId) {
+      // Notify admin via Telegram
+      const supabase = require("../config/supabase");
+      const axios    = require("axios");
+      const { data: settings } = await supabase.from("settings").select("smalltalk_bot_token").single().catch(() => ({ data: null }));
+      const token = settings?.smalltalk_bot_token || process.env.TELEGRAM_BOT_TOKEN;
+      if (token) {
+        const exp = result.expiresAt ? new Date(result.expiresAt).toLocaleDateString("de-DE") : "?";
+        await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
+          chat_id: String(result.adminId),
+          text: `✅ <b>Paket aktiviert!</b>\n\n` +
+                `Channel: ${result.title || result.channelId}\n` +
+                `Credits: ${(result.credits||0).toLocaleString()}\n` +
+                `Läuft bis: ${exp}\n\n` +
+                `KI-Features sind jetzt aktiv! 🚀`,
+          parse_mode: "HTML"
+        }, { timeout: 10000 }).catch(() => {});
+      }
+    }
+  } catch (e) {
+    require("../utils/logger").error("[Packages Webhook]", e.message);
+  }
+});
+
 module.exports = router;

@@ -746,6 +746,12 @@ async function removeFromScamlistUI(channelId, userId) {
 // ── Channel Packages ──────────────────────────────────────────────────────────
 
 async function loadPackages() {
+    // Show webhook URL
+    var whEl = document.getElementById('webhook-url-display');
+    if (whEl) {
+        var appUrl = window.location.origin;
+        whEl.textContent = appUrl + '/api/webhooks/sellauth-packages';
+    }
     var el = document.getElementById('packages-list');
     if (!el) return;
     try {
@@ -769,11 +775,14 @@ function showPackageForm(pkg) {
     var f = document.getElementById('package-edit-form');
     if (!f) return;
     f.style.display = 'block';
-    document.getElementById('pkg-id').value     = pkg?.id    || '';
-    document.getElementById('pkg-name').value   = pkg?.name  || '';
-    document.getElementById('pkg-price').value  = pkg?.price_eur || '';
-    document.getElementById('pkg-credits').value= pkg?.credits   || '';
-    document.getElementById('pkg-desc').value   = pkg?.description || '';
+    document.getElementById('pkg-id').value         = pkg?.id    || '';
+    document.getElementById('pkg-name').value        = pkg?.name  || '';
+    document.getElementById('pkg-price').value       = pkg?.price_eur || '';
+    document.getElementById('pkg-credits').value     = pkg?.credits   || '';
+    document.getElementById('pkg-desc').value        = pkg?.description || '';
+    document.getElementById('pkg-product-id').value  = pkg?.sellauth_product_id || '';
+    document.getElementById('pkg-variant-id').value  = pkg?.sellauth_variant_id || '';
+    document.getElementById('pkg-days').value         = pkg?.duration_days || 30;
 }
 
 function hidePackageForm() {
@@ -789,9 +798,14 @@ async function savePackage() {
     var price   = document.getElementById('pkg-price')?.value;
     var credits = document.getElementById('pkg-credits')?.value;
     var desc    = document.getElementById('pkg-desc')?.value?.trim();
+    var prodId  = document.getElementById('pkg-product-id')?.value?.trim();
+    var varId   = document.getElementById('pkg-variant-id')?.value?.trim();
+    var days    = document.getElementById('pkg-days')?.value || 30;
     if (!name || !price || !credits) { alert('Name, Preis und Credits sind Pflicht'); return; }
     try {
-        await api.request('/packages', 'POST', { id: id||undefined, name, price_eur: price, credits, description: desc||null });
+        await api.request('/packages', 'POST', { id: id||undefined, name, price_eur: price, credits,
+          description: desc||null, sellauth_product_id: prodId||null, sellauth_variant_id: varId||null,
+          duration_days: parseInt(days) });
         showToast('✅ Paket gespeichert!');
         hidePackageForm();
         loadPackages();

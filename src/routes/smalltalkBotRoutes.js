@@ -1655,6 +1655,93 @@ router.post("/smalltalk", (req, res) => {
           return;
         }
 
+        // Package purchase: channel selected
+        if (data.startsWith("buy_chan_")) {
+          const buyChanId = data.split("_")[2];
+          const pend = pendingInputs[String(qUserId)] || {};
+          const pkgs = pend.packages;
+          if (!pkgs?.length) {
+            const { data: pkgsFresh } = await supabase.from("channel_packages")
+              .select("*").eq("is_active", true).order("sort_order");
+            pendingInputs[String(qUserId)] = { action: "buy_select_pkg", channelId: buyChanId, packages: pkgsFresh };
+          } else {
+            pendingInputs[String(qUserId)] = { ...pend, action: "buy_select_pkg", channelId: buyChanId };
+          }
+          const activePkgs = (pkgs || []).filter(p => p.is_active !== false);
+          const pkgKb = activePkgs.map(p => [{
+            text: `📦 ${p.name} — ${p.credits.toLocaleString()} Credits · ${parseFloat(p.price_eur).toFixed(2)} €`,
+            callback_data: "buy_pkg_" + p.id + "_" + buyChanId
+          }]);
+          pkgKb.push([{ text: "❌ Abbrechen", callback_data: "buy_cancel" }]);
+          const chTitle = (await supabase.from("bot_channels").select("title").eq("id", buyChanId).maybeSingle()).data?.title || buyChanId;
+          await tg.call("editMessageText", {
+            chat_id: String(qUserId),
+            message_id: q.message?.message_id,
+            text: `🛒 <b>Paket für "${chTitle}" wählen:</b>\n\nAlle Pakete laufen 30 Tage.`,
+            parse_mode: "HTML", reply_markup: { inline_keyboard: pkgKb }
+          }).catch(async () => {
+            await tg.call("sendMessage", { chat_id: String(qUserId),
+              text: `🛒 <b>Paket für "${chTitle}" wählen:</b>\n\nAlle Pakete laufen 30 Tage.`,
+              parse_mode: "HTML", reply_markup: { inline_keyboard: pkgKb }
+            });
+          });
+          return;
+        }
+
+        // Package selected → generate checkout
+        if (data.startsWith("buy_pkg_")) {
+          const parts4 = data.match(/^buy_pkg_(\d+)_(-?\d+)$/);
+          if (!parts4) return;
+          const pkgId   = parseInt(parts4[1]);
+          const chanId4 = parts4[2];
+          delete pendingInputs[String(qUserId)];
+
+          const { data: pkg } = await supabase.from("channel_packages").select("*").eq("id", pkgId).single().catch(() => ({ data: null }));
+          const { data: settingsRow } = await supabase.from("settings").select("sellauth_api_key, sellauth_shop_id, sellauth_shop_url").single().catch(() => ({ data: null }));
+
+          if (!pkg) {
+            await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Paket nicht gefunden." });
+            return;
+          }
+
+          await tg.call("sendMessage", { chat_id: String(qUserId), text: "⏳ Erstelle Checkout…" });
+
+          try {
+            const packageService = require("../services/packageService");
+            const result = await packageService.generateCheckoutUrl(
+              pkg, chanId4,
+              settingsRow?.sellauth_shop_url, settingsRow?.sellauth_api_key, settingsRow?.sellauth_shop_id
+            );
+
+            if (result.checkoutUrl) {
+              await tg.call("sendMessage", { chat_id: String(qUserId),
+                text: `✅ <b>${pkg.name} — ${pkg.credits.toLocaleString()} Credits</b>\n\n` +
+                      `💰 Preis: ${parseFloat(pkg.price_eur).toFixed(2)} €\n` +
+                      `📅 Laufzeit: ${pkg.duration_days || 30} Tage\n\n` +
+                      `Zum Bezahlen tippst du auf den Button:`,
+                parse_mode: "HTML",
+                reply_markup: { inline_keyboard: [[
+                  { text: "💳 Jetzt kaufen", url: result.checkoutUrl }
+                ]]}
+              });
+            } else {
+              await tg.call("sendMessage", { chat_id: String(qUserId),
+                text: "❌ Checkout konnte nicht erstellt werden. Kontaktiere @autoacts." });
+            }
+          } catch (e2) {
+            logger.error("[Buy] Checkout-Fehler:", e2.message);
+            await tg.call("sendMessage", { chat_id: String(qUserId),
+              text: `❌ Fehler: ${e2.message}\n\nBitte kontaktiere @autoacts.` });
+          }
+          return;
+        }
+
+        if (data === "buy_cancel") {
+          await tg.call("deleteMessage", { chat_id: String(qUserId), message_id: q.message?.message_id }).catch(() => {});
+          delete pendingInputs[String(qUserId)];
+          return;
+        }
+
         // Channel selection in private chat
         if (data.startsWith("sel_channel_")) {
           const selChanId = data.split("_")[2];
@@ -1722,6 +1809,34 @@ router.post("/smalltalk", (req, res) => {
           await handlePendingInput(tg, supabase, from.id, "/cancel", settings, null);
           return;
         }
+        // /buy – package purchase flow
+        if (/^\/buy(@\w+)?/i.test(text) || text.toLowerCase() === "credits kaufen") {
+          const { data: pkgs } = await supabase.from("channel_packages")
+            .select("*").eq("is_active", true).order("sort_order");
+          if (!pkgs?.length) {
+            await tg.send(chatId, "❌ Keine Pakete verfügbar. Bitte kontaktiere @autoacts.");
+            return;
+          }
+          // If user has channels, ask which one
+          const { data: myChans } = await supabase.from("bot_channels")
+            .select("id, title, type").eq("added_by_user_id", String(from.id));
+          if (!myChans?.length) {
+            await tg.send(chatId, "❌ Du hast noch keinen registrierten Channel. Füge mich erst als Admin hinzu.");
+            return;
+          }
+          pendingInputs[String(from.id)] = { action: "buy_select_channel", packages: pkgs };
+          const chanKb = myChans.map(ch2 => [{
+            text: (ch2.type==="channel"?"📢":"👥") + " " + (ch2.title||ch2.id),
+            callback_data: "buy_chan_" + ch2.id
+          }]);
+          const buyMsg = await tg.call("sendMessage", { chat_id: chatId,
+            text: "🛒 <b>Credit-Paket kaufen</b>\n\nFür welchen Channel?",
+            parse_mode: "HTML", reply_markup: { inline_keyboard: chanKb }
+          });
+          if (buyMsg?.message_id) void safelistService.trackBotMessage(chatId, buyMsg.message_id, "temp", 10*60*1000);
+          return;
+        }
+
         // All navigation commands → smart channel picker
         if (/^\/(?:start|menu|settings|dashboard|help)(@\w+)?/i.test(text)) {
           const { data: myChannels2 } = await supabase.from("bot_channels")

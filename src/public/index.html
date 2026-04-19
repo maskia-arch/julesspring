@@ -518,6 +518,11 @@
                   <div class="card" style="margin-top:12px;">
                     <h3 class="card-title">📦 Channel-Pakete</h3>
                     <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Credits und Preise für Channel-Upgrades festlegen. Channel Admins kaufen ein Paket für ihren Channel.</p>
+                    <div style="background:#0d1117;border:1px solid #1e3a5f;border-radius:6px;padding:10px;margin-bottom:12px;font-size:0.78rem;">
+                      <div style="color:#60a5fa;font-weight:700;margin-bottom:4px;">📡 Sellauth Webhook URL</div>
+                      <div style="font-family:monospace;color:#94a3b8;word-break:break-all;" id="webhook-url-display">Lädt…</div>
+                      <div style="color:#555;margin-top:4px;">In Sellauth → Settings → Webhooks → diese URL eintragen</div>
+                    </div>
                     <div id="packages-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
                     <div id="package-edit-form" style="margin-top:12px;display:none;">
                       <input type="hidden" id="pkg-id">
@@ -528,6 +533,11 @@
                       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
                         <input type="number" id="pkg-credits" placeholder="Credits" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
                         <input type="text"   id="pkg-desc"    placeholder="Beschreibung" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="text" id="pkg-product-id" placeholder="Sellauth Product-ID" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="text" id="pkg-variant-id"  placeholder="Sellauth Variant-ID" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                      </div>
+                      <input type="number" id="pkg-days" value="30" placeholder="Laufzeit in Tagen" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:8px;">
                       </div>
                       <div style="display:flex;gap:8px;">
                         <button onclick="savePackage()" class="btn btn-success btn-sm" style="flex:1;">💾 Speichern</button>

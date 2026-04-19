@@ -291,8 +291,14 @@ const channelController = {
       const supa = require("../config/supabase");
       const { id, name, credits, price_eur, description, sort_order } = req.body;
       if (!name || !credits || !price_eur) return res.status(400).json({ error: "name, credits, price_eur erforderlich" });
-      const patch = { name, credits: parseInt(credits), price_eur: parseFloat(price_eur),
-                      description: description || null, sort_order: sort_order || 0, updated_at: new Date() };
+      const patch = {
+        name, credits: parseInt(credits), price_eur: parseFloat(price_eur),
+        description: description || null, sort_order: sort_order || 0,
+        sellauth_product_id: req.body.sellauth_product_id || null,
+        sellauth_variant_id:  req.body.sellauth_variant_id  || null,
+        duration_days: parseInt(req.body.duration_days) || 30,
+        updated_at: new Date()
+      };
       let data;
       if (id) {
         const r = await supa.from("channel_packages").update(patch).eq("id", id).select().single();
