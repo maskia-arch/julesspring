@@ -1252,7 +1252,12 @@ async function _runUserInfo(tg, supabase_db, requesterId, targetId, channelId, r
     } catch (_) {}
   }
 
-  const remaining = access.unlimited ? "∞" : String(FREE_QUERIES_PER_DAY - ((await supabase_db.from("userinfo_queries").select("query_count").eq("user_id", requesterId).eq("query_date", new Date().toISOString().split("T")[0]).maybeSingle().catch(() => ({ data: null }))).data?.query_count || 0));
+  let usedTodayCount = 0;
+  try {
+    const uqr = await supabase_db.from("userinfo_queries").select("query_count").eq("user_id", requesterId).eq("query_date", new Date().toISOString().split("T")[0]).maybeSingle();
+    usedTodayCount = uqr.data?.query_count || 0;
+  } catch (_) {}
+  const remaining = access.unlimited ? "∞" : String(FREE_QUERIES_PER_DAY - usedTodayCount);
   text += `\n<i>Abfragen heute: ${access.unlimited ? "∞" : remaining + "/" + FREE_QUERIES_PER_DAY}</i>`;
 
   const sentMsgParams = { chat_id: sendTo, text: text.trim(), parse_mode: "HTML" };
@@ -1666,8 +1671,7 @@ router.post("/smalltalk", (req, res) => {
             showRefills = r || [];
           }
           // Get channel stats
-          const { data: chStat } = await supabase.from("bot_channels")
-            .select("token_used, token_limit, credits_expire_at, title").eq("id", refChanId).maybeSingle();
+          const { data: chStat } = await (async () => { try { return await supabase.from("bot_channels").select("token_used, token_limit, credits_expire_at, title").eq("id", refChanId).maybeSingle(); } catch { return { data: null }; } })();
           const used = chStat?.token_used || 0;
           const lim  = chStat?.token_limit || 0;
           const exp  = chStat?.credits_expire_at ? new Date(chStat.credits_expire_at).toLocaleDateString("de-DE") : "–";
@@ -1699,8 +1703,8 @@ router.post("/smalltalk", (req, res) => {
           const refillId = parseInt(roMatch[1]);
           const roChanId = roMatch[2];
           delete pendingInputs[String(qUserId)];
-          const { data: refill } = await supabase.from("channel_refills").select("*").eq("id", refillId).single().catch(() => ({ data: null }));
-          const { data: settingsRow } = await supabase.from("settings").select("sellauth_api_key, sellauth_shop_id, sellauth_shop_url").single().catch(() => ({ data: null }));
+          const { data: refill } = await (async () => { try { return await supabase.from("channel_refills").select("*").eq("id", refillId).single(); } catch { return { data: null }; } })();
+          const { data: settingsRow } = await (async () => { try { return await supabase.from("settings").select("sellauth_api_key, sellauth_shop_id, sellauth_shop_url").single(); } catch { return { data: null }; } })();
           if (!refill) { await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Refill nicht gefunden." }); return; }
           await tg.call("sendMessage", { chat_id: String(qUserId), text: "⏳ Erstelle Checkout…" });
           try {
@@ -1768,8 +1772,8 @@ router.post("/smalltalk", (req, res) => {
           const chanId4 = parts4[2];
           delete pendingInputs[String(qUserId)];
 
-          const { data: pkg } = await supabase.from("channel_packages").select("*").eq("id", pkgId).single().catch(() => ({ data: null }));
-          const { data: settingsRow } = await supabase.from("settings").select("sellauth_api_key, sellauth_shop_id, sellauth_shop_url").single().catch(() => ({ data: null }));
+          const { data: pkg } = await (async () => { try { return await supabase.from("channel_packages").select("*").eq("id", pkgId).single(); } catch { return { data: null }; } })();
+          const { data: settingsRow } = await (async () => { try { return await supabase.from("settings").select("sellauth_api_key, sellauth_shop_id, sellauth_shop_url").single(); } catch { return { data: null }; } })();
 
           if (!pkg) {
             await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Paket nicht gefunden." });
@@ -2399,7 +2403,8 @@ ${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}
         const sent = await tg.send(chatId, "⚠️ KI aktuell nicht verfügbar. Credits erschöpft – der Channel-Admin kann Credits nachladen.");
         // PM to admin with refill offer
         if (ch?.added_by_user_id && token) {
-          const { data: refills2 } = await supabase.from("channel_refills").select("id, name, credits, price_eur").eq("is_active", true).order("credits").limit(3).catch(() => ({ data: [] }));
+          let refills2 = [];
+          try { const r2 = await supabase.from("channel_refills").select("id, name, credits, price_eur").eq("is_active", true).order("credits").limit(3); refills2 = r2.data || []; } catch (_) {}
           if (refills2?.length) {
             const rfKb = refills2.map(r => [{ text: `🔋 ${r.name} +${r.credits.toLocaleString()} Credits · ${parseFloat(r.price_eur).toFixed(2)} €`, callback_data: "refill_opt_" + r.id + "_" + chatId }]);
             await tg.call("sendMessage", { chat_id: String(ch.added_by_user_id),
