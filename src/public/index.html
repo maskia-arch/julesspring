@@ -12,6 +12,91 @@
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0d0d0d">
     <link rel="apple-touch-icon" href="/icon-192.png">
+<style>
+    /* ── Settings Folder Navigation (v1.4.49) ─────────────────────────────── */
+    .settings-folder-nav {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      margin-bottom: 12px;
+    }
+    .settings-folder {
+      border: 1px solid #252525;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #141414;
+    }
+    .folder-label {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      background: #1a1a1a;
+      border: none;
+      color: #777;
+      font-size: 0.72rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      cursor: pointer;
+      text-align: left;
+      transition: background 0.15s, color 0.15s;
+    }
+    .folder-label::after {
+      content: '▸';
+      margin-left: auto;
+      font-size: 0.7rem;
+      transition: transform 0.2s;
+      color: #444;
+    }
+    .folder-label.active {
+      background: #0d1e35;
+      color: #60a5fa;
+      border-bottom: 1px solid #1e3a5f;
+    }
+    .folder-label.active::after {
+      transform: rotate(90deg);
+      color: #60a5fa;
+    }
+    .folder-label:hover:not(.active) {
+      background: #1f1f1f;
+      color: #aaa;
+    }
+    #folder-berater .folder-label { border-left: 3px solid #2563eb; }
+    #folder-adminhelper .folder-label { border-left: 3px solid #7c3aed; }
+    #folder-adminhelper .folder-label.active { background: #180d35; color: #a78bfa; border-bottom-color: #5b21b6; }
+    #folder-adminhelper .folder-tabs .tab-btn.active { background: #1e1245; color: #a78bfa; border-color: #7c3aed; }
+    .folder-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 8px 10px 10px 10px;
+      background: #0d0d0d;
+      border-top: 1px solid #1f1f1f;
+    }
+    .folder-tabs .tab-btn {
+      font-size: 0.78rem;
+      padding: 6px 11px;
+      border-radius: 6px;
+      border: 1px solid #252525;
+      background: #171717;
+      color: #777;
+      min-height: 30px;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+    .folder-tabs .tab-btn.active {
+      background: #1e3a5f;
+      color: #93c5fd;
+      border-color: #2563eb;
+      font-weight: 600;
+    }
+    .folder-tabs .tab-btn:hover:not(.active) {
+      background: #1f1f1f;
+      color: #bbb;
+    }
+  </style>
 </head>
 <body>
 
@@ -257,17 +342,34 @@
         <!-- ══ SETTINGS ════════════════════════════════════════════════════ -->
         <section id="settings-section" class="app-section">
             <h2 class="section-title">⚙️ Einstellungen</h2>
-            <div class="tab-bar">
-                <button class="tab-btn active" onclick="showSettingsTab('bot',this)">🤖 Bot</button>
-                <button class="tab-btn" onclick="showSettingsTab('model',this)">🔬 Modell</button>
-                <button class="tab-btn" onclick="showSettingsTab('sellauth-cfg',this)">🛒 Sellauth</button>
-                <button class="tab-btn" onclick="showSettingsTab('telegram-cfg',this)">✈️ Telegram</button>
-                <button class="tab-btn" onclick="showSettingsTab('widget-cfg',this)">🔗 Widget</button>
-                <button class="tab-btn" onclick="showSettingsTab('coupon-cfg',this)">🎟️ Coupon</button>
-                <button class="tab-btn" onclick="showSettingsTab('channel-cfg',this)">📢 Channel</button>
-                <button class="tab-btn" onclick="showSettingsTab('pakete-cfg',this)">📦 Pakete</button>
-                <button class="tab-btn" onclick="showSettingsTab('smalltalk-cfg',this)">💬 Smalltalk</button>
-                <button class="tab-btn" onclick="showSettingsTab('userinfo-cfg',this)">🔍 UserInfo</button>
+            <!-- ══ Folder Tabs ══════════════════════════════════════════════ -->
+            <div class="settings-folder-nav">
+              <!-- Berater Folder -->
+              <div class="settings-folder" id="folder-berater">
+                <button class="folder-label active" onclick="switchFolder('berater',this)">
+                  🧠 Berater
+                </button>
+                <div class="folder-tabs" id="folder-tabs-berater">
+                  <button class="tab-btn active" id="stab-bot"         onclick="showSettingsTab('bot',this)">🤖 Bot</button>
+                  <button class="tab-btn"         id="stab-model"       onclick="showSettingsTab('model',this)">🔬 Modell</button>
+                  <button class="tab-btn"         id="stab-sellauth"    onclick="showSettingsTab('sellauth-cfg',this)">🛒 Sellauth</button>
+                  <button class="tab-btn"         id="stab-telegram"    onclick="showSettingsTab('telegram-cfg',this)">✈️ Telegram</button>
+                  <button class="tab-btn"         id="stab-widget"      onclick="showSettingsTab('widget-cfg',this)">🔗 Widget</button>
+                  <button class="tab-btn"         id="stab-coupon"      onclick="showSettingsTab('coupon-cfg',this)">🎟️ Coupon</button>
+                </div>
+              </div>
+              <!-- AdminHelper Folder -->
+              <div class="settings-folder" id="folder-adminhelper">
+                <button class="folder-label" onclick="switchFolder('adminhelper',this)">
+                  🛡 AdminHelper
+                </button>
+                <div class="folder-tabs" id="folder-tabs-adminhelper" style="display:none;">
+                  <button class="tab-btn" id="stab-channel"   onclick="showSettingsTab('channel-cfg',this)">📢 Channel</button>
+                  <button class="tab-btn" id="stab-pakete"    onclick="showSettingsTab('pakete-cfg',this)">📦 Pakete</button>
+                  <button class="tab-btn" id="stab-smalltalk" onclick="showSettingsTab('smalltalk-cfg',this)">💬 Smalltalk</button>
+                  <button class="tab-btn" id="stab-userinfo"  onclick="showSettingsTab('userinfo-cfg',this)">🔍 UserInfo</button>
+                </div>
+              </div>
             </div>
 
             <div id="settings-tab-bot" class="tab-pane active">
@@ -743,12 +845,49 @@ function showKbTab(tab, btn) {
     if (tab === 'browse') { loadKbCategories(); loadKbEntries(); }
 }
 
+
+// ── Settings Folder Navigation (v1.4.49) ─────────────────────────────────────
+function switchFolder(folder, clickedLabel) {
+  var folders = ['berater', 'adminhelper'];
+  folders.forEach(function(f) {
+    var lbl  = document.querySelector('#folder-' + f + ' .folder-label');
+    var tabs = document.getElementById('folder-tabs-' + f);
+    if (f === folder) {
+      lbl.classList.add('active');
+      if (tabs) tabs.style.display = '';
+    } else {
+      lbl.classList.remove('active');
+      if (tabs) tabs.style.display = 'none';
+    }
+  });
+  // If no sub-tab in target folder is active yet, activate the first one
+  var tabsEl = document.getElementById('folder-tabs-' + folder);
+  var hasActive = tabsEl && tabsEl.querySelector('.tab-btn.active');
+  if (!hasActive && tabsEl) {
+    var firstBtn = tabsEl.querySelector('.tab-btn');
+    if (firstBtn) firstBtn.click();
+  }
+}
+
 function showSettingsTab(tab, btn) {
     document.querySelectorAll('[id^="settings-tab-"]').forEach(function(p) { p.classList.remove('active'); });
-    document.querySelectorAll('#settings-section .tab-bar .tab-btn').forEach(function(b) { b.classList.remove('active'); });
+    // Clear all sub-tab actives (both folders)
+    document.querySelectorAll('.folder-tabs .tab-btn').forEach(function(b) { b.classList.remove('active'); });
     var el = document.getElementById('settings-tab-' + tab);
     if (el) el.classList.add('active');
     if (btn) btn.classList.add('active');
+    // Auto-switch to correct folder when called programmatically
+    var BERATER_TABS = ['bot','model','sellauth-cfg','telegram-cfg','widget-cfg','coupon-cfg'];
+    var targetFolder = BERATER_TABS.indexOf(tab) !== -1 ? 'berater' : 'adminhelper';
+    var folderActive = document.querySelector('#folder-' + targetFolder + ' .folder-label.active');
+    if (!folderActive) {
+      ['berater','adminhelper'].forEach(function(f) {
+        var lbl  = document.querySelector('#folder-' + f + ' .folder-label');
+        var tabs = document.getElementById('folder-tabs-' + f);
+        if (f === targetFolder) { if(lbl) lbl.classList.add('active'); if(tabs) tabs.style.display=''; }
+        else { if(lbl) lbl.classList.remove('active'); if(tabs) tabs.style.display='none'; }
+      });
+    }
     if (tab === 'widget-cfg'   && typeof initWidgetTab      === 'function') initWidgetTab();
     if (tab === 'coupon-cfg') {
         if (typeof loadActiveCoupon === 'function') loadActiveCoupon();

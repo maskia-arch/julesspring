@@ -76,29 +76,36 @@ async function sendSettingsMenu(tg, sendTo, channelId, ch) {
   const approved  = t("status_approved",  lang);
   const pending   = t("status_pending",   lang);
 
-  const statusText  = ch?.is_approved      ? approved : pending;
-  const aiText      = ch?.ai_enabled       ? aiActive : aiOff;
-  const safeText    = ch?.safelist_enabled ? safeOn   : safeOff;
+  const statusText  = ch?.is_approved       ? approved : pending;
+  const aiText      = ch?.ai_enabled        ? aiActive : aiOff;
+  const safeText    = ch?.safelist_enabled  ? safeOn   : safeOff;
+  const fbText      = ch?.feedback_enabled  ? "✅ Ein" : "❌ Aus";
 
   return await tg.call("sendMessage", {
     chat_id: sendTo,
     text: t("settings_header", lang, ch?.title || channelId) + "\n\n" +
           `Status: ${statusText}\n` +
           `KI-Features: ${aiText}\n` +
-          `Safelist: ${safeText}\n\n` +
+          `Safelist: ${safeText} | Feedback: ${fbText}\n\n` +
           t("choose_action", lang),
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: [
+      // ── Channel-Einstellungen ────────────────────────────────────────────────
       [{ text: t("btn_welcome",  lang), callback_data: `cfg_welcome_${channelId}` },
        { text: t("btn_goodbye",  lang), callback_data: `cfg_goodbye_${channelId}` }],
-      [{ text: t("btn_schedule", lang), callback_data: `cfg_schedule_${channelId}` }],
+      [{ text: t("btn_schedule", lang), callback_data: `cfg_schedule_${channelId}` },
+       { text: t("btn_language", lang), callback_data: `cfg_lang_${channelId}` }],
       [{ text: t("btn_clean",    lang), callback_data: `cfg_clean_${channelId}` },
        { text: t("btn_stats",    lang), callback_data: `cfg_stats_${channelId}` }],
-      [{ text: t("btn_safelist", lang), callback_data: `cfg_safelist_${channelId}` }],
-      [{ text: t("btn_ai",       lang), callback_data: `cfg_ai_${channelId}` }],
-      [{ text: t("btn_language", lang), callback_data: `cfg_lang_${channelId}` }],
-      [{ text: "🔍 UserInfo",            callback_data: `cfg_userinfo_${channelId}` }],
-        [{ text: "🚫 Blacklist",            callback_data: `cfg_blacklist_${channelId}` }],
+      // ── Moderation ──────────────────────────────────────────────────────────
+      [{ text: t("btn_safelist", lang), callback_data: `cfg_safelist_${channelId}` },
+       { text: "🚫 Blacklist",          callback_data: `cfg_blacklist_${channelId}` }],
+      [{ text: "🔍 UserInfo",           callback_data: `cfg_userinfo_${channelId}` }],
+      // ── AI Features ─────────────────────────────────────────────────────────
+      [{ text: t("btn_ai",       lang), callback_data: `cfg_ai_${channelId}` },
+       { text: "📚 Wissensdatenbank",   callback_data: `cfg_knowledge_${channelId}` }],
+      // ── Feedback & Reputation ─────────────────────────────────────────────
+      [{ text: `💬 Feedback ${ch?.feedback_enabled ? "✅" : "❌"}`, callback_data: `cfg_feedback_${channelId}` }],
     ]}
   });
 }
@@ -163,18 +170,35 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "safelist": {
-      const safelistSvc = require("../services/adminHelper/safelistService");
+      // ── 🛡 Safelist & Scamliste Hub ─────────────────────────────────────
+      const lang2 = ch?.bot_language || "de";
       const slEnabled = ch?.safelist_enabled || false;
+
+      const { data: safeCount } = await supabase_db.from("user_feedbacks")
+        .select("id", { count: "exact" })
+        .eq("channel_id", channelId).eq("feedback_type", "positive").eq("status", "approved");
+      const { data: scamCount } = await supabase_db.from("scam_entries")
+        .select("id", { count: "exact" }).eq("channel_id", channelId);
+      const sl = safeCount?.length || 0;
+      const sc = scamCount?.length || 0;
+
       await tg.call("sendMessage", {
         chat_id: String(userId),
-        text: `🛡 <b>Safelist-Einstellungen</b>\n\nStatus: ${slEnabled ? "✅ Aktiv" : "❌ Inaktiv"}\n\nWas möchtest du tun?`,
+        text: `🛡 <b>Safelist & Scamliste</b> — ${ch?.title || channelId}\n\n` +
+              `Status: ${slEnabled ? "✅ Aktiv" : "❌ Inaktiv"}\n` +
+              `✅ Safelist: ${sl} Einträge\n` +
+              `⛔ Scamliste: ${sc} Einträge\n\n` +
+              `Mit <code>/safelist @username</code> oder <code>/scamlist @username</code> im Privat-Chat direkt eintragen.`,
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [
-          [{ text: slEnabled ? "🔴 Safelist deaktivieren" : "🟢 Safelist aktivieren",
+          [{ text: slEnabled ? "🔴 Deaktivieren" : "🟢 Aktivieren",
              callback_data: `cfg_sl_toggle_${channelId}` }],
-          [{ text: "📋 Offene Reviews", callback_data: `cfg_sl_reviews_${channelId}` },
-           { text: "📊 Übersicht",      callback_data: `cfg_sl_overview_${channelId}` }],
-          backBtn(channelId, ch?.bot_language||"de")
+          [{ text: `✅ Safelist (${sl})`,   callback_data: `cfg_sl_safeview_${channelId}` },
+           { text: `⛔ Scamliste (${sc})`, callback_data: `cfg_sl_scamview_${channelId}` }],
+          [{ text: "➕ User zur Safelist",   callback_data: `cfg_sl_adduser_${channelId}` },
+           { text: "➕ User zur Scamliste", callback_data: `cfg_sl_addscam_${channelId}` }],
+          [{ text: "📋 Offene Reviews",     callback_data: `cfg_sl_reviews_${channelId}` }],
+          backBtn(channelId, lang2)
         ]}
       });
       break;
@@ -186,11 +210,31 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         text: `🛡 Safelist ${newVal ? "✅ aktiviert" : "❌ deaktiviert"}.`, parse_mode: "HTML" });
       break;
     }
+    case "sl_adduser": {
+      // Scene: admin types @username or userId to add to safelist
+      pendingInputs[String(userId)] = { action: "safelist_add_user", channelId };
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✅ <b>User zur Safelist hinzufügen</b>\n\nSende @username oder Telegram-ID:\n/cancel zum Abbrechen`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [backBtn(channelId, ch?.bot_language||"de")] }
+      });
+      break;
+    }
+    case "sl_addscam": {
+      // Scene: admin types @username or userId to add to scamlist
+      pendingInputs[String(userId)] = { action: "scamlist_add_user", channelId };
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `⛔ <b>User zur Scamliste hinzufügen</b>\n\nSende @username oder Telegram-ID:\n/cancel zum Abbrechen`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [backBtn(channelId, ch?.bot_language||"de")] }
+      });
+      break;
+    }
     case "sl_reviews": {
       const safelistSvc2 = require("../services/adminHelper/safelistService");
       const reviews = await safelistSvc2.getPendingReviews(channelId);
       if (!reviews.length) {
-        await tg.call("sendMessage", { chat_id: String(userId), text: "🛡 Keine offenen Reviews.", parse_mode: "HTML" });
+        await tg.call("sendMessage", { chat_id: String(userId), text: "📋 Keine offenen Reviews.", parse_mode: "HTML" });
       } else {
         for (const r of reviews.slice(0, 5)) {
           const emoji = r.feedback_type === "positive" ? "✅" : "⚠️";
@@ -210,366 +254,121 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       }
       break;
     }
-    case "sl_overview": {
-      const { data: safeList } = await supabase_db.from("user_feedbacks")
-        .select("id, target_username, target_user_id, feedback_text")
-        .eq("channel_id", channelId).eq("feedback_type", "positive").eq("status", "approved").limit(20);
-      const { data: scamList } = await supabase_db.from("scam_entries")
-        .select("user_id, username, reason").eq("channel_id", channelId).limit(20);
-
-      let txt = `📊 <b>Listen-Übersicht</b>\n\n`;
-      txt += `✅ Safelist: ${safeList?.length || 0} Einträge\n`;
-      txt += `⛔ Scamliste: ${scamList?.length || 0} Einträge\n`;
-
-      const kb = [
-        [{ text: `✅ Safelist anzeigen (${safeList?.length||0})`,   callback_data: `cfg_sl_safeview_${channelId}` }],
-        [{ text: `⛔ Scamliste anzeigen (${scamList?.length||0})`, callback_data: `cfg_sl_scamview_${channelId}` }],
-        backBtn(channelId, ch?.bot_language||"de")
-      ];
-      await tg.call("sendMessage", { chat_id: String(userId), text: txt, parse_mode: "HTML",
-        reply_markup: { inline_keyboard: kb }
-      });
-      break;
-    }
     case "sl_safeview": {
       const { data: safeList } = await supabase_db.from("user_feedbacks")
-        .select("id, target_username, target_user_id, feedback_text, submitted_by_username")
-        .eq("channel_id", channelId).eq("feedback_type", "positive").eq("status", "approved").limit(20);
+        .select("id, target_username, target_user_id, submitted_by_username, created_at")
+        .eq("channel_id", channelId).eq("feedback_type", "positive").eq("status", "approved")
+        .order("created_at", { ascending: false }).limit(25);
       if (!safeList?.length) {
         await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Safelist ist leer." });
         break;
       }
-      // Show paginated list with delete buttons
+      const lines = safeList.map((e, i) =>
+        `${i+1}. ✅ @${e.target_username || e.target_user_id} — <i>von @${e.submitted_by_username||"admin"}</i>`
+      ).join("\n");
       const kb = safeList.map(e => [{
         text: `🗑 @${e.target_username||e.target_user_id}`,
         callback_data: `cfg_sl_safedel_${e.id}_${channelId}`
       }]);
       kb.push(backBtn(channelId, ch?.bot_language||"de"));
-      const lines = safeList.map(e =>
-        `✅ @${e.target_username||e.target_user_id}` +
-        (e.feedback_text ? ` — ${e.feedback_text.substring(0,60)}` : "") +
-        (e.submitted_by_username ? ` (von @${e.submitted_by_username})` : "")
-      ).join("\n");
       await tg.call("sendMessage", { chat_id: String(userId),
-        text: `✅ <b>Safelist</b>\n\n${lines}\n\nZum Löschen tippe den Eintrag:`,
+        text: `✅ <b>Safelist</b> (${safeList.length})\n\n${lines}`,
         parse_mode: "HTML", reply_markup: { inline_keyboard: kb }
       });
       break;
     }
     case "sl_safedel": {
-      const slDelMatch = data.match(/^cfg_sl_safedel_(\d+)_(-?\d+)$/);
-      if (slDelMatch) {
-        await supabase_db.from("user_feedbacks").delete().eq("id", slDelMatch[1]).eq("channel_id", slDelMatch[2]);
-        await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Safelist-Eintrag gelöscht." });
+      const m = data.match(/^cfg_sl_safedel_(\d+)_(-?\d+)$/);
+      if (m) {
+        await supabase_db.from("user_feedbacks").delete().eq("id", m[1]).eq("channel_id", m[2]);
+        await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Safelist-Eintrag entfernt." });
       }
       break;
     }
     case "sl_scamview": {
       const { data: scamList } = await supabase_db.from("scam_entries")
-        .select("user_id, username, reason, created_at").eq("channel_id", channelId).limit(20);
+        .select("user_id, username, reason, created_at").eq("channel_id", channelId)
+        .order("created_at", { ascending: false }).limit(25);
       if (!scamList?.length) {
         await tg.call("sendMessage", { chat_id: String(userId), text: "⛔ Scamliste ist leer." });
         break;
       }
+      const lines = scamList.map((e, i) =>
+        `${i+1}. ⛔ @${e.username||e.user_id}${e.reason ? ` — <i>${e.reason.substring(0,60)}</i>` : ""}`
+      ).join("\n");
       const kb = scamList.map(e => [{
         text: `🗑 @${e.username||e.user_id}`,
         callback_data: `cfg_sl_scamdel_${e.user_id}_${channelId}`
       }]);
       kb.push(backBtn(channelId, ch?.bot_language||"de"));
-      const lines = scamList.map(e =>
-        `⛔ @${e.username||e.user_id}` + (e.reason ? ` — ${e.reason.substring(0,60)}` : "")
-      ).join("\n");
       await tg.call("sendMessage", { chat_id: String(userId),
-        text: `⛔ <b>Scamliste</b>\n\n${lines}\n\nZum Löschen tippe den Eintrag:`,
+        text: `⛔ <b>Scamliste</b> (${scamList.length})\n\n${lines}`,
         parse_mode: "HTML", reply_markup: { inline_keyboard: kb }
       });
       break;
     }
     case "sl_scamdel": {
-      const scamDelMatch = data.match(/^cfg_sl_scamdel_(\d+)_(-?\d+)$/);
-      if (scamDelMatch) {
-        await supabase_db.from("scam_entries").delete().eq("user_id", scamDelMatch[1]).eq("channel_id", scamDelMatch[2]);
-        await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Scamliste-Eintrag gelöscht." });
+      const m2 = data.match(/^cfg_sl_scamdel_(-?\d+)_(-?\d+)$/);
+      if (m2) {
+        await supabase_db.from("scam_entries").delete().eq("user_id", m2[1]).eq("channel_id", m2[2]);
+        await tg.call("sendMessage", { chat_id: String(userId), text: "⛔ Scamliste-Eintrag entfernt." });
       }
       break;
     }
-    case "schedule": {
-      // Zeige Übersicht + Optionen
-      const { data: schedMsgs } = await supabase_db.from("scheduled_messages")
-        .select("id, message, next_run_at, repeat, cron_expr, photo_url, photo_file_id")
-        .eq("channel_id", channelId).eq("is_active", true).order("next_run_at");
-
-      const aiOn = ch?.ai_enabled;
-      const freeLimit = 3;
-      const freeCount = (schedMsgs || []).filter(m => m.repeat).length;
-      const canAddRepeat = aiOn || freeCount < freeLimit;
-
-      let txt = `⏰ <b>Geplante Nachrichten</b>\n\n`;
-      if (!schedMsgs?.length) {
-        txt += "Noch keine geplanten Nachrichten.\n";
-      } else {
-        schedMsgs.slice(0, 8).forEach((m, i) => {
-          const dt = m.next_run_at ? new Date(m.next_run_at).toLocaleString("de-DE") : "–";
-          txt += `${i+1}. ${m.message.substring(0,60)}${m.message.length>60?"…":""}\n`;
-          txt += `   📅 ${dt}${m.repeat ? " 🔁 " + (m.cron_expr||"") : ""}\n`;
-        });
-      }
-      if (!aiOn) txt += `\n🆓 Free: ${freeCount}/${freeLimit} Wiederholungen · Keine Medien`;
-
-      await tg.call("sendMessage", {
-        chat_id: String(userId), text: txt, parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [
-          [{ text: "➕ Neue Nachricht erstellen", callback_data: `cfg_sched_new_${channelId}` }],
-          ...(schedMsgs?.length ? [[{ text: "🗑 Nachricht löschen", callback_data: `cfg_sched_del_${channelId}` }]] : []),
-          backBtn(channelId, ch?.bot_language||"de")
-        ]}
-      });
-      break;
-    }
-    case "sched_new": {
-      // Wizard Schritt 1: Text eingeben
-      pendingInputs[String(userId)] = {
-        action: "sched_wizard_text", channelId, aiOn: ch?.ai_enabled,
-        freeMode: !ch?.ai_enabled
-      };
-      await tg.call("sendMessage", { chat_id: String(userId),
-        text: "📝 <b>Neue geplante Nachricht</b>\n\nSchritt 1/4: Gib den Nachrichtentext ein:\n\n/cancel zum Abbrechen",
-        parse_mode: "HTML" });
-      break;
-    }
-    case "sched_del": {
-      const { data: msgs2 } = await supabase_db.from("scheduled_messages")
-        .select("id, message").eq("channel_id", channelId).eq("is_active", true).limit(10);
-      if (!msgs2?.length) {
-        await tg.call("sendMessage", { chat_id: String(userId), text: "Keine aktiven geplanten Nachrichten.", parse_mode: "HTML" });
-      } else {
-        const keyboard = msgs2.map(m => [{
-          text: "🗑 " + m.message.substring(0, 40),
-          callback_data: `cfg_sched_delid_${m.id}_${channelId}`
-        }]);
-        await tg.call("sendMessage", { chat_id: String(userId),
-          text: "Welche Nachricht soll gelöscht werden?",
-          reply_markup: { inline_keyboard: keyboard } });
-      }
-      break;
-    }
-    case "sched_delid": {
-      const msgId = parts[2];
-      await supabase_db.from("scheduled_messages").update({ is_active: false }).eq("id", msgId);
-      await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Gelöscht.", parse_mode: "HTML" });
-      break;
-    }
-    case "ai": {
-      if (!ch?.ai_enabled) {
-        await tg.call("sendMessage", { chat_id: String(userId),
-          text: "🤖 <b>KI-Features</b>\n\nStatus: ❌ Inaktiv\n\nFür Aktivierung wende dich an @autoacts.",
-          parse_mode: "HTML" });
-        break;
-      }
-      const tokenInfo = ch.token_limit
-        ? `🔋 Credit-Budget: ${ch.token_used||0} / ${ch.token_limit} (${Math.round((ch.token_used||0)/ch.token_limit*100)}%)`
-        : "🔋 Credit-Budget: unbegrenzt";
-      const lastSumm = ch.last_summary_at
-        ? `Letzte Zusammenfassung: ${new Date(ch.last_summary_at).toLocaleDateString("de-DE")}`
-        : "Noch keine Zusammenfassung erstellt";
+    case "feedback": {
+      // ── 💬 Feedback-System Hub ────────────────────────────────────────────
+      const fbEnabled = ch?.feedback_enabled || false;
+      const { data: fbStats } = await supabase_db.from("user_reputation")
+        .select("pos_count, neg_count")
+        .eq("channel_id", channelId);
+      const totalPos = fbStats?.reduce((a,b) => a + (b.pos_count||0), 0) || 0;
+      const totalNeg = fbStats?.reduce((a,b) => a + (b.neg_count||0), 0) || 0;
 
       await tg.call("sendMessage", {
         chat_id: String(userId),
-        text: `🤖 <b>KI-Features Dashboard</b>\n\n${tokenInfo}\n${lastSumm}\n\nWas möchtest du einstellen?`,
+        text: `💬 <b>Feedback-System</b> — ${ch?.title || channelId}\n\n` +
+              `Status: ${fbEnabled ? "✅ Aktiv" : "❌ Inaktiv"}\n` +
+              `✅ Positive Feedbacks: ${totalPos}\n` +
+              `⚠️ Negative Feedbacks: ${totalNeg}\n\n` +
+              `Wenn aktiviert erkennt der Bot Feedbacks automatisch im Channel und fragt den User nach Bestätigung.\n\n` +
+              `Manuell: <code>/safelist @user</code> · <code>/scamlist @user</code>`,
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [
-          [{ text: "✏️ System-Prompt",       callback_data: `cfg_ai_prompt_${channelId}` }],
-          [{ text: "📰 Tageszusammenfassung", callback_data: `cfg_ai_summary_${channelId}` }],
-          [{ text: "📊 Mein Credit-Verbrauch", callback_data: `cfg_ai_stats_${channelId}` }],
-          [{ text: "🔇 Gesperrte Themen",    callback_data: `cfg_ai_threads_${channelId}` }],
+          [{ text: fbEnabled ? "🔴 Feedback deaktivieren" : "🟢 Feedback aktivieren",
+             callback_data: `cfg_fb_toggle_${channelId}` }],
+          [{ text: "📋 Offene Reviews",           callback_data: `cfg_sl_reviews_${channelId}` }],
+          [{ text: "🏆 Top 10 Ranking",            callback_data: `cfg_fb_ranking_${channelId}` }],
           backBtn(channelId, ch?.bot_language||"de")
         ]}
       });
       break;
     }
-    case "ai_prompt": {
-      pendingInputs[String(userId)] = { action: "set_ai_prompt", channelId };
+    case "fb_toggle": {
+      const fbNew = !(ch?.feedback_enabled);
+      await supabase_db.from("bot_channels").update({ feedback_enabled: fbNew, updated_at: new Date() }).eq("id", channelId);
       await tg.call("sendMessage", { chat_id: String(userId),
-        text: `✏️ <b>System-Prompt</b>\n\nAktuell:\n<i>${(ch?.system_prompt||"(kein)").substring(0,200)}</i>\n\nSende den neuen System-Prompt:\n/cancel zum Abbrechen`,
-        parse_mode: "HTML" });
+        text: `💬 Feedback-System ${fbNew ? "✅ aktiviert" : "❌ deaktiviert"}.`, parse_mode: "HTML" });
       break;
     }
-    case "ai_stats": {
-      const tUsed  = ch?.token_used  || 0;
-      const tLimit = ch?.token_limit;
-      const exhausted = ch?.token_budget_exhausted || false;
-      const pct = tLimit ? Math.round(tUsed / tLimit * 100) : 0;
-      const bar = tLimit ? `[${"█".repeat(Math.min(10, Math.round(pct/10)))}${"░".repeat(Math.max(0, 10 - Math.round(pct/10)))}] ${pct}%` : "";
-      await tg.call("sendMessage", { chat_id: String(userId),
-        text: `📊 <b>Credit-Verbrauch</b>\n\n` +
-              `🔋 ${tUsed.toLocaleString()} / ${tLimit ? tLimit.toLocaleString() : "∞"} Token\n` +
-              (bar ? `${bar}\n` : "") +
-              `\nStatus: ${exhausted ? "⛔ Budget erschöpft" : "✅ Aktiv"}\n\n` +
-              (exhausted
-                ? "⚠️ Dein Credit-Budget ist aufgebraucht. Kontaktiere @autoacts um Token aufzuladen."
-                : `Für Token-Aufladung: @autoacts`),
-        parse_mode: "HTML" });
-      break;
-    }
-    case "ai_summary": {
-      // Cooldown only if last summary was successful (≥10 Credits verbraucht)
-      const lastSummaryAt = ch?.last_summary_at ? new Date(ch.last_summary_at) : null;
-      const lastSummaryTokens = ch?.last_summary_tokens || 0;
-      const hoursSince = lastSummaryAt ? (Date.now() - lastSummaryAt.getTime()) / 3600000 : 99;
-      const lang = ch?.bot_language || "de";
-      if (hoursSince < 24 && lastSummaryTokens >= 10) {
-        const nextAt = new Date(lastSummaryAt.getTime() + 86400000).toLocaleTimeString("de-DE");
-        await tg.call("sendMessage", { chat_id: String(userId),
-          text: t("summary_cooldown", lang, nextAt) });
+    case "fb_ranking": {
+      const { data: top } = await supabase_db.rpc("get_top_sellers", { p_channel_id: channelId, p_limit: 10 });
+      if (!top?.length) {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "🏆 Noch kein Ranking verfügbar." });
         break;
       }
-      // Schätzung: ~300 Credits, x2 für Admin = 600 Credits
-      const SUMMARY_TOKEN_EST = 300;
-      const SUMMARY_BILLED    = SUMMARY_TOKEN_EST * 2;  // Admin zahlt 2x Credits
-      const tUsed2   = ch?.token_used  || 0;
-      const tLimit2  = ch?.token_limit;
-      const remaining = tLimit2 ? tLimit2 - tUsed2 : Infinity;
-      const willGoNeg = tLimit2 && (tUsed2 + SUMMARY_BILLED) > tLimit2;
-
-      if (willGoNeg) {
-        await tg.call("sendMessage", { chat_id: String(userId),
-          text: `⚠️ <b>Achtung!</b> Diese Zusammenfassung kostet ca. <b>${SUMMARY_BILLED} Token</b>.\n` +
-                `Dein verbleibendes Budget: <b>${remaining.toLocaleString()} Token</b>.\n\n` +
-                `Nach der Zusammenfassung kann die KI vorübergehend deaktiviert werden.\n\nTrotzdem erstellen?`,
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: [[
-            { text: "✅ Ja, erstellen",   callback_data: `cfg_ai_summary_confirm_${channelId}` },
-            { text: "❌ Abbrechen",       callback_data: `cfg_ai_abort_${channelId}` }
-          ], backBtn(channelId, ch?.bot_language||"de")]
-          }
-        });
-        break;
-      }
-
+      const medals = ["🥇","🥈","🥉"];
+      const lines = top.map((u, i) =>
+        `${medals[i] || `${i+1}.`} @${u.username || u.user_id} — ${u.score} Pkt ` +
+        `(✅ ${u.pos_count} | ⚠️ ${u.neg_count})`
+      ).join("\n");
       await tg.call("sendMessage", { chat_id: String(userId),
-        text: t("summary_creating", lang, SUMMARY_BILLED) });
-      await _runDailySummary(supabase_db, channelId, userId, tg, ch, lang);
-      break;
-    }
-    case "ai_summary_confirm": {
-      const lang2 = ch?.bot_language || "de";
-      await tg.call("sendMessage", { chat_id: String(userId),
-        text: t("summary_creating", lang2, 600) });
-      await _runDailySummary(supabase_db, channelId, userId, tg, ch, lang2);
-      break;
-    }
-    case "ai_threads": {
-      const blocked = Array.isArray(ch?.blocked_thread_ids) ? ch.blocked_thread_ids : [];
-      await tg.call("sendMessage", { chat_id: String(userId),
-        text: `🔇 <b>Gesperrte Themen</b>\n\n` +
-              (blocked.length
-                ? `Gesperrte Thread-IDs:\n${blocked.map(id => `• ${id}`).join("\n")}\n\n`
-                : "Aktuell sind keine Themen gesperrt.\n\n") +
-              `Um ein Thema zu sperren: Gehe in das Thema und sende einem beliebigen Mitglied die Nachricht mit der Thread-ID.\n\n` +
-              `Thread-ID sperren/entsperren per Dashboard oder sende mir hier die ID.`,
-        parse_mode: "HTML" });
-      pendingInputs[String(userId)] = { action: "set_blocked_threads", channelId };
-      break;
-    }
-    case "ai_abort": {
-      await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Abgebrochen." });
-      break;
-    }
-    case "blacklist": {
-      const aiOn = ch?.ai_enabled;
-      const { data: blEntries } = await supabase_db.from("channel_blacklist")
-        .select("word, severity, category").eq("channel_id", channelId).order("category").limit(30);
-
-      let txt = `🚫 <b>Blacklist</b> — ${(blEntries||[]).length} Einträge\n\n`;
-      if (blEntries?.length) {
-        const byCategory = {};
-        blEntries.forEach(e => {
-          if (!byCategory[e.category]) byCategory[e.category] = [];
-          byCategory[e.category].push(`<code>${e.word}</code> [${e.severity}]`);
-        });
-        Object.entries(byCategory).forEach(([cat, words]) => {
-          txt += `<b>${cat}:</b> ${words.slice(0,8).join(", ")}\n`;
-        });
-      } else {
-        txt += "Noch keine Einträge.\n";
-      }
-      txt += "\nAktion wählen:";
-
-      const kb = [
-        [{ text: "➕ Wort hinzufügen",  callback_data: `cfg_bl_add_${channelId}` }],
-        [{ text: "🗑 Wort entfernen",   callback_data: `cfg_bl_remove_${channelId}` }],
-      ];
-      if (aiOn) {
-        kb.push([{ text: "🤖 KI Blacklist füllen", callback_data: `cfg_bl_ai_${channelId}` }]);
-      }
-      kb.push(backBtn(channelId, ch?.bot_language||"de"));
-
-      await tg.call("sendMessage", { chat_id: String(userId), text: txt, parse_mode: "HTML",
-        reply_markup: { inline_keyboard: kb }
-      });
-      break;
-    }
-    case "bl_add": {
-      pendingInputs[String(userId)] = { action: "bl_add_word", channelId };
-      await tg.call("sendMessage", { chat_id: String(userId),
-        text: "🚫 <b>Wort hinzufügen</b>\n\nFormat: <code>Wort</code> oder <code>Wort|Schwere|Kategorie</code>\n\nSchwere: warn · mute · ban · tolerated\nBeispiele:\n<code>PayPal</code>\n<code>Betrug|ban|Scam</code>\n<code>Werbung|mute|Spam</code>\n\n/cancel zum Abbrechen",
+        text: `🏆 <b>Top 10 Verkäufer</b> — ${ch?.title || channelId}\n\n${lines}`,
         parse_mode: "HTML" });
       break;
     }
-    case "bl_remove": {
-      const { data: blList } = await supabase_db.from("channel_blacklist")
-        .select("id, word, severity").eq("channel_id", channelId).limit(20);
-      if (!blList?.length) {
-        await tg.call("sendMessage", { chat_id: String(userId), text: "Keine Einträge zum Löschen." });
-        break;
-      }
-      const kb = blList.map(e => [{ text: `🗑 ${e.word} [${e.severity}]`, callback_data: `cfg_bl_del_${e.id}_${channelId}` }]);
-      kb.push(backBtn(channelId, ch?.bot_language||"de"));
-      await tg.call("sendMessage", { chat_id: String(userId), text: "Welchen Eintrag löschen?",
-        reply_markup: { inline_keyboard: kb }
-      });
-      break;
-    }
-    case "bl_del": {
-      // data = cfg_bl_del_{entryId}_{channelId} — smart parser may split wrong, use own regex
-      const blDelFull = data.match(/^cfg_bl_del_(\d+)_(-?\d+)$/);
-      if (blDelFull) {
-        const delId = blDelFull[1];
-        const delChan = blDelFull[2];
-        try {
-          await supabase_db.from("channel_blacklist").delete().eq("id", delId).eq("channel_id", delChan);
-          await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Eintrag gelöscht.", parse_mode: "HTML" });
-        } catch (e) {
-          await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
-        }
-      }
-      break;
-    }
-    case "bl_ai": {
-      // AI fills blacklist by category
-      if (!ch?.ai_enabled) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ KI-Features nicht aktiviert." }); break; }
-      pendingInputs[String(userId)] = { action: "bl_ai_category", channelId };
-      await tg.call("sendMessage", { chat_id: String(userId),
-        text: "🤖 <b>KI Blacklist</b>\n\nWelche Kategorie soll die KI befüllen?\nBeispiele: Beleidigungen · Spam · Betrug · Werbung · Zahlungsanbieter\n\nGib die Kategorie ein:",
-        parse_mode: "HTML" });
-      break;
-    }
-    case "lang": {
-      const currentLang = ch?.bot_language || "de";
-      const langButtons = Object.entries(SUPPORTED_LANGUAGES).map(([code, label]) => [{
-        text: (code === currentLang ? "✅ " : "") + label,
-        callback_data: `cfg_setlang_${code}_${channelId}`
-      }]);
-      await tg.call("sendMessage", { chat_id: String(userId),
-        text: SUPPORTED_LANGUAGES[currentLang]
-          ? `🌐 <b>Bot-Sprache</b> | <b>Bot Language</b>\n\nAktuell: ${SUPPORTED_LANGUAGES[currentLang]}`
-          : "🌐 Sprache wählen",
-        parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [...langButtons, backBtn(channelId, currentLang)] }
-      });
-      break;
-    }
-    case "back": {
+
+
+        case "back": {
       // Back to main settings menu
       await sendSettingsMenu(tg, String(userId), channelId, ch);
       break;
@@ -586,6 +385,122 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [backBtn(channelId, ch?.bot_language||"de")] }
       });
+      break;
+    }
+
+    case "knowledge": {
+      // ── 📚 Channel Wissensdatenbank ──────────────────────────────────────
+      const lang2 = ch?.bot_language || "de";
+      try {
+        const { data: kbEntries } = await supabase_db
+          .from("channel_knowledge")
+          .select("id, title, category, content, created_at")
+          .eq("channel_id", String(channelId))
+          .order("created_at", { ascending: false })
+          .limit(20);
+
+        const count = kbEntries?.length || 0;
+        let preview = "";
+        if (count > 0) {
+          preview = "\n\n<b>Letzte Einträge:</b>\n" +
+            kbEntries.slice(0, 5).map((e, i) =>
+              `${i+1}. <i>${(e.title || e.content.substring(0,40)+"…").substring(0,50)}</i>`
+            ).join("\n");
+        }
+
+        const kb = [
+          [{ text: "➕ Neuer Wissenseintrag",    callback_data: `cfg_kb_add_${channelId}` }],
+        ];
+        if (count > 0) {
+          kb.push([{ text: `🗑 Eintrag löschen (${count} total)`, callback_data: `cfg_kb_delete_${channelId}` }]);
+        }
+        kb.push(backBtn(channelId, lang2));
+
+        await tg.call("sendMessage", {
+          chat_id: String(userId),
+          text: `📚 <b>Wissensdatenbank</b> — ${ch?.title || channelId}\n\n` +
+                `<b>${count} Einträge</b> in der Channel-KI hinterlegt.` +
+                preview + "\n\n" +
+                "Neue Einträge werden von OpenAI analysiert, kategorisiert und als Vektoreinbettung gespeichert. " +
+                "Die Smalltalk-AI nutzt das Wissen automatisch bei passenden Fragen.",
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: kb }
+        });
+      } catch (e) {
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: "❌ Fehler beim Laden der Wissensdatenbank: " + e.message });
+      }
+      break;
+    }
+    case "kb_add": {
+      pendingInputs[String(userId)] = { action: "kb_add_entry", channelId };
+      await tg.call("sendMessage", {
+        chat_id: String(userId),
+        text: `📚 <b>Neuer Wissenseintrag</b>\n\n` +
+              `Sende den Text den du in die Wissensdatenbank aufnehmen möchtest.\n\n` +
+              `Beispiele:\n` +
+              `• FAQs und typische Fragen\n` +
+              `• Preise und Produktinfos\n` +
+              `• Regeln und Hinweise\n` +
+              `• Kontaktdaten\n\n` +
+              `<i>OpenAI analysiert den Eintrag, erstellt eine Zusammenfassung und kategorisiert ihn automatisch.</i>\n\n` +
+              `/cancel zum Abbrechen`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [backBtn(channelId, ch?.bot_language||"de")] }
+      });
+      break;
+    }
+    case "kb_delete": {
+      // Show paginated list of entries to delete
+      try {
+        const { data: kbAll } = await supabase_db
+          .from("channel_knowledge")
+          .select("id, title, content, category")
+          .eq("channel_id", String(channelId))
+          .order("created_at", { ascending: false })
+          .limit(20);
+
+        if (!kbAll?.length) {
+          await tg.call("sendMessage", { chat_id: String(userId),
+            text: "📚 Keine Einträge vorhanden." });
+          break;
+        }
+
+        const delKb = kbAll.map(e => [{
+          text: `🗑 ${(e.title || e.content.substring(0,35)+"…").substring(0,45)} [${e.category||"–"}]`,
+          callback_data: `cfg_kb_del_${e.id}_${channelId}`
+        }]);
+        delKb.push(backBtn(channelId, ch?.bot_language||"de"));
+
+        await tg.call("sendMessage", {
+          chat_id: String(userId),
+          text: `🗑 <b>Eintrag löschen</b>\n\nWähle einen Eintrag zum Löschen:`,
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: delKb }
+        });
+      } catch (e) {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "❌ " + e.message });
+      }
+      break;
+    }
+    case "kb_del": {
+      // cfg_kb_del_{entryId}_{channelId} — smart parser extracted action=kb_del, channelId=last number
+      // Entry ID is buried: re-parse to get both IDs
+      const kbDelMatch = data.match(/^cfg_kb_del_(-?\d+)_(-?\d+)$/);
+      if (kbDelMatch) {
+        const entryId2   = kbDelMatch[1];
+        const chanId2    = kbDelMatch[2];
+        try {
+          await supabase_db.from("channel_knowledge").delete().eq("id", entryId2).eq("channel_id", chanId2);
+          await tg.call("sendMessage", { chat_id: String(userId),
+            text: "✅ Eintrag gelöscht.",
+            reply_markup: { inline_keyboard: [[{ text: "📚 Zurück zur Wissensdatenbank",
+              callback_data: `cfg_knowledge_${chanId2}` }]] }
+          });
+        } catch (e) {
+          await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Löschen fehlgeschlagen: " + e.message });
+        }
+      }
       break;
     }
     case "setlang": {
@@ -700,6 +615,240 @@ async function handlePendingInput(tg, supabase_db, userId, text, settings, msg) 
          { text: delPrevOpt,       callback_data: "sched_opt_delprev_" + channelId }]
       ]}
     });
+    return true;
+  }
+
+
+
+  // ── Proof collection scene ────────────────────────────────────────────────
+  if (action === "collecting_proofs") {
+    const { feedbackId, channelId: fbChanId } = pending;
+
+    if (text === "/done" || text === "/fertig") {
+      delete pendingInputs[String(userId)];
+      const count = pending.proofCount || 0;
+      // Mark session done
+      try {
+        await supabase_db.from("proof_sessions")
+          .update({ status: "done", proof_count: count, updated_at: new Date() })
+          .eq("feedback_id", feedbackId).eq("user_id", userId);
+        // Auto-approve feedback and notify admin
+        const ch7 = await getChannel(fbChanId);
+        await safelistService.approveFeedback(parseInt(feedbackId), userId, ch7);
+        // Update reputation
+        const { data: fb7 } = await supabase_db.from("user_feedbacks")
+          .select("feedback_type, target_user_id, target_username").eq("id", feedbackId).maybeSingle();
+        if (fb7?.target_user_id) {
+          const d7 = fb7.feedback_type === "positive" ? 1 : -10;
+          await supabase_db.rpc("update_user_reputation", {
+            p_channel_id: fbChanId, p_user_id: fb7.target_user_id,
+            p_username: fb7.target_username, p_delta: d7
+          }).catch(() => {});
+          if (fb7.feedback_type === "negative") {
+            await supabase_db.from("scam_entries").upsert([{
+              channel_id: fbChanId, user_id: fb7.target_user_id,
+              username: fb7.target_username, reason: "Bestätigtes negatives Feedback", added_by: userId
+            }], { onConflict: "channel_id,user_id" }).catch(() => {});
+          }
+        }
+        // Notify admin
+        const { data: admSet } = await supabase_db.from("bot_channels")
+          .select("added_by_user_id, title").eq("id", String(fbChanId)).maybeSingle();
+        if (admSet?.added_by_user_id) {
+          const settings5 = await getSettings();
+          const { proofs } = await (async () => {
+            try {
+              const r = await supabase_db.from("feedback_proofs")
+                .select("*").eq("feedback_id", feedbackId).order("created_at");
+              return { proofs: r.data || [] };
+            } catch { return { proofs: [] }; }
+          })();
+          await tg.call("sendMessage", { chat_id: String(admSet.added_by_user_id),
+            text: `📎 <b>Neues Feedback mit ${count} Proof(s)</b>\n\nChannel: ${admSet.title || fbChanId}\nFeedback-ID: ${feedbackId}\n\nBitte überprüfe die Beweise unten.`,
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: [[
+              { text: "✅ Bestätigen", callback_data: `fb_approve_${feedbackId}` },
+              { text: "❌ Ablehnen",  callback_data: `fb_reject_${feedbackId}` }
+            ]]}
+          });
+          for (const p of proofs.slice(0, 5)) {
+            try {
+              if (p.proof_type === "photo")    await tg.call("sendPhoto",    { chat_id: String(admSet.added_by_user_id), photo:    p.file_id, caption: p.caption||"" });
+              if (p.proof_type === "video")    await tg.call("sendVideo",    { chat_id: String(admSet.added_by_user_id), video:    p.file_id, caption: p.caption||"" });
+              if (p.proof_type === "document") await tg.call("sendDocument", { chat_id: String(admSet.added_by_user_id), document: p.file_id, caption: p.caption||"" });
+              if (p.proof_type === "text")     await tg.call("sendMessage",  { chat_id: String(admSet.added_by_user_id), text: `📝 ${p.content?.substring(0,1000)||""}` });
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✅ ${count} Proof(s) eingereicht! Der Admin wird benachrichtigt. Danke!` });
+      return true;
+    }
+
+    // Collect media / text proofs
+    const proofType = msg?.photo ? "photo" : msg?.video ? "video" : msg?.document ? "document" : "text";
+    const fileId = msg?.photo ? msg.photo[msg.photo.length-1]?.file_id
+                 : msg?.video ? msg.video.file_id
+                 : msg?.document ? msg.document.file_id : null;
+    try {
+      await supabase_db.from("feedback_proofs").insert([{
+        feedback_id: parseInt(feedbackId), proof_type: proofType,
+        file_id: fileId || null, content: proofType === "text" ? (text||"").substring(0,1000) : null,
+        caption: msg?.caption || null, submitted_by: parseInt(userId)
+      }]);
+      pendingInputs[String(userId)] = { ...pending, proofCount: (pending.proofCount||0) + 1 };
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✅ Proof ${(pending.proofCount||0)+1} gespeichert.\nWeitere senden oder /done zum Abschließen.` });
+    } catch (e) {
+      await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
+    }
+    return true;
+  }
+
+  // ── Safelist: add user by admin ───────────────────────────────────────────
+  if (action === "safelist_add_user") {
+    delete pendingInputs[String(userId)];
+    const target = text.replace("@","").trim();
+    if (!target) {
+      await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Bitte @username oder ID eingeben." });
+      return true;
+    }
+    try {
+      await safelistService.submitFeedback({
+        channelId, submittedBy: userId, submittedByUsername: null,
+        targetUsername: target, targetUserId: /^\d+$/.test(target) ? parseInt(target) : null,
+        feedbackType: "positive", feedbackText: "Manuell durch Admin zur Safelist hinzugefügt"
+      }).then(async r => {
+        if (r?.id) {
+          const ch8 = await getChannel(channelId);
+          await safelistService.approveFeedback(r.id, userId, ch8);
+        }
+      });
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✅ @${target} zur Safelist hinzugefügt!`, parse_mode: "HTML" });
+    } catch (e) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ " + e.message }); }
+    return true;
+  }
+
+  // ── Scamlist: add user by admin ───────────────────────────────────────────
+  if (action === "scamlist_add_user") {
+    delete pendingInputs[String(userId)];
+    const target = text.replace("@","").trim();
+    if (!target) {
+      await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Bitte @username oder ID eingeben." });
+      return true;
+    }
+    try {
+      await supabase_db.from("scam_entries").upsert([{
+        channel_id: channelId, user_id: /^\d+$/.test(target) ? parseInt(target) : null,
+        username: /^\d+$/.test(target) ? null : target,
+        reason: "Manuell vom Admin eingetragen", added_by: parseInt(userId)
+      }], { onConflict: "channel_id,user_id" });
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `⛔ @${target} zur Scamliste hinzugefügt!`, parse_mode: "HTML" });
+    } catch (e) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ " + e.message }); }
+    return true;
+  }
+
+  // ── Wissensdatenbank: Eintrag hinzufügen ──────────────────────────────────
+  if (action === "kb_add_entry") {
+    delete pendingInputs[String(userId)];
+    const rawText = (msg?.text || text || "").trim();
+    if (!rawText || rawText.length < 5) {
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: "❌ Bitte einen aussagekräftigen Text senden (mindestens 5 Zeichen)." });
+      return true;
+    }
+
+    // Show processing indicator
+    const processingMsg = await tg.call("sendMessage", { chat_id: String(userId),
+      text: "⏳ <b>OpenAI verarbeitet deinen Eintrag…</b>\n\n• Analyse & Kategorisierung\n• Vektoreinbettung wird erstellt",
+      parse_mode: "HTML"
+    });
+
+    try {
+      const openaiKey = process.env.OPENAI_API_KEY;
+      if (!openaiKey) throw new Error("OPENAI_API_KEY fehlt");
+
+      // Step 1: Let GPT-4o-mini categorize + summarize the entry
+      const axios = require("axios");
+      const aiRes = await axios.post("https://api.openai.com/v1/chat/completions", {
+        model: "gpt-4o-mini",
+        max_tokens: 300,
+        messages: [
+          { role: "system", content:
+            "Du bist ein Wissensmanager für Telegram-Channel-Bots. " +
+            "Analysiere den folgenden Wissenseintrag und antworte NUR mit einem JSON-Objekt ohne Markdown-Blöcke: " +
+            '{"title": "kurzer Titel (max 60 Zeichen)", "category": "passende Kategorie (z.B. FAQ, Preise, Kontakt, Regeln, Produkte, Öffnungszeiten, Allgemein)", "summary": "optimierte Version des Eintrags für die AI (max 300 Zeichen)"}' },
+          { role: "user", content: rawText }
+        ]
+      }, {
+        headers: { "Authorization": `Bearer ${openaiKey}`, "Content-Type": "application/json" },
+        timeout: 20000
+      });
+
+      let aiData = { title: rawText.substring(0, 60), category: "Allgemein", summary: rawText };
+      try {
+        const raw = aiRes.data.choices[0].message.content.trim().replace(/^```json|^```|```$/gm, "");
+        aiData = JSON.parse(raw);
+      } catch (_) {}
+
+      // Step 2: Create embedding via OpenAI text-embedding-3-small
+      const embedRes = await axios.post("https://api.openai.com/v1/embeddings", {
+        input: (aiData.summary || rawText).replace(/\n/g, " ").substring(0, 8000),
+        model: "text-embedding-3-small"
+      }, {
+        headers: { "Authorization": `Bearer ${openaiKey}`, "Content-Type": "application/json" },
+        timeout: 15000
+      });
+      const embedding = embedRes.data.data[0].embedding;
+
+      // Step 3: Store in channel_knowledge
+      const supabase2 = require("../config/supabase");
+      const { error: dbErr } = await supabase2.from("channel_knowledge").insert([{
+        channel_id: String(channelId),
+        title:      aiData.title     || rawText.substring(0, 60),
+        category:   aiData.category  || "Allgemein",
+        content:    aiData.summary   || rawText,
+        embedding:  JSON.stringify(embedding),
+        source:     "bot_admin",
+        metadata:   { original_length: rawText.length, added_by: String(userId) }
+      }]);
+      if (dbErr) throw new Error(dbErr.message);
+
+      // Update the processing message with success
+      await tg.call("editMessageText", {
+        chat_id: String(userId),
+        message_id: processingMsg?.result?.message_id,
+        text: `✅ <b>Wissenseintrag hinzugefügt!</b>\n\n` +
+              `📌 <b>Titel:</b> ${aiData.title}\n` +
+              `🏷 <b>Kategorie:</b> ${aiData.category}\n` +
+              `📝 <b>Inhalt:</b> <i>${(aiData.summary||rawText).substring(0, 150)}${(aiData.summary||rawText).length > 150 ? "…" : ""}</i>\n\n` +
+              `Die Smalltalk-AI verwendet dieses Wissen ab sofort automatisch.`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[
+          { text: "📚 Wissensdatenbank", callback_data: `cfg_knowledge_${channelId}` },
+          { text: "➕ Weiterer Eintrag", callback_data: `cfg_kb_add_${channelId}` }
+        ]] }
+      }).catch(async () => {
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: `✅ Eintrag „${aiData.title}" gespeichert! Kategorie: ${aiData.category}`,
+          parse_mode: "HTML" });
+      });
+
+    } catch (e) {
+      require("../utils/logger").error("[KB] Eintrag speichern fehlgeschlagen:", e.message);
+      await tg.call("editMessageText", {
+        chat_id: String(userId),
+        message_id: processingMsg?.result?.message_id,
+        text: `❌ <b>Fehler beim Verarbeiten:</b> ${e.message}\n\nBitte erneut versuchen.`,
+        parse_mode: "HTML"
+      }).catch(async () => {
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: `❌ Fehler: ${e.message}` });
+      });
+    }
     return true;
   }
 
@@ -1544,40 +1693,76 @@ router.post("/smalltalk", (req, res) => {
         if (data.startsWith("fb_confirm_")) {
           const parts3 = data.split("_");
           // fb_confirm_{pos|neg|no}_{username}_{submitterId}_{channelId}
-          const fbType = parts3[2]; // pos | neg | no
-          if (fbType === "no") {
-            // Forward to channel admin
-            const qChanId = parts3[parts3.length - 1];
-            const origMsg = q.message?.text || "";
-            const { data: chAdmin } = await supabase.from("bot_channels")
-              .select("added_by_user_id").eq("id", String(qChanId)).maybeSingle().catch(() => ({ data: null }));
-            if (chAdmin?.added_by_user_id) {
-              await tg.call("sendMessage", { chat_id: String(chAdmin.added_by_user_id),
-                text: `❓ Feedback-Einordnung unklar\n\nNachricht:\n<i>${origMsg.substring(0,200)}</i>\n\nBitte manuell einordnen.`,
-                parse_mode: "HTML" });
-            }
-            await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
-            await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "Weitergeleitet." });
+          const fbType      = parts3[2]; // pos | neg | no
+          const targetUname = parts3[3];
+          const submitterId = parts3[4];
+          const chanId3     = parts3[parts3.length - 1];
+
+          // SECURITY: only the original submitter can confirm
+          if (String(qUserId) !== String(submitterId)) {
+            await tg.call("answerCallbackQuery", { callback_query_id: q.id,
+              text: "❌ Nur die Person die das Feedback geschrieben hat kann es bestätigen.", show_alert: true });
             return;
           }
-          // pos or neg
+
+          if (fbType === "no") {
+            // Dismissed: forward to channel admin for manual review
+            const origMsg = q.message?.text || "";
+            const { data: chAdmin } = await supabase.from("bot_channels")
+              .select("added_by_user_id").eq("id", String(chanId3)).maybeSingle().catch(() => ({ data: null }));
+            if (chAdmin?.added_by_user_id) {
+              await tg.call("sendMessage", { chat_id: String(chAdmin.added_by_user_id),
+                text: `❓ <b>Feedback-Einordnung unklar</b>\n\n<i>${origMsg.substring(0,200)}</i>\n\nUser hat auf ❌ geklickt. Bitte manuell prüfen.`,
+                parse_mode: "HTML",
+                reply_markup: { inline_keyboard: [[
+                  { text: "✅ Positiv buchen", callback_data: `fb_manual_pos_${targetUname}_0_${chanId3}` },
+                  { text: "⚠️ Negativ buchen", callback_data: `fb_manual_neg_${targetUname}_0_${chanId3}` }
+                ]]}
+              });
+            }
+            await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
+            await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "Feedback nicht bestätigt." });
+            return;
+          }
+
+          // pos or neg confirmed by original submitter
           const feedbackType = fbType === "pos" ? "positive" : "negative";
-          const targetUsername = parts3[3];
-          const submitterId    = parts3[4];
-          const chanId3        = parts3[5];
+          const origText = q.message?.reply_to_message?.text?.substring(0, 300) || "";
+
+          // Save to DB as pending
+          let fbId = null;
           try {
             const fbResult = await safelistService.submitFeedback({
-              channelId: chanId3, submittedBy: submitterId, submittedByUsername: null,
-              targetUsername, feedbackType,
-              feedbackText: q.message?.reply_to_message?.text?.substring(0, 300) || ""
+              channelId: chanId3, submittedBy: submitterId,
+              submittedByUsername: q.from?.username || null,
+              targetUsername: targetUname, feedbackType, feedbackText: origText
             });
-            if (fbResult?.id) {
-              const ch3 = await getChannel(chanId3);
-              await safelistService.approveFeedback(fbResult.id, qUserId, ch3);
-            }
+            fbId = fbResult?.id;
           } catch (_) {}
+
+          // Delete channel prompt message
           await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
-          await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: feedbackType === "positive" ? "✅ Als Positiv gespeichert" : "⚠️ Als Negativ gespeichert" });
+
+          // Ask about proofs — in the channel (reply visible to all)
+          const proofKb = [[
+            { text: "📎 Ja, Proofs senden", callback_data: `fb_want_proof_${fbId}_${submitterId}_${chanId3}` },
+            { text: "✌️ Nein, reicht mir", callback_data: `fb_no_proof_${fbId}_${submitterId}_${chanId3}` }
+          ]];
+          const proofMsg = await tg.call("sendMessage", {
+            chat_id: q.message.chat.id,
+            text: feedbackType === "positive"
+              ? `✅ <b>Positives Feedback</b> für @${targetUname} wurde gespeichert!\n\nMöchtest du Beweise/Screenshots als Proof beifügen?`
+              : `⚠️ <b>Negatives Feedback</b> für @${targetUname} wurde gespeichert.\n\nNegative Feedbacks ohne Proof können oft nicht berücksichtigt werden. Möchtest du Beweise beifügen?`,
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: proofKb }
+          }).catch(() => null);
+
+          // Track for auto-delete after 5 min
+          if (proofMsg?.message_id) {
+            void safelistService.trackBotMessage(q.message.chat.id, proofMsg.message_id, "temp", 5*60*1000);
+          }
+
+          await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: feedbackType === "positive" ? "✅ Positiv gespeichert" : "⚠️ Negativ gespeichert" });
           return;
         }
 
@@ -1830,6 +2015,124 @@ router.post("/smalltalk", (req, res) => {
         }
 
         // Feedback approve/reject callbacks
+        // ── Proof wanted → invite user to DM the bot ──────────────────────────
+        if (data.startsWith("fb_want_proof_")) {
+          // fb_want_proof_{fbId}_{submitterId}_{channelId}
+          const pm = data.match(/^fb_want_proof_(-?\d+)_(-?\d+)_(-?\d+)$/);
+          if (!pm || String(qUserId) !== pm[2]) {
+            await tg.call("answerCallbackQuery", { callback_query_id: q.id,
+              text: "❌ Nicht für dich.", show_alert: true });
+            return;
+          }
+          const [, fbId2, , chanId4] = pm;
+          // Start proof session in DB
+          try {
+            await supabase.from("proof_sessions").insert([{
+              feedback_id: parseInt(fbId2), user_id: parseInt(qUserId),
+              channel_id: chanId4, status: "collecting"
+            }]);
+          } catch (_) {}
+          // Store in memory so private DMs get handled as proofs
+          pendingInputs[String(qUserId)] = { action: "collecting_proofs", feedbackId: fbId2, channelId: chanId4, proofCount: 0 };
+
+          const settings4 = await getSettings();
+          const botName = settings4?.bot_name || "AdminHelper";
+          await tg.call("editMessageText", {
+            chat_id: q.message.chat.id, message_id: q.message.message_id,
+            text: `📎 <b>Proofs einreichen</b>\n\nSchreibe dem Bot <b>direkt privat</b> und sende deine Beweise (Fotos, Videos, Screenshots, Text).\n\nWenn du fertig bist: /done\nAbbrechen: /cancel`,
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: [[
+              { text: "💬 Dem Bot schreiben", url: `https://t.me/${botName}?start=proofs_${fbId2}` }
+            ]]}
+          }).catch(async () => {
+            await tg.call("sendMessage", { chat_id: q.message.chat.id,
+              text: `📎 Schreibe dem Bot privat um deine Beweise einzureichen. Wenn fertig: /done`, parse_mode: "HTML" });
+          });
+          await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "📎 Bitte sende Proofs dem Bot privat." });
+          return;
+        }
+
+        // ── No proof chosen ────────────────────────────────────────────────────
+        if (data.startsWith("fb_no_proof_")) {
+          const npm = data.match(/^fb_no_proof_(-?\d+)_(-?\d+)_(-?\d+)$/);
+          if (!npm || String(qUserId) !== npm[2]) {
+            await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Nicht für dich.", show_alert: true });
+            return;
+          }
+          const [, fbId3, , chanId5] = npm;
+          // Auto-approve positive; set pending for admin review on negative
+          try {
+            const { data: fbRow } = await supabase.from("user_feedbacks")
+              .select("feedback_type, target_user_id, target_username").eq("id", fbId3).maybeSingle();
+            if (fbRow) {
+              const ch5 = await getChannel(chanId5);
+              await safelistService.approveFeedback(parseInt(fbId3), qUserId, ch5);
+              // Update reputation score
+              if (fbRow.target_user_id) {
+                const delta = fbRow.feedback_type === "positive" ? 1 : -10;
+                await supabase.rpc("update_user_reputation", {
+                  p_channel_id: chanId5, p_user_id: fbRow.target_user_id,
+                  p_username: fbRow.target_username, p_delta: delta
+                }).catch(() => {});
+              }
+              // Auto add to scamlist on negative confirmed
+              if (fbRow.feedback_type === "negative" && fbRow.target_user_id) {
+                await supabase.from("scam_entries").upsert([{
+                  channel_id: chanId5, user_id: fbRow.target_user_id,
+                  username: fbRow.target_username, reason: "Bestätigtes negatives Feedback",
+                  added_by: qUserId
+                }], { onConflict: "channel_id,user_id" }).catch(() => {});
+              }
+            }
+          } catch (_) {}
+          await tg.call("editMessageText", {
+            chat_id: q.message.chat.id, message_id: q.message.message_id,
+            text: "✅ Feedback gespeichert. Danke!", parse_mode: "HTML"
+          }).catch(() => {});
+          void safelistService.trackBotMessage(q.message.chat.id, q.message.message_id, "temp", 30*1000);
+          await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "✅ Gespeichert." });
+          return;
+        }
+
+        // ── Manual admin feedback booking (from DM after fb_confirm_no) ────────
+        if (data.startsWith("fb_manual_pos_") || data.startsWith("fb_manual_neg_")) {
+          const isMPos = data.startsWith("fb_manual_pos_");
+          const mm = data.match(/^fb_manual_(pos|neg)_([\w]+)_(-?\d+)_(-?\d+)$/);
+          if (!mm) return;
+          const [, , targetU, targetId, chanId6] = mm;
+          const fbType = isMPos ? "positive" : "negative";
+          try {
+            const fbR = await safelistService.submitFeedback({
+              channelId: chanId6, submittedBy: qUserId,
+              submittedByUsername: q.from?.username || null,
+              targetUsername: targetU, targetUserId: parseInt(targetId) || null,
+              feedbackType: fbType, feedbackText: "Manuell eingetragen (Admin)"
+            });
+            if (fbR?.id) {
+              const ch6 = await getChannel(chanId6);
+              await safelistService.approveFeedback(fbR.id, qUserId, ch6);
+              const delta6 = fbType === "positive" ? 1 : -10;
+              await supabase.rpc("update_user_reputation", {
+                p_channel_id: chanId6, p_user_id: parseInt(targetId) || 0,
+                p_username: targetU, p_delta: delta6
+              }).catch(() => {});
+              if (fbType === "negative") {
+                await supabase.from("scam_entries").upsert([{
+                  channel_id: chanId6, user_id: parseInt(targetId) || null,
+                  username: targetU, reason: "Manuell vom Admin eingetragen", added_by: qUserId
+                }], { onConflict: "channel_id,user_id" }).catch(() => {});
+              }
+            }
+          } catch (_) {}
+          await tg.call("editMessageText", {
+            chat_id: String(qUserId), message_id: q.message.message_id,
+            text: `${fbType === "positive" ? "✅ Positives" : "⚠️ Negatives"} Feedback für @${targetU} manuell eingetragen.`,
+            parse_mode: "HTML"
+          }).catch(() => {});
+          await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "✅ Gespeichert." });
+          return;
+        }
+
         if (data.startsWith("fb_approve_") || data.startsWith("fb_reject_")) {
           const feedbackId = data.split("_")[2];
           const ch2 = {}; // We'll load channel from feedback
@@ -1878,6 +2181,75 @@ router.post("/smalltalk", (req, res) => {
           const handled = await handlePendingInput(tg, supabase, from.id, text, settings, msg);
           if (handled) return;
         }
+
+        // ── /safelist [@user or ID] in private admin chat ─────────────────────
+        if (/^\/safeliste?(?:\s+@?(.+))?$/i.test(text)) {
+          const slMatch = text.match(/^\/safeliste?\s+@?(.+)/i);
+          const slTarget = slMatch ? slMatch[1].trim() : null;
+          // Check caller is admin of at least one channel
+          const { data: myChForSl } = await supabase.from("bot_channels")
+            .select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).limit(5);
+          if (!myChForSl?.length) {
+            await tg.send(chatId, "❌ Du hast keine freigeschalteten Channels.");
+            return;
+          }
+          if (slTarget) {
+            // If only one channel, use it directly; else ask which channel
+            if (myChForSl.length === 1) {
+              pendingInputs[String(chatId)] = {
+                action: "safelist_add_user", channelId: String(myChForSl[0].id), prefilled: slTarget
+              };
+              // Auto-trigger the action with the prefilled target
+              const fakeMsg = { ...msg, text: slTarget };
+              await handlePendingInput(tg, supabase, chatId, slTarget, settings, fakeMsg);
+            } else {
+              const kb = myChForSl.map(ch2 => [{
+                text: `📢 ${ch2.title||ch2.id}`,
+                callback_data: `cfg_sl_adduser_${ch2.id}`
+              }]);
+              pendingInputs[String(chatId)] = { action: "safelist_add_user_pick", target: slTarget, channels: myChForSl };
+              await tg.send(chatId, `Für welchen Channel soll @${slTarget} zur Safelist?\n\nWähle:`);
+              await tg.call("sendMessage", { chat_id: chatId, text: "Channel auswählen:",
+                reply_markup: { inline_keyboard: kb } });
+            }
+          } else {
+            // No target: open safelist overview for first channel
+            const ch2 = await getChannel(String(myChForSl[0].id));
+            await handleSettingsCallback(tg, supabase, `cfg_sl_safeview_${myChForSl[0].id}`, { from: { id: chatId } }, chatId);
+          }
+          return;
+        }
+
+        // ── /scamlist [@user or ID] in private admin chat ──────────────────────
+        if (/^\/scamliste?(?:\s+@?(.+))?$/i.test(text)) {
+          const scMatch = text.match(/^\/scamliste?\s+@?(.+)/i);
+          const scTarget = scMatch ? scMatch[1].trim() : null;
+          const { data: myChForSc } = await supabase.from("bot_channels")
+            .select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).limit(5);
+          if (!myChForSc?.length) {
+            await tg.send(chatId, "❌ Du hast keine freigeschalteten Channels.");
+            return;
+          }
+          if (scTarget) {
+            if (myChForSc.length === 1) {
+              pendingInputs[String(chatId)] = {
+                action: "scamlist_add_user", channelId: String(myChForSc[0].id)
+              };
+              await handlePendingInput(tg, supabase, chatId, scTarget, settings, msg);
+            } else {
+              const kb2 = myChForSc.map(ch2 => [{
+                text: `📢 ${ch2.title||ch2.id}`, callback_data: `cfg_sl_addscam_${ch2.id}`
+              }]);
+              await tg.send(chatId, `Für welchen Channel soll @${scTarget} zur Scamliste?`);
+              await tg.call("sendMessage", { chat_id: chatId, text: "Channel auswählen:",
+                reply_markup: { inline_keyboard: kb2 } });
+            }
+          } else {
+            await handleSettingsCallback(tg, supabase, `cfg_sl_scamview_${myChForSc[0].id}`, { from: { id: chatId } }, chatId);
+          }
+          return;
+        }
+
         if (text === "/cancel") {
           await handlePendingInput(tg, supabase, from.id, "/cancel", settings, null);
           return;
@@ -2085,7 +2457,8 @@ router.post("/smalltalk", (req, res) => {
       }
 
       // ── Intelligente Feedback-Erkennung ──────────────────────────────────
-      if (text && from?.id && !text.startsWith("/") && ch?.safelist_enabled && !from.is_bot) {
+      // v1.4.49-3: use feedback_enabled for auto-detection
+      if (text && from?.id && !text.startsWith("/") && (ch?.feedback_enabled || ch?.safelist_enabled) && !from.is_bot) {
         const fbDetect = _detectFeedback(text);
         if (fbDetect) {
           const confirmMsg = await tg.call("sendMessage", { chat_id: chatId,
@@ -2105,7 +2478,58 @@ router.post("/smalltalk", (req, res) => {
       const safelistActive = ch?.safelist_enabled || false;
       const aiActive       = ch?.ai_enabled       || false;
 
-      // ── /feedbacks @user oder /check @user ────────────────────────────────
+        // ═══ Channel commands: /safelist, /scamlist, /feedbacks ═════════════
+      const textLow = (text || "").toLowerCase().trim();
+
+      // ── /safelist or /safeliste (no args) → show safelist with 5min autodelete
+      if (/^\/safeliste?$/i.test(text) && safelistActive) {
+        const { data: sl2 } = await supabase.from("user_feedbacks")
+          .select("target_username, target_user_id, submitted_by_username, created_at")
+          .eq("channel_id", chatId).eq("feedback_type", "positive").eq("status", "approved")
+          .order("created_at", { ascending: false }).limit(20);
+        let slText = "🛡 <b>Safelist</b>\n\n";
+        slText += sl2?.length
+          ? sl2.map((e,i) => `${i+1}. ✅ @${e.target_username||e.target_user_id}` +
+              (e.submitted_by_username ? ` — von @${e.submitted_by_username}` : "")).join("\n")
+          : "<i>Noch keine Einträge.</i>";
+        const slMsg = await tg.call("sendMessage", { chat_id: chatId, text: slText,
+          parse_mode: "HTML", reply_to_message_id: msg.message_id }).catch(() => null);
+        if (slMsg?.message_id) void safelistService.trackBotMessage(chatId, slMsg.message_id, "temp", 5*60*1000);
+        return;
+      }
+
+      // ── /scamlist or /scamliste (no args) → show scamlist with 5min autodelete
+      if (/^\/scamliste?$/i.test(text) && safelistActive) {
+        const { data: sc2 } = await supabase.from("scam_entries")
+          .select("username, user_id, reason, created_at")
+          .eq("channel_id", chatId).order("created_at", { ascending: false }).limit(20);
+        let scText = "⛔ <b>Scamliste</b>\n\n";
+        scText += sc2?.length
+          ? sc2.map((e,i) => `${i+1}. ⛔ @${e.username||e.user_id}` +
+              (e.reason ? ` — <i>${e.reason.substring(0,60)}</i>` : "")).join("\n")
+          : "<i>Noch keine Einträge.</i>";
+        const scMsg = await tg.call("sendMessage", { chat_id: chatId, text: scText,
+          parse_mode: "HTML", reply_to_message_id: msg.message_id }).catch(() => null);
+        if (scMsg?.message_id) void safelistService.trackBotMessage(chatId, scMsg.message_id, "temp", 5*60*1000);
+        return;
+      }
+
+      // ── /feedbacks (no args) → Top 10 ranking with 5min autodelete
+      if (/^\/feedbacks?$/i.test(text) && safelistActive) {
+        const { data: top10 } = await supabase.rpc("get_top_sellers",
+          { p_channel_id: chatId, p_limit: 10 }).catch(() => ({ data: null }));
+        const medals = ["🥇","🥈","🥉"];
+        let rankText = "🏆 <b>Top 10 Verkäufer</b>\n\n";
+        rankText += top10?.length
+          ? top10.map((u,i) => `${medals[i]||`${i+1}.`} @${u.username||u.user_id} — <b>${u.score} Pkt</b> (✅ ${u.pos_count} | ⚠️ ${u.neg_count})`).join("\n")
+          : "<i>Noch kein Ranking verfügbar.</i>";
+        const rkMsg = await tg.call("sendMessage", { chat_id: chatId, text: rankText,
+          parse_mode: "HTML", reply_to_message_id: msg.message_id }).catch(() => null);
+        if (rkMsg?.message_id) void safelistService.trackBotMessage(chatId, rkMsg.message_id, "temp", 5*60*1000);
+        return;
+      }
+
+    // ── /feedbacks @user oder /check @user ────────────────────────────────
       const feedbackCmds = /^\/(?:feedbacks?|check)\s+@?(\w+)/i;
       const feedbackMatch = text.match(feedbackCmds);
       if (feedbackMatch && safelistActive) {
