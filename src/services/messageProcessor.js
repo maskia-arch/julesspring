@@ -15,6 +15,7 @@ const embeddingService    = require('./embeddingService');
 const notificationService = require('./notificationService');
 const abuseDetector       = require('./abuseDetector');
 const couponService       = require('./couponService');
+const clarityDetector     = require('./ai/clarityDetector');
 const logger              = require('../utils/logger');
 
 let _settingsCache     = null;
@@ -98,39 +99,79 @@ const messageProcessor = {
     logger.info(`[MP] ${Date.now()-t0}ms – RAG:${context.length} hist:${recentHistory.length}/${allHistory.length} summary:${chatSummary ? 'ja' : 'nein'}`);
 
     // 8. KI-Antwort
-    // Coupon-Kontext NUR bei coupon-bezogenen Fragen laden (spart Tokens)
-    const COUPON_KEYWORDS = /rabatt|coupon|gutschein|code|aktions?|angebot|deal|discount|promo|spare|sparen|reduz/i;
+    // Coupon-Kontext: bei coupon-bezogenen Fragen IMMER frisch aus DB laden
+    const COUPON_KEYWORDS = /rabatt|coupon|gutschein|\bcode\b|aktions?|angebot|deal|discount|promo|spare|sparen|reduz|abgelaufen|noch aktiv|gültig|g\u00fcltig/i;
     let couponContext = null;
-    if (COUPON_KEYWORDS.test(text)) {
+    let recentHistoryForAI = recentHistory;
+
+    // Also trigger fresh fetch when the user sends a terse follow-up ("?", "ok?", etc.)
+    // and the recent history was about coupons — otherwise the AI parrots its stale prior answer.
+    const historyMentionsCoupon = recentHistory.some(m => COUPON_KEYWORDS.test(m.content || ''));
+    const triggerCouponFetch    = COUPON_KEYWORDS.test(text) || (historyMentionsCoupon && text.length < 30);
+
+    if (triggerCouponFetch) {
       try {
-        const activeCoupon = await couponService.getActiveCoupon();
+        // Explicit fresh fetch (no cache, auto-deactivates expired rows)
+        const activeCoupon = await couponService.getActiveCouponFresh();
+        const todayStr = new Date().toLocaleDateString('de-DE');
         if (activeCoupon) {
           const exp = new Date(activeCoupon.expires_at).toLocaleDateString('de-DE');
-          couponContext = `AKTUELLER COUPON: Code "${activeCoupon.code}" - ${activeCoupon.description} (gültig bis ${exp})`;
+          couponContext =
+            `AKTUELLER COUPON (authoritative, live aus Datenbank am ${todayStr}): ` +
+            `Code "${activeCoupon.code}" - ${activeCoupon.description} (gültig bis ${exp}). ` +
+            `WICHTIG: Ignoriere jeden anderen Coupon-Code der evtl. im Chatverlauf erwähnt wurde — ` +
+            `nur dieser Code ist aktuell gültig.`;
         } else {
-          couponContext = 'AKTUELLER COUPON: Kein aktiver Coupon heute.';
+          couponContext =
+            `AKTUELLER COUPON (authoritative, live aus Datenbank am ${todayStr}): ` +
+            `Es gibt HEUTE KEINEN aktiven Coupon. Alle früheren Codes aus dem Chatverlauf sind abgelaufen. ` +
+            `Sage dem Nutzer klar: "Aktuell kein Coupon aktiv".`;
         }
-      } catch (_) {}
+
+        // Strip stale coupon references from the history sent to the AI.
+        // The AI would otherwise parrot the old code from its own prior responses.
+        const STALE_CODE_RE = /SAVE\w*-\w+|COUPON[:\s]*\w+/gi;
+        recentHistoryForAI = recentHistory.map(m => {
+          if (m.role === 'assistant' && STALE_CODE_RE.test(m.content)) {
+            return { ...m, content: '[frühere Coupon-Antwort – bitte aktuelle DB-Info unten verwenden]' };
+          }
+          return m;
+        });
+      } catch (e) {
+        logger.warn('[MP] Coupon context fehlgeschlagen:', e.message);
+      }
     }
 
-    const fullSummary = [chatSummary, couponContext].filter(Boolean).join('\n\n') || null;
+    // Always include today's date so the AI can reason about "is this still valid?"
+    const dateContext = `HEUTIGES DATUM: ${new Date().toLocaleDateString('de-DE')}`;
+    const fullSummary = [chatSummary, dateContext, couponContext].filter(Boolean).join('\n\n') || null;
 
-    // Wenn Produkt-Query ohne ausreichende KB-Abdeckung → Safety-Kontext vorschalten
-    let finalContext = context;
-    if (typeof _ragProductMiss !== 'undefined' && _ragProductMiss) {
-      finalContext = [{
-        content: '⚠️ WICHTIG: Diese Anfrage hat KEINE ausreichenden Produkt-Treffer in der Wissensdatenbank. KEIN Produkt oder Link erfinden! Weise stattdessen auf @autoacts für individuelle Tarifberatung hin.'
-      }, ...(context || [])];
+    // v1.4.48: Wrap AI call with graceful fallback — timeouts or API errors now
+    // still deliver *something* to the user (instead of silence).
+    let aiResult;
+    try {
+      aiResult = await Promise.race([
+        deepseekService.generateResponse(text, recentHistoryForAI, context, chat.id, settings, fullSummary),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('KI-Timeout')), 60000))
+      ]);
+    } catch (aiErr) {
+      logger.error('[MP] AI generation failed:', aiErr.message);
+      aiResult = {
+        text: 'Entschuldige, die Antwort hat gerade zu lange gedauert. Stell mir die Frage bitte noch einmal.',
+        promptTokens: 0, completionTokens: 0, cachedTokens: 0
+      };
+    }
+    if (!aiResult?.text || !aiResult.text.trim()) {
+      logger.warn('[MP] AI returned empty text — sending fallback');
+      aiResult = {
+        text: 'Ich habe gerade keine Antwort parat — kannst du mir deine Frage noch einmal stellen?',
+        promptTokens: 0, completionTokens: 0, cachedTokens: 0
+      };
     }
 
-    const aiResult = await Promise.race([
-      deepseekService.generateResponse(text, recentHistory, finalContext, chat.id, settings, fullSummary),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('KI-Timeout')), 60000))
-    ]);
-
-    // 9. Telegram senden
+    // 9. Antwort zuverlässig zustellen (mit Retry + Cache)
     if (platform === 'telegram') {
-      await telegramService.sendMessage(chatId, aiResult.text);
+      await this._sendReliable(chatId, aiResult.text);
     }
 
     logger.info(`[MP] Gesamt: ${Date.now()-t0}ms | in:${aiResult.promptTokens} out:${aiResult.completionTokens} cached:${aiResult.cachedTokens||0}`);
@@ -214,8 +255,7 @@ const messageProcessor = {
       // Sehr guter Treffer: Top-Ergebnis hat hohe Ähnlichkeit → maximal 2 Dokumente
       if (topScore >= 0.82) {
         const exact = probe.filter(r => r.similarity >= 0.75);
-        let _ragProductMiss = false;
-      logger.info(`[RAG] Hohe Konfidenz (${topScore.toFixed(3)}) → ${exact.length} Dok.`);
+        logger.info(`[RAG] Hohe Konfidenz (${topScore.toFixed(3)}) → ${exact.length} Dok.`);
         return exact.slice(0, 2);
       }
 
@@ -234,12 +274,6 @@ const messageProcessor = {
 
       const result = full?.length ? full : (probe || []);
       logger.info(`[RAG] Niedrige Konfidenz (${topScore.toFixed(3)}) → ${result.length} Dok.`);
-      // Bei Produktanfragen ohne passende DB-Einträge: Safety-Flag setzen
-      const isProductQuery = /(esim|tarif|preis|gb|land|country|sim|daten|data|reise|travel|paket|kaufen|bestellen|angebot)/i.test(text);
-      if (isProductQuery && topScore < 0.45) {
-        _ragProductMiss = true;
-        logger.info('[RAG] Produkt-Query ohne ausreichende KB-Abdeckung – @autoacts-Fallback aktiv');
-      }
       return result;
 
     } catch (err) {
@@ -321,6 +355,46 @@ const messageProcessor = {
         dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1]
           : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
     return dp[m][n];
+  },
+
+  // ── Zuverlässige Zustellung: Retry-Logik + Deduplizierung ──────────────
+  _pendingDeliveries: new Map(),  // chatId → { text, attempts, ts }
+
+  async _sendReliable(chatId, text, maxAttempts = 3) {
+    const key = chatId;
+
+    // Deduplizierung: gleiche Antwort nicht doppelt senden (< 5s)
+    const prev = this._pendingDeliveries.get(key);
+    if (prev && prev.text === text && Date.now() - prev.ts < 5000) {
+      logger.info(`[MP] Delivery dedup für ${chatId}`);
+      return;
+    }
+
+    this._pendingDeliveries.set(key, { text, attempts: 0, ts: Date.now() });
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await telegramService.sendMessage(chatId, text);
+        this._pendingDeliveries.delete(key);
+        return; // Erfolgreich
+      } catch (e) {
+        const isRetryable = !e.message?.includes('blocked') &&
+                            !e.message?.includes('deactivated') &&
+                            !e.message?.includes('chat not found');
+
+        logger.warn(`[MP] Telegram-Zustellung Versuch ${attempt}/${maxAttempts} fehlgeschlagen (${chatId}): ${e.message}`);
+
+        if (!isRetryable || attempt === maxAttempts) {
+          // Nicht wiederholbar oder letzter Versuch → pending entry für Monitoring
+          this._pendingDeliveries.set(key, { text, attempts: attempt, ts: Date.now(), failed: true });
+          logger.error(`[MP] Zustellung endgültig fehlgeschlagen für ${chatId}`);
+          return;
+        }
+
+        // Exponentielles Backoff: 1s, 2s
+        await new Promise(r => setTimeout(r, attempt * 1000));
+      }
+    }
   },
 
   _updateChatPreview(chatId, message, role) {

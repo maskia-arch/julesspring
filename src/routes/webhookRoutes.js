@@ -7,11 +7,30 @@ const router  = express.Router();
 const channelController = require('../controllers/channelController');
 const smalltalkAgent    = require('../services/ai/smalltalkAgent');
 
+// v1.4.48: in-memory dedup for Telegram update_id to guard against retries
+const _processedUpdates = new Map();
+const _UPDATE_CACHE_MS  = 5 * 60 * 1000; // 5 min
+
+function _rememberUpdate(id) {
+  _processedUpdates.set(id, Date.now());
+  if (_processedUpdates.size > 500) {
+    const cutoff = Date.now() - _UPDATE_CACHE_MS;
+    for (const [k, t] of _processedUpdates) if (t < cutoff) _processedUpdates.delete(k);
+  }
+}
+
 router.post('/telegram', (req, res) => {
   res.sendStatus(200);
 
   setImmediate(async () => {
     try {
+      const update_id = req.body?.update_id;
+      if (update_id && _processedUpdates.has(update_id)) {
+        require('../utils/logger').info(`[Webhook] dupe update_id ${update_id} — skip`);
+        return;
+      }
+      if (update_id) _rememberUpdate(update_id);
+
       const { message } = req.body;
       if (!message) return;
 
@@ -19,6 +38,8 @@ router.post('/telegram', (req, res) => {
       const text   = message.text?.trim();
       const from   = message.from || {};
       if (!chatId || !text) return;
+
+      require('../utils/logger').info(`[Webhook] ${chatId} → "${text.substring(0, 60)}"`);
 
       const telegramService  = require('../services/telegramService');
       const supabase         = require('../config/supabase');
@@ -110,11 +131,15 @@ router.post('/telegram', (req, res) => {
         }
       });
     } catch (err) {
-      logger.error('[Webhook/Telegram]', err.message);
-      // Fehler dem User mitteilen damit er weiß dass er es nochmal versuchen soll
+      require('../utils/logger').error('[Webhook/Telegram]', err.message, err.stack);
+      // Tell the user so they know to retry (safe-guard in case chatId undef)
       try {
-        await telegramService.sendMessage(chatId,
-          'Es gab einen kurzen Fehler. Bitte versuche es in einem Moment erneut.');
+        const tg = require('../services/telegramService');
+        const cid = req.body?.message?.chat?.id;
+        if (cid) {
+          await tg.sendMessage(String(cid),
+            'Es gab einen kurzen Fehler. Bitte versuche es in einem Moment erneut.');
+        }
       } catch (_) {}
     }
   });
@@ -174,73 +199,5 @@ async function handleOrderLookup(chatId, invoiceId, telegramService, supabase) {
     }
   }
 }
-
-
-// ── Sellauth Package Purchase Webhook ─────────────────────────────────────────
-// URL: https://ai-agent-lix6.onrender.com/api/webhooks/sellauth-packages
-// Sellauth calls this when a payment is completed for a channel package/refill
-// We: 1) respond immediately with 200 + deliverable text, 2) activate package async
-router.post('/sellauth-packages', async (req, res) => {
-  // Sellauth displays the response body as the "deliverable" to the customer.
-  // Plain text (not JSON) renders cleanly in the order confirmation page.
-  res.status(200)
-     .set('Content-Type', 'text/plain; charset=utf-8')
-     .send('Dein Paket wurde automatisch aktiviert! Die Credits stehen ab sofort für deinen Channel zur Verfügung und laufen 30 Tage ab erster Nutzung. Viel Erfolg! 🚀');
-
-  // Process the actual activation in background
-  setImmediate(async () => {
-    const logger         = require('../utils/logger');
-    const packageService = require('../services/packageService');
-    const supabase       = require('../config/supabase');
-    const axios          = require('axios');
-
-    try {
-      logger.info('[PackagesWH] Webhook received: ' + JSON.stringify(req.body).substring(0, 300));
-
-      const result = await packageService.handleWebhook(req.body);
-
-      if (!result?.handled) {
-        logger.warn('[PackagesWH] Webhook not handled (payment not completed or missing data)');
-        return;
-      }
-
-      logger.info(`[PackagesWH] ✅ Activated: channel=${result.channelId} credits=${result.credits} refill=${result.isRefill}`);
-
-      // Notify admin via Telegram
-      if (result.adminId) {
-        let token = null;
-        try {
-          const { data: settings } = await supabase.from('settings')
-            .select('smalltalk_bot_token').single();
-          token = settings?.smalltalk_bot_token || null;
-        } catch (_) {}
-        token = token || process.env.TELEGRAM_BOT_TOKEN;
-
-        if (token) {
-          const exp = result.expiresAt
-            ? new Date(result.expiresAt).toLocaleDateString('de-DE')
-            : '–';
-          const text = result.isRefill
-            ? `🔋 <b>Credits aufgeladen!</b>\n\nChannel: ${result.title || result.channelId}\nNachgeladene Credits: ${(result.credits||0).toLocaleString()}\n\nDeine KI läuft weiter! 🚀`
-            : `✅ <b>Paket aktiviert!</b>\n\nChannel: ${result.title || result.channelId}\nCredits: ${(result.credits||0).toLocaleString()}\nLäuft bis: ${exp}\n\nKI-Features sind jetzt aktiv! 🚀`;
-
-          try {
-            await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
-              chat_id:    String(result.adminId),
-              text:       text,
-              parse_mode: 'HTML'
-            }, { timeout: 10000 });
-            logger.info(`[PackagesWH] Admin notified: ${result.adminId}`);
-          } catch (notifyErr) {
-            logger.warn('[PackagesWH] Admin notification failed:', notifyErr.message);
-          }
-        }
-      }
-    } catch (e) {
-      logger.error('[PackagesWH] Processing error:', e.message, e.stack);
-    }
-  });
-});
-
 
 module.exports = router;

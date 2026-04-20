@@ -46,19 +46,38 @@ const couponService = {
 
   // ── Aktiven Coupon aus DB holen ────────────────────────────────────────────
   async getActiveCoupon() {
+    // v1.4.48: Filter by expires_at > now() — an expired coupon must never surface,
+    // even if is_active still true in the DB. Auto-deactivate expired ones.
     try {
+      const nowIso = new Date().toISOString();
       const { data } = await supabase
         .from('daily_coupons')
         .select('*')
         .eq('is_active', true)
+        .gt('expires_at', nowIso)
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+
+      // Fire-and-forget cleanup of expired-but-still-flagged-active rows
+      try {
+        await supabase.from('daily_coupons')
+          .update({ is_active: false })
+          .eq('is_active', true)
+          .lte('expires_at', nowIso);
+      } catch (_) {}
+
       return data || null;
     } catch (e) {
       logger.warn('[Coupon] getActiveCoupon Fehler:', e.message || String(e));
       return null;
     }
+  },
+
+  // v1.4.48: Explicit bypass-cache variant. The AI coupon flow always uses this.
+  async getActiveCouponFresh() {
+    return this.getActiveCoupon();  // Current impl already has no cache, but the
+    // wrapper exists so callers can reason about "no caching" semantics.
   },
 
   // ── Alten Coupon in Sellauth löschen & in DB deaktivieren ─────────────────
