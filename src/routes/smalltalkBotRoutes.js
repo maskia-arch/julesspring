@@ -251,34 +251,31 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }    case "safelist": {
       // ── 🛡 Safelist & Scamliste Hub ─────────────────────────────────────
-      const lang2 = ch?.bot_language || "de";
       const slEnabled = ch?.safelist_enabled || false;
-
-      const { data: safeCount } = await supabase_db.from("user_feedbacks")
-        .select("id", { count: "exact" })
-        .eq("channel_id", channelId).eq("feedback_type", "positive").eq("status", "approved");
-      const { data: scamCount } = await supabase_db.from("scam_entries")
+      const { data: safeRows } = await supabase_db.from("channel_safelist")
         .select("id", { count: "exact" }).eq("channel_id", channelId);
-      const sl = safeCount?.length || 0;
-      const sc = scamCount?.length || 0;
+      const { data: scamRows } = await supabase_db.from("scam_entries")
+        .select("id", { count: "exact" }).eq("channel_id", channelId);
+      const sl = safeRows?.length || 0;
+      const sc = scamRows?.length || 0;
 
       await tg.call("sendMessage", {
         chat_id: String(userId),
         text: `🛡 <b>Safelist & Scamliste</b> — ${ch?.title || channelId}\n\n` +
               `Status: ${slEnabled ? "✅ Aktiv" : "❌ Inaktiv"}\n` +
-              `✅ Safelist: ${sl} Einträge\n` +
-              `⛔ Scamliste: ${sc} Einträge\n\n` +
-              `Mit <code>/safelist @username</code> oder <code>/scamlist @username</code> im Privat-Chat direkt eintragen.`,
+              `✅ Safelist: ${sl} Einträge | ⛔ Scamliste: ${sc} Einträge\n\n` +
+              `Jeder User kann nur einmal pro Liste stehen.\n` +
+              `Ein User kann nicht gleichzeitig auf der Safeliste UND Scamliste stehen.`,
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [
           [{ text: slEnabled ? "🔴 Deaktivieren" : "🟢 Aktivieren",
              callback_data: `cfg_sl_toggle_${channelId}` }],
-          [{ text: `✅ Safelist (${sl})`,   callback_data: `cfg_sl_safeview_${channelId}` },
-           { text: `⛔ Scamliste (${sc})`, callback_data: `cfg_sl_scamview_${channelId}` }],
-          [{ text: "➕ User zur Safelist",   callback_data: `cfg_sl_adduser_${channelId}` },
-           { text: "➕ User zur Scamliste", callback_data: `cfg_sl_addscam_${channelId}` }],
-          [{ text: "📋 Offene Reviews",     callback_data: `cfg_sl_reviews_${channelId}` }],
-          backBtn(channelId, lang2)
+          [{ text: `✅ Safelist (${sl})`,    callback_data: `cfg_sl_safeview_${channelId}` },
+           { text: `⛔ Scamliste (${sc})`,  callback_data: `cfg_sl_scamview_${channelId}` }],
+          [{ text: "➕ Zur Safelist",        callback_data: `cfg_sl_adduser_${channelId}` },
+           { text: "➕ Zur Scamliste",       callback_data: `cfg_sl_addscam_${channelId}` }],
+          [{ text: "📋 Offene Reviews",      callback_data: `cfg_sl_reviews_${channelId}` }],
+          backBtn(channelId, ch?.bot_language||"de")
         ]}
       });
       break;
@@ -291,20 +288,24 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "sl_adduser": {
-      // Scene: admin types @username or userId to add to safelist
       pendingInputs[String(userId)] = { action: "safelist_add_user", channelId };
       await tg.call("sendMessage", { chat_id: String(userId),
-        text: `✅ <b>User zur Safelist hinzufügen</b>\n\nSende @username oder Telegram-ID:\n/cancel zum Abbrechen`,
+        text: `✅ <b>User zur Safelist hinzufügen</b>\n\n` +
+              `Sende <code>@username</code> oder Telegram-ID.\n` +
+              `Optionaler Kommentar: <code>@username | Kommentar</code>\n\n` +
+              `⚠️ Nicht möglich wenn der User bereits auf der Scamliste steht.\n/cancel zum Abbrechen`,
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [backBtn(channelId, ch?.bot_language||"de")] }
       });
       break;
     }
     case "sl_addscam": {
-      // Scene: admin types @username or userId to add to scamlist
       pendingInputs[String(userId)] = { action: "scamlist_add_user", channelId };
       await tg.call("sendMessage", { chat_id: String(userId),
-        text: `⛔ <b>User zur Scamliste hinzufügen</b>\n\nSende @username oder Telegram-ID:\n/cancel zum Abbrechen`,
+        text: `⛔ <b>User zur Scamliste hinzufügen</b>\n\n` +
+              `Sende <code>@username</code> oder Telegram-ID.\n` +
+              `Optionaler Grund: <code>@username | Grund</code>\n\n` +
+              `⚠️ Nicht möglich wenn der User bereits auf der Safeliste steht.\n/cancel zum Abbrechen`,
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [backBtn(channelId, ch?.bot_language||"de")] }
       });
@@ -335,22 +336,28 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "sl_safeview": {
-      const { data: safeList } = await supabase_db.from("user_feedbacks")
-        .select("id, target_username, target_user_id, submitted_by_username, created_at")
-        .eq("channel_id", channelId).eq("feedback_type", "positive").eq("status", "approved")
-        .order("created_at", { ascending: false }).limit(25);
+      // Uses new channel_safelist table — clean entries only
+      const { data: safeList } = await supabase_db.from("channel_safelist")
+        .select("id, user_id, username, score, note, created_at")
+        .eq("channel_id", channelId)
+        .order("created_at", { ascending: false })
+        .limit(25);
       if (!safeList?.length) {
-        await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Safelist ist leer." });
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: "✅ Safelist ist leer.",
+          reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück", callback_data: `cfg_safelist_${channelId}` }]] }
+        });
         break;
       }
-      const lines = safeList.map((e, i) =>
-        `${i+1}. ✅ @${e.target_username || e.target_user_id} — <i>von @${e.submitted_by_username||"admin"}</i>`
-      ).join("\n");
+      const lines = safeList.map((e, i) => {
+        const scoreTag = e.score ? ` [${e.score > 0 ? "+" : ""}${e.score} Pkt]` : "";
+        return `${i+1}. ✅ @${e.username || e.user_id}${scoreTag}`;
+      }).join("\n");
       const kb = safeList.map(e => [{
-        text: `🗑 @${e.target_username||e.target_user_id}`,
+        text: `🗑 @${e.username || e.user_id}`,
         callback_data: `cfg_sl_safedel_${e.id}_${channelId}`
       }]);
-      kb.push(backBtn(channelId, ch?.bot_language||"de"));
+      kb.push([{ text: "◀️ Zurück", callback_data: `cfg_safelist_${channelId}` }]);
       await tg.call("sendMessage", { chat_id: String(userId),
         text: `✅ <b>Safelist</b> (${safeList.length})\n\n${lines}`,
         parse_mode: "HTML", reply_markup: { inline_keyboard: kb }
@@ -360,27 +367,39 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     case "sl_safedel": {
       const m = data.match(/^cfg_sl_safedel_(\d+)_(-?\d+)$/);
       if (m) {
-        await supabase_db.from("user_feedbacks").delete().eq("id", m[1]).eq("channel_id", m[2]);
-        await tg.call("sendMessage", { chat_id: String(userId), text: "✅ Safelist-Eintrag entfernt." });
+        try {
+          await supabase_db.from("channel_safelist").delete().eq("id", m[1]).eq("channel_id", m[2]);
+          await tg.call("sendMessage", { chat_id: String(userId),
+            text: "✅ Von der Safelist entfernt.",
+            reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück", callback_data: `cfg_sl_safeview_${m[2]}` }]] }
+          });
+        } catch(e) {
+          await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
+        }
       }
       break;
     }
     case "sl_scamview": {
       const { data: scamList } = await supabase_db.from("scam_entries")
-        .select("user_id, username, reason, created_at").eq("channel_id", channelId)
-        .order("created_at", { ascending: false }).limit(25);
+        .select("id, user_id, username, reason, created_at")
+        .eq("channel_id", channelId)
+        .order("created_at", { ascending: false })
+        .limit(25);
       if (!scamList?.length) {
-        await tg.call("sendMessage", { chat_id: String(userId), text: "⛔ Scamliste ist leer." });
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: "⛔ Scamliste ist leer.",
+          reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück", callback_data: `cfg_safelist_${channelId}` }]] }
+        });
         break;
       }
       const lines = scamList.map((e, i) =>
-        `${i+1}. ⛔ @${e.username||e.user_id}${e.reason ? ` — <i>${e.reason.substring(0,60)}</i>` : ""}`
+        `${i+1}. ⛔ @${e.username || e.user_id}${e.reason ? ` — <i>${e.reason.substring(0,50)}</i>` : ""}`
       ).join("\n");
       const kb = scamList.map(e => [{
-        text: `🗑 @${e.username||e.user_id}`,
-        callback_data: `cfg_sl_scamdel_${e.user_id}_${channelId}`
+        text: `🗑 @${e.username || e.user_id}`,
+        callback_data: `cfg_sl_scamdel_${e.id}_${channelId}`
       }]);
-      kb.push(backBtn(channelId, ch?.bot_language||"de"));
+      kb.push([{ text: "◀️ Zurück", callback_data: `cfg_safelist_${channelId}` }]);
       await tg.call("sendMessage", { chat_id: String(userId),
         text: `⛔ <b>Scamliste</b> (${scamList.length})\n\n${lines}`,
         parse_mode: "HTML", reply_markup: { inline_keyboard: kb }
@@ -388,13 +407,22 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "sl_scamdel": {
-      const m2 = data.match(/^cfg_sl_scamdel_(-?\d+)_(-?\d+)$/);
+      // Now uses scam_entries.id (not user_id) for reliable deletion
+      const m2 = data.match(/^cfg_sl_scamdel_(\d+)_(-?\d+)$/);
       if (m2) {
-        await supabase_db.from("scam_entries").delete().eq("user_id", m2[1]).eq("channel_id", m2[2]);
-        await tg.call("sendMessage", { chat_id: String(userId), text: "⛔ Scamliste-Eintrag entfernt." });
+        try {
+          await supabase_db.from("scam_entries").delete().eq("id", m2[1]).eq("channel_id", m2[2]);
+          await tg.call("sendMessage", { chat_id: String(userId),
+            text: "⛔ Von der Scamliste entfernt.",
+            reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück", callback_data: `cfg_sl_scamview_${m2[2]}` }]] }
+          });
+        } catch(e) {
+          await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
+        }
       }
       break;
     }
+
     case "feedback": {
       // ── 💬 Feedback-System Hub ────────────────────────────────────────────
       const fbEnabled = ch?.feedback_enabled || false;
@@ -1133,48 +1161,129 @@ async function handlePendingInput(tg, supabase_db, userId, text, settings, msg) 
     return true;
   }
 
-  // ── Safelist: add user by admin ───────────────────────────────────────────
+  // ── Safelist: add user by admin (with cross-list conflict check) ──────────
   if (action === "safelist_add_user") {
     delete pendingInputs[String(userId)];
-    const target = text.replace("@","").trim();
+    const parts = text.replace(/^@/, "").split("|").map(s => s.trim());
+    const target = parts[0];
+    const note   = parts[1] || "Manuell durch Admin";
     if (!target) {
-      await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Bitte @username oder ID eingeben." });
+      await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Bitte @username oder Telegram-ID eingeben." });
       return true;
     }
-    try {
-      await safelistService.submitFeedback({
-        channelId, submittedBy: userId, submittedByUsername: null,
-        targetUsername: target, targetUserId: /^\d+$/.test(target) ? parseInt(target) : null,
-        feedbackType: "positive", feedbackText: "Manuell durch Admin zur Safelist hinzugefügt"
-      }).then(async r => {
-        if (r?.id) {
-          const ch8 = await getChannel(channelId);
-          await safelistService.approveFeedback(r.id, userId, ch8);
-        }
-      });
+    const isId   = /^\d+$/.test(target);
+    const uid    = isId ? parseInt(target) : null;
+    const uname  = isId ? null : target.toLowerCase();
+
+    // Check: already on safelist?
+    const { data: existing } = await supabase_db.from("channel_safelist")
+      .select("id").eq("channel_id", channelId)
+      .or(uid ? `user_id.eq.${uid}` : `username.eq.${uname}`)
+      .maybeSingle().catch(() => ({ data: null }));
+    if (existing) {
       await tg.call("sendMessage", { chat_id: String(userId),
-        text: `✅ @${target} zur Safelist hinzugefügt!`, parse_mode: "HTML" });
-    } catch (e) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ " + e.message }); }
+        text: `⚠️ <b>@${target}</b> steht bereits auf der Safelist!`, parse_mode: "HTML" });
+      return true;
+    }
+    // Check: on scamlist? → conflict
+    const { data: scamConflict } = await supabase_db.from("scam_entries")
+      .select("id").eq("channel_id", channelId)
+      .or(uid ? `user_id.eq.${uid}` : `username.eq.${uname}`)
+      .maybeSingle().catch(() => ({ data: null }));
+    if (scamConflict) {
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `⛔ <b>@${target}</b> steht bereits auf der <b>Scamliste</b>!\n\n` +
+              `Ein User kann nicht gleichzeitig auf Safelist und Scamliste stehen.\n` +
+              `Bitte zuerst von der Scamliste entfernen.`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[
+          { text: "⛔ Von Scamliste entfernen", callback_data: `cfg_sl_scamview_${channelId}` },
+          { text: "◀️ Abbrechen", callback_data: `cfg_safelist_${channelId}` }
+        ]]}
+      });
+      return true;
+    }
+    // All clear: insert into channel_safelist
+    try {
+      await supabase_db.from("channel_safelist").insert([{
+        channel_id: channelId, user_id: uid, username: uname,
+        score: 0, added_by: parseInt(userId), note
+      }]);
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✅ <b>@${target}</b> wurde zur Safelist hinzugefügt.`, parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: "◀️ Safelist", callback_data: `cfg_sl_safeview_${channelId}` }]] }
+      });
+    } catch (e) {
+      if (e.message?.includes("unique") || e.code === "23505") {
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: `⚠️ @${target} steht bereits auf der Safelist.`, parse_mode: "HTML" });
+      } else {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
+      }
+    }
     return true;
   }
 
-  // ── Scamlist: add user by admin ───────────────────────────────────────────
+  // ── Scamlist: add user by admin (with cross-list conflict check) ──────────
   if (action === "scamlist_add_user") {
     delete pendingInputs[String(userId)];
-    const target = text.replace("@","").trim();
-    if (!target) {
-      await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Bitte @username oder ID eingeben." });
+    const parts2 = text.replace(/^@/, "").split("|").map(s => s.trim());
+    const target2 = parts2[0];
+    const reason  = parts2[1] || "Manuell vom Admin eingetragen";
+    if (!target2) {
+      await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Bitte @username oder Telegram-ID eingeben." });
       return true;
     }
-    try {
-      await supabase_db.from("scam_entries").upsert([{
-        channel_id: channelId, user_id: /^\d+$/.test(target) ? parseInt(target) : null,
-        username: /^\d+$/.test(target) ? null : target,
-        reason: "Manuell vom Admin eingetragen", added_by: parseInt(userId)
-      }], { onConflict: "channel_id,user_id" });
+    const isId2  = /^\d+$/.test(target2);
+    const uid2   = isId2 ? parseInt(target2) : null;
+    const uname2 = isId2 ? null : target2.toLowerCase();
+
+    // Check: already on scamlist?
+    const { data: existing2 } = await supabase_db.from("scam_entries")
+      .select("id").eq("channel_id", channelId)
+      .or(uid2 ? `user_id.eq.${uid2}` : `username.eq.${uname2}`)
+      .maybeSingle().catch(() => ({ data: null }));
+    if (existing2) {
       await tg.call("sendMessage", { chat_id: String(userId),
-        text: `⛔ @${target} zur Scamliste hinzugefügt!`, parse_mode: "HTML" });
-    } catch (e) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ " + e.message }); }
+        text: `⚠️ <b>@${target2}</b> steht bereits auf der Scamliste!`, parse_mode: "HTML" });
+      return true;
+    }
+    // Check: on safelist? → conflict
+    const { data: safeConflict } = await supabase_db.from("channel_safelist")
+      .select("id").eq("channel_id", channelId)
+      .or(uid2 ? `user_id.eq.${uid2}` : `username.eq.${uname2}`)
+      .maybeSingle().catch(() => ({ data: null }));
+    if (safeConflict) {
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✅ <b>@${target2}</b> steht bereits auf der <b>Safelist</b>!\n\n` +
+              `Ein User kann nicht gleichzeitig auf Safelist und Scamliste stehen.\n` +
+              `Bitte zuerst von der Safelist entfernen.`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[
+          { text: "✅ Von Safelist entfernen", callback_data: `cfg_sl_safeview_${channelId}` },
+          { text: "◀️ Abbrechen", callback_data: `cfg_safelist_${channelId}` }
+        ]]}
+      });
+      return true;
+    }
+    // All clear: insert into scam_entries
+    try {
+      await supabase_db.from("scam_entries").insert([{
+        channel_id: channelId, user_id: uid2,
+        username: uname2, reason, added_by: parseInt(userId)
+      }]);
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `⛔ <b>@${target2}</b> wurde zur Scamliste hinzugefügt.`, parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: "◀️ Scamliste", callback_data: `cfg_sl_scamview_${channelId}` }]] }
+      });
+    } catch (e) {
+      if (e.message?.includes("unique") || e.code === "23505") {
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: `⚠️ @${target2} steht bereits auf der Scamliste.`, parse_mode: "HTML" });
+      } else {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
+      }
+    }
     return true;
   }
 
