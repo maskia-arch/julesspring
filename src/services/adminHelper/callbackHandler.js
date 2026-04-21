@@ -42,7 +42,8 @@ async function handle(tg, supabase_db, q, token, settings) {
     const ch = await getChannel(targetChannelId);
     const sendTarget = sendPriv ? String(qUserId) : targetChannelId;
 
-    await settingsHandler.sendSettingsMenu(tg, sendTarget, targetChannelId, ch);
+    // FIX: Parameter msgId (null) eingefügt für das neue fließende UI
+    await settingsHandler.sendSettingsMenu(tg, sendTarget, null, targetChannelId, ch);
     return;
   }
 
@@ -274,7 +275,8 @@ async function handle(tg, supabase_db, q, token, settings) {
     const selChanId = data.split("_")[2];
     await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     const ch = await getChannel(selChanId);
-    await settingsHandler.sendSettingsMenu(tg, String(qUserId), selChanId, ch);
+    // FIX: Parameter msgId (null) eingefügt für das neue fließende UI
+    await settingsHandler.sendSettingsMenu(tg, String(qUserId), null, selChanId, ch);
     return;
   }
 
