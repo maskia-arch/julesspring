@@ -69,7 +69,7 @@ function backBtn(channelId, lang) {
 // ── v1.4.50: Folder-style menu helpers ───────────────────────────────────────
 
 function _menuBackBtn(channelId) {
-  return [{ text: "◀️ Hauptmenü", callback_data: `cfg_mainmenu_${channelId}` }];
+  return { text: "◀️ Hauptmenü", callback_data: `cfg_mainmenu_${channelId}` };
 }
 
 async function sendSettingsMenu(tg, sendTo, channelId, ch) {
