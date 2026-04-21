@@ -236,7 +236,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "sl_safedel": {
-      const m = data.match(/^cfg_sl_safedel_(\d+)_(-?\d+)$/);
+      const m = data.match(/^cfg_sl_safedel_([a-zA-Z0-9-]+)_(-?\d+)$/);
       if (m) {
         try {
           await supabase_db.from("channel_safelist").delete().eq("id", m[1]).eq("channel_id", m[2]);
@@ -260,7 +260,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "sl_scamdel": {
-      const m2 = data.match(/^cfg_sl_scamdel_(\d+)_(-?\d+)$/);
+      const m2 = data.match(/^cfg_sl_scamdel_([a-zA-Z0-9-]+)_(-?\d+)$/);
       if (m2) {
         try {
           await supabase_db.from("scam_entries").delete().eq("id", m2[1]).eq("channel_id", m2[2]);
@@ -329,7 +329,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "rep_edit": {
-      const repMatch = data.match(/^cfg_rep_edit_(\d+)_(-?\d+)$/);
+      const repMatch = data.match(/^cfg_rep_edit_([a-zA-Z0-9-]+)_(-?\d+)$/);
       if (!repMatch) break;
       const schedId = repMatch[1];
       const { data: s } = await supabase_db.from("scheduled_messages").select("*").eq("id", schedId).maybeSingle();
@@ -347,7 +347,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "rep_toggle": {
-      const rtm = data.match(/^cfg_rep_toggle_(\d+)_(-?\d+)$/);
+      const rtm = data.match(/^cfg_rep_toggle_([a-zA-Z0-9-]+)_(-?\d+)$/);
       if (rtm) {
         const { data: s2 } = await supabase_db.from("scheduled_messages").select("is_active").eq("id", rtm[1]).maybeSingle();
         const newActive = !s2?.is_active;
@@ -357,7 +357,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "rep_del": {
-      const rdm = data.match(/^cfg_rep_del_(\d+)_(-?\d+)$/);
+      const rdm = data.match(/^cfg_rep_del_([a-zA-Z0-9-]+)_(-?\d+)$/);
       if (rdm) {
         await supabase_db.from("scheduled_messages").delete().eq("id", rdm[1]);
         await tg.call("sendMessage", { chat_id: String(userId), text: "🗑 Gelöscht." });
@@ -410,7 +410,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "bl_del": {
-      const bdm = data.match(/^cfg_bl_del_(\d+)_(-?\d+)$/);
+      const bdm = data.match(/^cfg_bl_del_([a-zA-Z0-9-]+)_(-?\d+)$/);
       if (bdm) {
         await supabase_db.from("channel_blacklist").delete().eq("id", bdm[1]);
         await tg.call("sendMessage", { chat_id: String(userId), text: "🗑 Eintrag gelöscht." });
@@ -484,7 +484,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "aw_vary": {
-      const awm = data.match(/^cfg_aw_vary_(\d+)_(-?\d+)$/);
+      const awm = data.match(/^cfg_aw_vary_([a-zA-Z0-9-]+)_(-?\d+)$/);
       if (!awm) break;
       const { data: sched } = await supabase_db.from("scheduled_messages").select("message").eq("id", awm[1]).maybeSingle();
       if (!sched?.message) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Nachricht nicht gefunden." }); break; }
@@ -493,7 +493,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "aw_run": {
-      const arm = data.match(/^cfg_aw_run_(\d+)_(-?\d+)$/);
+      const arm = data.match(/^cfg_aw_run_([a-zA-Z0-9-]+)_(-?\d+)$/);
       if (!arm) break;
       const { data: s3 } = await supabase_db.from("scheduled_messages").select("message").eq("id", arm[1]).maybeSingle();
       if (!s3?.message) break;
@@ -560,7 +560,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "kb_del": {
-      const kbDelMatch = data.match(/^cfg_kb_del_(-?\d+)_(-?\d+)$/);
+      const kbDelMatch = data.match(/^cfg_kb_del_([a-zA-Z0-9-]+)_(-?\d+)$/);
       if (kbDelMatch) {
         const entryId2 = kbDelMatch[1];
         const chanId2 = kbDelMatch[2];

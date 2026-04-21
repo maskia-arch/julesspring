@@ -26,12 +26,6 @@ async function handle(tg, supabase_db, q, token, settings) {
   const qUserId = q.from?.id;
   const data = q.data || "";
 
-  if (q.message?.message_id && q.message?.chat?.id) {
-    await tg.call("deleteMessage", {
-      chat_id: q.message.chat.id,
-      message_id: q.message.message_id
-    }).catch(() => {});
-  }
   await tg.call("answerCallbackQuery", { callback_query_id: q.id }).catch(() => {});
 
   if (data.startsWith("settings_here_") || data.startsWith("settings_private_")) {
@@ -42,6 +36,8 @@ async function handle(tg, supabase_db, q, token, settings) {
 
     if (sendPriv && ownerId && qUserId !== ownerId) return;
     if (!await isGroupAdmin(tg, targetChannelId, qUserId)) return;
+
+    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
 
     const ch = await getChannel(targetChannelId);
     const sendTarget = sendPriv ? String(qUserId) : targetChannelId;
@@ -76,7 +72,6 @@ async function handle(tg, supabase_db, q, token, settings) {
         });
       }
       await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "Feedback nicht bestätigt." });
       return;
     }
 
@@ -111,8 +106,6 @@ async function handle(tg, supabase_db, q, token, settings) {
     if (proofMsg?.message_id) {
       void safelistService.trackBotMessage(q.message.chat.id, proofMsg.message_id, "temp", 5*60*1000);
     }
-
-    await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: feedbackType === "positive" ? "✅ Positiv gespeichert" : "⚠️ Negativ gespeichert" });
     return;
   }
 
@@ -127,7 +120,6 @@ async function handle(tg, supabase_db, q, token, settings) {
     const wizard = pendingInputs[String(qUserId)];
     
     if (!wizard || !wizard.action.startsWith("sched_wizard")) {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id });
       return;
     }
     delete pendingInputs[String(qUserId)];
@@ -181,6 +173,7 @@ async function handle(tg, supabase_db, q, token, settings) {
       }]);
       const repeatLabel = { once: "einmalig", daily: "täglich", weekly: "wöchentlich", monthly: "monatlich" }[repeatType] || repeatType;
       const dt = wizard.nextRunAt ? new Date(wizard.nextRunAt).toLocaleString("de-DE") : "sofort";
+      await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
       await tg.call("sendMessage", { chat_id: String(qUserId),
         text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Zeit: ${dt}\n🔁 Wiederholung: ${repeatLabel}`,
         parse_mode: "HTML" });
@@ -231,6 +224,7 @@ async function handle(tg, supabase_db, q, token, settings) {
     const roChanId = roMatch[2];
     delete pendingInputs[String(qUserId)];
     
+    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     const { data: refill } = await (async () => { try { return await supabase_db.from("channel_refills").select("*").eq("id", refillId).single(); } catch { return { data: null }; } })();
     if (!refill) { await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Refill nicht gefunden." }); return; }
     
@@ -296,6 +290,7 @@ async function handle(tg, supabase_db, q, token, settings) {
     const chanId4 = parts4[2];
     delete pendingInputs[String(qUserId)];
 
+    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     const { data: pkg } = await (async () => { try { return await supabase_db.from("channel_packages").select("*").eq("id", pkgId).single(); } catch { return { data: null }; } })();
     if (!pkg) {
       await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Paket nicht gefunden." });
@@ -331,6 +326,7 @@ async function handle(tg, supabase_db, q, token, settings) {
 
   if (data.startsWith("sel_channel_")) {
     const selChanId = data.split("_")[2];
+    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     const ch = await getChannel(selChanId);
     await settingsHandler.sendSettingsMenu(tg, String(qUserId), selChanId, ch);
     return;
@@ -366,7 +362,6 @@ async function handle(tg, supabase_db, q, token, settings) {
     }).catch(async () => {
       await tg.call("sendMessage", { chat_id: q.message.chat.id, text: `📎 Schreibe dem Bot privat um deine Beweise einzureichen. Wenn fertig: /done`, parse_mode: "HTML" });
     });
-    await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "📎 Bitte sende Proofs dem Bot privat." });
     return;
   }
 
@@ -403,7 +398,6 @@ async function handle(tg, supabase_db, q, token, settings) {
       text: "✅ Feedback gespeichert. Danke!", parse_mode: "HTML"
     }).catch(() => {});
     void safelistService.trackBotMessage(q.message.chat.id, q.message.message_id, "temp", 30*1000);
-    await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "✅ Gespeichert." });
     return;
   }
 
@@ -441,13 +435,13 @@ async function handle(tg, supabase_db, q, token, settings) {
       text: `${fbType === "positive" ? "✅ Positives" : "⚠️ Negatives"} Feedback für @${targetU} manuell eingetragen.`,
       parse_mode: "HTML"
     }).catch(() => {});
-    await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "✅ Gespeichert." });
     return;
   }
 
   if (data.startsWith("fb_approve_") || data.startsWith("fb_reject_")) {
     const feedbackId = data.split("_")[2];
     const ch2 = {}; 
+    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     if (data.startsWith("fb_approve_")) {
       await safelistService.approveFeedback(feedbackId, qUserId, ch2);
       await tg.call("sendMessage", { chat_id: String(qUserId), text: "✅ Meldung bestätigt. User wurde auf Scamliste gesetzt." });
