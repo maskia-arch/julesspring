@@ -28,6 +28,18 @@ async function handle(tg, supabase_db, q, token, settings) {
 
   await tg.call("answerCallbackQuery", { callback_query_id: q.id }).catch(() => {});
 
+  if (data.startsWith("uinfo_names_")) {
+    const targetId = data.split("_")[2];
+    const { data: history } = await supabase_db.from("user_name_history").select("*").eq("user_id", targetId).order("detected_at", { ascending: false }).limit(10);
+    if (!history?.length) {
+      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Keine Namenshistorie gefunden.", show_alert: true });
+      return;
+    }
+    const list = history.map(h => `• ${new Date(h.detected_at).toLocaleDateString("de-DE")}: ${h.first_name||""} ${h.last_name||""} ${h.username?"(@"+h.username+")":""}`).join("\n");
+    await tg.call("sendMessage", { chat_id: String(qUserId), text: `📜 <b>Namenshistorie für <code>${targetId}</code></b>\n\n${list}`, parse_mode: "HTML" });
+    return;
+  }
+
   if (data.startsWith("settings_here_") || data.startsWith("settings_private_")) {
     const parts = data.split("_");
     const sendPriv = data.startsWith("settings_private_");
@@ -216,7 +228,6 @@ async function handle(tg, supabase_db, q, token, settings) {
     } catch (e2) { await tg.call("sendMessage", { chat_id: String(qUserId), text: `❌ Refill fehlgeschlagen:\n<i>${e2.message}</i>`, parse_mode: "HTML" }); }
     return;
   }
-
   if (data.startsWith("buy_chan_")) {
     const buyChanId = data.split("_")[2];
     const pend = pendingInputs[String(qUserId)] || {};
