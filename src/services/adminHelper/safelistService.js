@@ -274,4 +274,11 @@ const safelistService = {
   async _fetchTgProfile(userId, token) {
     if (!token || !userId) return {};
     try {
-      const resp = await axios.get(`https://api.telegram.org/bot${
+      const resp = await axios.get(`https://api.telegram.org/bot${token}/getChat`, { params: { chat_id: userId }, timeout: 5000 });
+      const r = resp.data?.result || {};
+      return { id: r.id, first_name: r.first_name, last_name: r.last_name, username: r.username, bio: r.bio, fetched_at: new Date().toISOString() };
+    } catch { return {}; }
+  }
+};
+
+module.exports = safelistService;
