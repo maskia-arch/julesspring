@@ -1,22 +1,8 @@
-/**
- * tgAdminHelper.js  v1.4.5
- *
- * Kostenlose Telegram-Gruppen-Verwaltungstools (kein AI nötig).
- * Nutzt ausschliesslich die offizielle Telegram Bot API.
- *
- * Verfügbare Tools:
- *  - Gelöschte Accounts entfernen (trackbasiert)
- *  - Welcome/Goodbye Nachrichten
- *  - Nachrichten löschen (auf Befehl)
- *  - Member-Tracking
- *  - Inline-Command-Menü für Admins
- */
-
-const axios    = require("axios");
+const axios = require("axios");
 const supabase = require("../../config/supabase");
-const logger   = require("../../utils/logger");
+const logger = require("../../utils/logger");
+const safelistService = require("./safelistService");
 
-// Telegram API wrapper
 function tgApi(token) {
   const base = `https://api.telegram.org/bot${token}`;
   return {
@@ -42,9 +28,6 @@ function tgApi(token) {
     async getAdmins(chatId) {
       return this.call("getChatAdministrators", { chat_id: chatId }) || [];
     },
-    async pinMessage(chatId, msgId) {
-      return this.call("pinChatMessage", { chat_id: chatId, message_id: msgId, disable_notification: true });
-    },
     async deleteMessage(chatId, msgId) {
       return this.call("deleteMessage", { chat_id: chatId, message_id: msgId });
     },
@@ -58,18 +41,15 @@ function tgApi(token) {
 }
 
 const tgAdminHelper = {
-
-  // ── Member-Tracking ────────────────────────────────────────────────────────
-
   async trackMember(channelId, user) {
     if (!user?.id) return;
     try {
       await supabase.from("channel_members").upsert([{
         channel_id: channelId,
-        user_id:    user.id,
-        username:   user.username || null,
+        user_id: user.id,
+        username: user.username || null,
         first_name: user.first_name || null,
-        last_seen:  new Date(),
+        last_seen: new Date(),
         is_deleted: false
       }], { onConflict: "channel_id,user_id" });
     } catch (e) {
@@ -79,12 +59,9 @@ const tgAdminHelper = {
 
   async trackLeft(channelId, userId) {
     try {
-      await supabase.from("channel_members")
-        .delete().eq("channel_id", channelId).eq("user_id", userId);
+      await supabase.from("channel_members").delete().eq("channel_id", channelId).eq("user_id", userId);
     } catch (_) {}
   },
-
-  // ── Gelöschte Accounts entfernen ──────────────────────────────────────────
 
   async cleanDeletedAccounts(token, channelId) {
     const tg = tgApi(token);
@@ -102,34 +79,27 @@ const tgAdminHelper = {
         const cm = await tg.getMember(channelId, m.user_id);
         checked++;
 
-        // Gelöschter Account = kein Vorname, kein Username, first_name leer
-        const isDeleted = !cm?.user?.first_name && !cm?.user?.username &&
-                          cm?.status !== "left" && cm?.status !== "kicked";
+        const isDeleted = !cm?.user?.first_name && !cm?.user?.username && cm?.status !== "left" && cm?.status !== "kicked";
 
         if (isDeleted || cm?.user?.is_deleted) {
           await tg.kick(channelId, m.user_id);
-          await tg.unban(channelId, m.user_id); // Sofort entbannen (nur rauswerfen)
-          await supabase.from("channel_members")
-            .update({ is_deleted: true }).eq("channel_id", channelId).eq("user_id", m.user_id);
+          await tg.unban(channelId, m.user_id);
+          await supabase.from("channel_members").update({ is_deleted: true }).eq("channel_id", channelId).eq("user_id", m.user_id);
           removed++;
-          logger.info(`[AdminHelper] Gelöschter Account entfernt: ${m.user_id} aus ${channelId}`);
-          await new Promise(r => setTimeout(r, 300)); // Rate limit
+          await new Promise(r => setTimeout(r, 300));
         }
-      } catch { /* Member nicht mehr erreichbar → überspringen */ }
+      } catch { }
     }
-
     return { removed, checked };
   },
 
-  // ── Admin-Menü (Inline Buttons) ───────────────────────────────────────────
-
   ADMIN_MENU_ITEMS: [
     { text: "🧹 Gelöschte Accounts entfernen", cb: "admin_clean" },
-    { text: "📌 Nachricht pinnen",             cb: "admin_pin_last" },
-    { text: "📋 Mitglieder-Anzahl",             cb: "admin_count" },
-    { text: "🗑 Letzte Nachricht löschen",     cb: "admin_del_last" },
-    { text: "⏰ Geplante Nachrichten",         cb: "admin_schedule" },
-    { text: "🛡 Safelist verwalten",           cb: "admin_safelist" },
+    { text: "📌 Nachricht pinnen", cb: "admin_pin_last" },
+    { text: "📋 Mitglieder-Anzahl", cb: "admin_count" },
+    { text: "🗑 Letzte Nachricht löschen", cb: "admin_del_last" },
+    { text: "⏰ Geplante Nachrichten", cb: "admin_schedule" },
+    { text: "🛡 Safelist verwalten", cb: "admin_safelist" },
   ],
 
   async sendAdminMenu(token, chatId, msgId = null) {
@@ -143,16 +113,13 @@ const tgAdminHelper = {
     });
   },
 
-  // ── Callback-Query-Handler ─────────────────────────────────────────────────
-
   async handleCallback(token, query, channel) {
-    const tg   = tgApi(token);
+    const tg = tgApi(token);
     const data = query.data;
     const chatId = query.message?.chat?.id;
     const userId = query.from?.id;
 
-    // Admin-Check
-    const admins  = await tg.getAdmins(chatId).catch(() => []);
+    const admins = await tg.getAdmins(chatId).catch(() => []);
     const isAdmin = admins.some(a => a.user?.id === userId);
     if (!isAdmin) {
       await tg.call("answerCallbackQuery", { callback_query_id: query.id, text: "❌ Nur für Admins." });
@@ -160,6 +127,15 @@ const tgAdminHelper = {
     }
 
     await tg.call("answerCallbackQuery", { callback_query_id: query.id });
+
+    if (data.startsWith("safelist_del_") || data.startsWith("del_safelist_")) {
+      const idToDel = data.split("_").pop();
+      if (safelistService && safelistService.removeFromSafelist) {
+        await safelistService.removeFromSafelist(String(chatId), idToDel);
+        await safelistService.sendSafelistMenu(token, chatId, query.message.message_id);
+      }
+      return;
+    }
 
     switch (data) {
       case "admin_clean": {
@@ -199,28 +175,42 @@ const tgAdminHelper = {
         }
         break;
       }
+      case "admin_safelist": {
+        if (safelistService && safelistService.sendSafelistMenu) {
+          await safelistService.sendSafelistMenu(token, chatId, query.message.message_id);
+        }
+        break;
+      }
+      case "admin_menu": {
+        await tg.call("editMessageText", {
+          chat_id: chatId,
+          message_id: query.message.message_id,
+          text: "⚙️ <b>Admin-Menü</b>\nWähle eine Funktion:",
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: this.ADMIN_MENU_ITEMS.map(i => [{ text: i.text, callback_data: i.cb }])
+          }
+        }).catch(() => {});
+        break;
+      }
     }
   },
 
-  // ── Welcome / Goodbye ─────────────────────────────────────────────────────
-
   async sendWelcome(token, chatId, user, channel) {
     if (!channel?.welcome_msg) return;
-    const tg   = tgApi(token);
+    const tg = tgApi(token);
     const name = user.first_name || user.username || "Neues Mitglied";
-    const msg  = channel.welcome_msg.replace("{name}", `<b>${name}</b>`).replace("{chat}", chatId);
+    const msg = channel.welcome_msg.replace("{name}", `<b>${name}</b>`).replace("{chat}", chatId);
     await tg.send(chatId, msg).catch(() => {});
   },
 
   async sendGoodbye(token, chatId, user, channel) {
     if (!channel?.goodbye_msg) return;
-    const tg   = tgApi(token);
+    const tg = tgApi(token);
     const name = user.first_name || user.username || "Mitglied";
-    const msg  = channel.goodbye_msg.replace("{name}", `<b>${name}</b>`);
+    const msg = channel.goodbye_msg.replace("{name}", `<b>${name}</b>`);
     await tg.send(chatId, msg).catch(() => {});
   },
-
-  // ── Geplante Nachrichten abfeuern ─────────────────────────────────────────
 
   async fireScheduled(token) {
     const now = new Date().toISOString();
@@ -231,7 +221,6 @@ const tgAdminHelper = {
       for (const msg of (due || [])) {
         const tg = tgApi(token);
         try {
-          // Vorherige Nachricht löschen wenn gewünscht
           if (msg.delete_previous && msg.last_sent_msg_id) {
             await tg.call("deleteMessage", { chat_id: msg.channel_id, message_id: msg.last_sent_msg_id }).catch(() => {});
           }
@@ -243,7 +232,6 @@ const tgAdminHelper = {
             sentMsg = await tg.send(msg.channel_id, msg.message);
           }
 
-          // Anpinnen wenn gewünscht
           if (msg.pin_after_send && sentMsg?.message_id) {
             await tg.pinMessage(msg.channel_id, sentMsg.message_id).catch(() => {});
           }
@@ -267,9 +255,7 @@ const tgAdminHelper = {
     }
   },
 
-  // Simplers Cron-Parsing (Stunde + Wochentag)
   _nextCronRun(cron) {
-    // Format: "M H DOM MON DOW" – wir nutzen nur H und DOW
     try {
       const parts = cron.trim().split(/\s+/);
       const [min, hour] = [parseInt(parts[0]), parseInt(parts[1])];
