@@ -7,7 +7,6 @@ const telegramService = require('../services/telegramService');
 const { getVersion }      = require('../utils/versionLoader');
 const visitorService      = require('../services/visitorService');
 const notificationService = require('../services/notificationService');
-// abuseDetector wird lazy geladen - verhindert Crash wenn schema10.sql noch nicht ausgeführt
 function getAbuseDetector() {
   try { return require('../services/abuseDetector'); }
   catch(e) { return null; }
@@ -46,9 +45,6 @@ const adminController = {
       const tout  = (tokenUsage||[]).reduce((s,m) => s+(m.completion_tokens||0), 0);
       const temb  = (tokenUsage||[]).reduce((s,m) => s+(m.embedding_tokens||0), 0);
 
-      // Aktuelle Preise (April 2026):
-      // DeepSeek V3.2: $0.28/M input (cache miss), $0.42/M output
-      // OpenAI text-embedding-3-small: $0.020/M tokens
       const costDeepseek  = (tin  / 1_000_000) * 0.28 + (tout / 1_000_000) * 0.42;
       const costEmbedding = (temb / 1_000_000) * 0.020;
       const cost = (costDeepseek + costEmbedding).toFixed(4);
@@ -64,11 +60,9 @@ const adminController = {
   },
 
   async cleanupOldMessages(req, res, next) {
-    // Löscht Nachrichten älter als 48h wenn der Chat nie manuell bearbeitet wurde
     try {
       const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
 
-      // Chats finden die KEINE manuelle Nachricht und KEIN manuelles Engagement hatten
       const { data: chatsToClean } = await supabase
         .from('chats')
         .select('id')
@@ -80,7 +74,6 @@ const adminController = {
 
       const chatIds = chatsToClean.map(c => c.id);
 
-      // Nur Nachrichten löschen die nicht manuell gesendet wurden
       const { count } = await supabase
         .from('messages')
         .delete({ count: 'exact' })
@@ -114,13 +107,11 @@ const adminController = {
       const { chatId } = req.params;
       const [chatResult, msgsResult] = await Promise.all([
         supabase.from('chats').select('*').eq('id', chatId).maybeSingle(),
-        // DESC + limit → neueste 200; dann umkehren für chronologische Anzeige
         supabase.from('messages').select('*').eq('chat_id', chatId).order('created_at', { ascending: false }).limit(200)
       ]);
       const chat = chatResult.data;
-      let msgs = (msgsResult.data || []).reverse(); // älteste zuerst nach dem DESC-Limit
+      let msgs = (msgsResult.data || []).reverse(); 
       if (msgsResult.error) throw msgsResult.error;
-      // Collapse consecutive 📍 visit messages to show only the last
       const allMsgs = msgs || [];
       const filtered = [];
       let lastVisitIdx = -1;
@@ -151,7 +142,6 @@ const adminController = {
       const { chatId, content } = req.body;
       if (!chatId || !content) return res.status(400).json({ error: 'Fehlende Felder' });
       const { data: chat } = await supabase.from('chats').select('platform').eq('id', chatId).single();
-      // FIX: void async IIFE statt .catch() (Supabase v2 hat kein .catch())
       void (async () => { try { await supabase.from('messages').insert([{ chat_id: chatId, role: 'assistant', content, is_manual: true }]); } catch (_) {} })();
       void (async () => { try { await supabase.from('chats').update({ last_message: content.substring(0,120), last_message_role: 'assistant', updated_at: new Date() }).eq('id', chatId); } catch (_) {} })();
       if (chat?.platform === 'telegram') await telegramService.sendMessage(chatId, content);
@@ -170,11 +160,6 @@ const adminController = {
   async updateSettings(req, res, next) {
     try {
       const body = req.body;
-
-      // Strategie: Zuerst alle bekannten sicheren Felder updaten,
-      // dann unbekannte/neue Felder einzeln versuchen.
-      // So schlägt das Speichern nie still fehl.
-
       const coreFields = {
         id:                   1,
         updated_at:           new Date(),
@@ -191,19 +176,16 @@ const adminController = {
         ai_temperature:       body.ai_temperature       !== undefined ? parseFloat(body.ai_temperature) : undefined,
         rag_threshold:        body.rag_threshold        !== undefined ? parseFloat(body.rag_threshold)  : undefined,
         rag_match_count:      body.rag_match_count      !== undefined ? parseInt(body.rag_match_count)  : undefined,
-        // Coupon-Einstellungen
         coupon_enabled:       body.coupon_enabled       !== undefined ? Boolean(body.coupon_enabled)       : undefined,
         coupon_discount:      body.coupon_discount      !== undefined ? parseInt(body.coupon_discount)     : undefined,
         coupon_type:          body.coupon_type          ?? undefined,
         coupon_description:   body.coupon_description   ?? undefined,
         coupon_max_uses:      body.coupon_max_uses      !== undefined ? parseInt(body.coupon_max_uses)||null: undefined,
         coupon_schedule_hour: body.coupon_schedule_hour !== undefined ? parseInt(body.coupon_schedule_hour): undefined,
-        // Widget-Einstellungen
         widget_powered_by:    body.widget_powered_by    ?? undefined,
         max_history_msgs:     body.max_history_msgs     !== undefined ? parseInt(body.max_history_msgs)    : undefined,
         summary_interval:     body.summary_interval     !== undefined ? parseInt(body.summary_interval)    : undefined,
         ai_max_input_tokens:  body.ai_max_input_tokens  !== undefined ? parseInt(body.ai_max_input_tokens) : undefined,
-        // Smalltalk-Bot Einstellungen
         smalltalk_system_prompt:   body.smalltalk_system_prompt   ?? undefined,
         smalltalk_model:           body.smalltalk_model           ?? undefined,
         smalltalk_max_tokens:      body.smalltalk_max_tokens      !== undefined ? parseInt(body.smalltalk_max_tokens)     : undefined,
@@ -214,17 +196,14 @@ const adminController = {
         smalltalk_require_approval: body.smalltalk_require_approval !== undefined ? Boolean(body.smalltalk_require_approval) : undefined,
       };
 
-      // undefined-Felder entfernen (nicht überschreiben wenn nicht gesendet)
       Object.keys(coreFields).forEach(k => coreFields[k] === undefined && delete coreFields[k]);
 
       const { data, error } = await supabase.from('settings').upsert(coreFields).select();
 
       if (error) {
-        console.error('[Settings] Save Fehler:', error.message);
         return res.status(500).json({ error: 'Einstellungen konnten nicht gespeichert werden: ' + error.message });
       }
 
-      // Wenn neuer Smalltalk-Bot-Token gesetzt → sofort verbinden
       if (body.smalltalk_bot_token && body.smalltalk_bot_token.trim()) {
         setImmediate(async () => {
           try {
@@ -232,13 +211,11 @@ const adminController = {
             const token   = body.smalltalk_bot_token.trim();
             const baseUrl = `https://api.telegram.org/bot${token}`;
 
-            // 1. Bot-Info abrufen
             const meResp  = await axios.get(`${baseUrl}/getMe`, { timeout: 8000 });
             const botInfo = meResp.data?.result || {};
             const username  = botInfo.username  || '';
             const firstName = botInfo.first_name || '';
 
-            // 2. Webhook registrieren
             const appUrl = process.env.APP_URL || '';
             if (appUrl) {
               const webhookUrl = `${appUrl}/api/webhooks/smalltalk`;
@@ -246,31 +223,22 @@ const adminController = {
                 url:             webhookUrl,
                 allowed_updates: ['message','callback_query','my_chat_member','channel_post']
               }, { timeout: 8000 });
-              logger.info(`[SmallTalk] Webhook registriert: ${webhookUrl} → ${whResp.data?.ok ? 'OK' : 'FEHLER'}`);
             }
 
-            // 3. Bot-Info in DB speichern
             await supabase.from('settings').update({
               smalltalk_bot_username: username,
               smalltalk_bot_firstname: firstName,
               updated_at: new Date()
             }).eq('id', 1).catch(() => {});
 
-            logger.info(`[SmallTalk] Bot verbunden: @${username} (${firstName})`);
-          } catch (e) {
-            logger.warn('[SmallTalk] Bot-Verbindung fehlgeschlagen:', e.message);
-          }
+          } catch (e) {}
         });
       }
 
-      // Geladene Settings zurückgeben damit Frontend sync bleibt
       const { data: fresh } = await supabase.from('settings').select('*').eq('id', 1).single();
       res.json(fresh || data?.[0] || {});
     } catch (e) { next(e); }
   },
-
-  // ── Telegram Webhook ──────────────────────────────────────────────────────
-  // FIX: Webhook-URL wird in settings.webhook_url gespeichert
   async testSmallTalkBot(req, res, next) {
     try {
       const { data: s } = await supabase.from('settings').select('smalltalk_bot_token, smalltalk_bot_username').single();
@@ -281,11 +249,9 @@ const adminController = {
       const meResp = await axios.get(`https://api.telegram.org/bot${token}/getMe`, { timeout: 6000 });
       const bot = meResp.data?.result || {};
 
-      // Webhook-Status prüfen
       const whResp = await axios.get(`https://api.telegram.org/bot${token}/getWebhookInfo`, { timeout: 6000 });
       const wh = whResp.data?.result || {};
 
-      // Webhook setzen falls fehlend
       if (!wh.url && process.env.APP_URL) {
         const webhookUrl = `${process.env.APP_URL}/api/webhooks/smalltalk`;
         await axios.post(`https://api.telegram.org/bot${token}/setWebhook`, {
@@ -294,7 +260,6 @@ const adminController = {
         wh.url = webhookUrl;
       }
 
-      // Bot-Username in DB aktualisieren
       if (bot.username) {
         await supabase.from('settings').update({ smalltalk_bot_username: bot.username }).eq('id', 1);
       }
@@ -325,7 +290,6 @@ const adminController = {
 
   async getLiveVisitors(req, res, next) {
     try {
-      // Besucher der letzten 5 Minuten = "live"
       const since = new Date(Date.now() - 5 * 60 * 1000).toISOString();
       let visitors = [];
       try {
@@ -352,7 +316,6 @@ const adminController = {
         } catch (_) {}
       }
 
-      // Attach last activity to each visitor
       const result = visitors.map(v => {
         const lastAct = activities.find(a => a.chat_id === v.chat_id);
         return {
@@ -424,7 +387,6 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
-
   async lookupVisitorIp(req, res, next) {
     try {
       const { ip } = req.params;
@@ -458,7 +420,6 @@ const adminController = {
     if (!key) return res.status(500).json({ error: 'VAPID_PUBLIC_KEY nicht konfiguriert' });
     res.json({ publicKey: key });
   },
-
   async sendTestPush(req, res, next) {
     try {
       const notificationService = require('../services/notificationService');
@@ -478,7 +439,6 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
-  // ── Coupon Management ───────────────────────────────────────────────────────
   async getSessions(req, res, next) {
     try {
       const { limit = 50 } = req.query;
@@ -554,7 +514,6 @@ const adminController = {
       const result = await telegramService.setWebhook(appUrl);
 
       if (result.ok) {
-        // URL persistent in DB speichern
         await supabase.from('settings')
           .upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() })
           .catch(e => console.warn('[Webhook] DB-Speicherung fehlgeschlagen:', e.message));
@@ -571,7 +530,7 @@ const adminController = {
     } catch (e) { next(e); }
   },
 
-  // ── Blacklist ──────────────────────────────────────────────────────────────
+  // ── Blacklist / Feedbacks / Moderation ──────────────────────────────────────
   async getBlacklist(req, res, next) {
     try {
       const { data, error } = await supabase.from('blacklist').select('*').order('created_at', { ascending: false });
@@ -579,6 +538,64 @@ const adminController = {
       res.json(data || []);
     } catch (e) { next(e); }
   },
+
+  async getPendingFeedbacks(req, res, next) {
+    try {
+      const { data, error } = await supabase
+        .from('user_feedbacks')
+        .select('*')
+        .in('status', ['pending', 'collecting_proofs'])
+        .order('created_at', { ascending: false });
+      if (error) throw error;
+      
+      // Für Feedbacks mit Proofs die entsprechenden Proofs anhängen
+      const result = [];
+      for (const fb of (data || [])) {
+        if (fb.has_proofs || fb.proof_count > 0) {
+          const { data: proofs } = await supabase.from('feedback_proofs').select('*').eq('feedback_id', fb.id);
+          fb.proofs = proofs || [];
+        } else {
+          fb.proofs = [];
+        }
+        result.push(fb);
+      }
+      res.json(result);
+    } catch (e) { next(e); }
+  },
+
+  async approveFeedback(req, res, next) {
+    try {
+      const { id } = req.params;
+      const { data: fbRow } = await supabase.from("user_feedbacks").select("*").eq("id", id).maybeSingle();
+      
+      if (!fbRow) return res.status(404).json({ error: "Feedback nicht gefunden" });
+
+      const safelistService = require('../services/adminHelper/safelistService');
+      const channelData = { ai_enabled: false }; // Dummy für Dashboard-Aufruf
+      
+      await safelistService.approveFeedback(id, 0, channelData); // 0 = Admin-Dashboard-Kennung
+
+      if (fbRow.target_user_id) {
+        const delta = fbRow.feedback_type === "positive" ? 1 : -10;
+        await supabase.rpc("update_user_reputation", {
+          p_channel_id: fbRow.channel_id, p_user_id: fbRow.target_user_id,
+          p_username: fbRow.target_username, p_delta: delta
+        }).catch(() => {});
+      }
+
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
+  async rejectFeedback(req, res, next) {
+    try {
+      const { id } = req.params;
+      const safelistService = require('../services/adminHelper/safelistService');
+      await safelistService.rejectFeedback(id, 0);
+      res.json({ success: true });
+    } catch (e) { next(e); }
+  },
+
   async banUser(req, res, next) {
     try {
       const { identifier, reason } = req.body;
@@ -595,7 +612,6 @@ const adminController = {
       res.json({ success: true });
     } catch (e) { next(e); }
   },
-
   // ── Learning ───────────────────────────────────────────────────────────────
   async getLearningQueue(req, res, next) {
     try {
@@ -726,7 +742,6 @@ const adminController = {
       const { id } = req.params;
       const { title, content, category_id } = req.body;
       if (!content) return res.status(400).json({ error: 'Inhalt fehlt' });
-      // Re-embed with new content
       const embResult = await deepseekService.generateEmbedding(content);
       const embedding = embResult.embedding || embResult;
       const { data, error } = await supabase.from('knowledge_base')
@@ -746,10 +761,8 @@ const adminController = {
 
       const knowledgeEnricher = require('../services/knowledgeEnricher');
 
-      // 1. Originaleintrag löschen
       await supabase.from('knowledge_base').delete().eq('id', id);
 
-      // 2. Verwandte Einträge finden (gleiche product_id oder ähnlicher Inhalt)
       let relatedIds = [];
       if (entry.metadata?.product_id) {
         const { data: related } = await supabase.from('knowledge_base')
@@ -759,7 +772,6 @@ const adminController = {
         relatedIds = (related || []).map(r => r.id);
       }
 
-      // 3. Via OpenAI neu strukturieren
       const saved = await knowledgeEnricher.enrichAndStore(
         entry.content, entry.source, entry.category_id,
         { ...entry.metadata, synced_at: new Date().toISOString() }
@@ -794,7 +806,6 @@ const adminController = {
       if (!content) return res.status(400).json({ error: 'Inhalt fehlt' });
       const fullContent = title ? `${title}\n${content}` : content;
 
-      // KI-Vorarbeiter: intelligente Kategorisierung + Anreicherung
       const knowledgeEnricher = require('../services/knowledgeEnricher');
       const saved = await knowledgeEnricher.enrichAndStore(
         fullContent, 'manual_entry',
@@ -825,7 +836,6 @@ const adminController = {
         for (const chunk of page.chunks) {
           try {
             const rawContent = `Quelle: ${page.url}\nTitel: ${page.title || ''}\n${chunk}`;
-            // KI-Vorarbeiter: strukturieren + kategorisieren
             const entries = await knowledgeEnricher.enrichAndStore(
               rawContent, 'web_scrape',
               category_id ? parseInt(category_id) : null,
@@ -847,7 +857,6 @@ const adminController = {
       res.json(await sellauthService.testConnection(apiKey, shopId));
     } catch (e) { next(e); }
   },
-  // Sync startet als Hintergrund-Job, gibt sofort jobId zurück
   async syncSellauth(req, res, next) {
     try {
       let { apiKey, shopId, shopUrl } = req.body || {};
@@ -861,11 +870,9 @@ const adminController = {
       if (!shopId)  return res.status(400).json({ error: 'Keine Shop ID. Settings → Sellauth.' });
       if (!shopUrl) return res.status(400).json({ error: 'Keine Shop URL. Settings → Sellauth.' });
 
-      // Job anlegen + sofort antworten
       const jobId = syncJobManager.createJob();
       res.json({ success: true, jobId, message: 'Sync gestartet' });
 
-      // Im Hintergrund weiterlaufen – unabhängig vom Browser
       setImmediate(async () => {
         try {
           const results = await sellauthService.syncToKnowledgeBase(apiKey, shopId, shopUrl, jobId);
@@ -877,7 +884,6 @@ const adminController = {
     } catch (e) { res.status(500).json({ error: e.message }); }
   },
 
-  // Sync-Status abfragen
   async getSyncStatus(req, res, next) {
     try {
       const job = syncJobManager.getJob(req.params.jobId);
@@ -900,39 +906,6 @@ const adminController = {
         total: products.length
       });
     } catch (e) { res.status(500).json({ error: e.message }); }
-  },
-
-  async savePushSubscription(req, res, next) {
-    try {
-      const { subscription } = req.body;
-      if (!subscription?.endpoint) return res.status(400).json({ error: 'Ungültige Subscription' });
-
-      // Subscription als JSON-String speichern für web-push Kompatibilität
-      const subData = typeof subscription === 'string' ? subscription : JSON.stringify(subscription);
-
-      // Zuerst alte Einträge für diesen Endpoint entfernen
-      await supabase.from('admin_subscriptions').delete()
-        .filter('subscription_data->endpoint', 'eq', subscription.endpoint);
-
-      await supabase.from('admin_subscriptions').insert([{
-        subscription_data: subData
-      }]);
-
-      res.json({ success: true });
-    } catch (e) { next(e); }
-  },
-
-  async getVapidPublicKey(req, res, next) {
-    const key = process.env.VAPID_PUBLIC_KEY;
-    if (!key) return res.status(500).json({ error: 'VAPID_PUBLIC_KEY nicht konfiguriert' });
-    res.json({ publicKey: key });
-  },
-
-  async sendTestPush(req, res, next) {
-    try {
-      await notificationService.sendTestNotification();
-      res.json({ success: true });
-    } catch (e) { next(e); }
   },
 
   async updateNotificationSettings(req, res, next) {

@@ -104,37 +104,47 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
       const count = pending.proofCount || 0;
       try {
         await supabase_db.from("proof_sessions").update({ status: "done", proof_count: count, updated_at: new Date() }).eq("feedback_id", feedbackId).eq("user_id", userId);
-        const ch7 = await getChannel(fbChanId);
-        await safelistService.approveFeedback(parseInt(feedbackId), userId, ch7);
-        const { data: fb7 } = await supabase_db.from("user_feedbacks").select("feedback_type, target_user_id, target_username").eq("id", feedbackId).maybeSingle();
-        if (fb7?.target_user_id) {
-          const d7 = fb7.feedback_type === "positive" ? 1 : -10;
-          await supabase_db.rpc("update_user_reputation", { p_channel_id: fbChanId, p_user_id: fb7.target_user_id, p_username: fb7.target_username, p_delta: d7 }).catch(() => {});
-          if (fb7.feedback_type === "negative") {
-            await supabase_db.from("scam_entries").upsert([{ channel_id: fbChanId, user_id: fb7.target_user_id, username: fb7.target_username, reason: "Bestätigtes negatives Feedback", added_by: userId }], { onConflict: "channel_id,user_id" }).catch(() => {});
+        const { data: fb7 } = await supabase_db.from("user_feedbacks").select("feedback_type, target_user_id, target_username, feedback_text").eq("id", feedbackId).maybeSingle();
+        
+        if (fb7) {
+          let autoApprove = false;
+          if (fb7.feedback_type === "positive") {
+             autoApprove = await safelistService.hasHighReputation(fbChanId, fb7.target_username, fb7.target_user_id);
           }
-        }
-        const { data: admSet } = await supabase_db.from("bot_channels").select("added_by_user_id, title").eq("id", String(fbChanId)).maybeSingle();
-        if (admSet?.added_by_user_id) {
-          const { proofs } = await (async () => {
-            try { const r = await supabase_db.from("feedback_proofs").select("*").eq("feedback_id", feedbackId).order("created_at"); return { proofs: r.data || [] }; } catch { return { proofs: [] }; }
-          })();
-          await tg.call("sendMessage", { chat_id: String(admSet.added_by_user_id),
-            text: `📎 <b>Neues Feedback mit ${count} Proof(s)</b>\n\nChannel: ${admSet.title || fbChanId}\nFeedback-ID: ${feedbackId}\n\nBitte überprüfe die Beweise unten.`,
-            parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "✅ Bestätigen", callback_data: `fb_approve_${feedbackId}` }, { text: "❌ Ablehnen", callback_data: `fb_reject_${feedbackId}` }]] }
-          });
-          for (const p of proofs.slice(0, 5)) {
-            try {
-              if (p.proof_type === "photo") await tg.call("sendPhoto", { chat_id: String(admSet.added_by_user_id), photo: p.file_id, caption: p.caption||"" });
-              if (p.proof_type === "video") await tg.call("sendVideo", { chat_id: String(admSet.added_by_user_id), video: p.file_id, caption: p.caption||"" });
-              if (p.proof_type === "document") await tg.call("sendDocument", { chat_id: String(admSet.added_by_user_id), document: p.file_id, caption: p.caption||"" });
-              if (p.proof_type === "text") await tg.call("sendMessage", { chat_id: String(admSet.added_by_user_id), text: `📝 ${p.content?.substring(0,1000)||""}` });
-            } catch (_) {}
+
+          if (autoApprove) {
+             const ch7 = await getChannel(fbChanId);
+             await safelistService.approveFeedback(parseInt(feedbackId), userId, ch7);
+             if (fb7.target_user_id) {
+               await supabase_db.rpc("update_user_reputation", { p_channel_id: fbChanId, p_user_id: fb7.target_user_id, p_username: fb7.target_username, p_delta: 1 }).catch(() => {});
+             }
+             await tg.call("sendMessage", { chat_id: String(userId), text: `✅ ${count} Proof(s) eingereicht! Feedback wurde direkt bestätigt (Trusted User).` });
+             return true;
+          } else {
+             const { data: admSet } = await supabase_db.from("bot_channels").select("added_by_user_id, title").eq("id", String(fbChanId)).maybeSingle();
+             if (admSet?.added_by_user_id) {
+               const { proofs } = await (async () => {
+                 try { const r = await supabase_db.from("feedback_proofs").select("*").eq("feedback_id", feedbackId).order("created_at"); return { proofs: r.data || [] }; } catch { return { proofs: [] }; }
+               })();
+               const emoji = fb7.feedback_type === "positive" ? "✅" : "⚠️";
+               await tg.call("sendMessage", { chat_id: String(admSet.added_by_user_id),
+                 text: `📎 <b>Neues Feedback mit ${count} Proof(s)</b>\n\nChannel: ${admSet.title || fbChanId}\nFeedback-ID: ${feedbackId}\nZiel: @${fb7.target_username}\nTyp: ${emoji} ${fb7.feedback_type}\n\n<i>${(fb7.feedback_text||"").substring(0,150)}</i>\n\nBitte überprüfe die Beweise unten.`,
+                 parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "✅ Bestätigen", callback_data: `fb_approve_${feedbackId}` }, { text: "❌ Ablehnen", callback_data: `fb_reject_${feedbackId}` }]] }
+               });
+               for (const p of proofs.slice(0, 5)) {
+                 try {
+                   if (p.proof_type === "photo") await tg.call("sendPhoto", { chat_id: String(admSet.added_by_user_id), photo: p.file_id, caption: p.caption||"" });
+                   if (p.proof_type === "video") await tg.call("sendVideo", { chat_id: String(admSet.added_by_user_id), video: p.file_id, caption: p.caption||"" });
+                   if (p.proof_type === "document") await tg.call("sendDocument", { chat_id: String(admSet.added_by_user_id), document: p.file_id, caption: p.caption||"" });
+                   if (p.proof_type === "text") await tg.call("sendMessage", { chat_id: String(admSet.added_by_user_id), text: `📝 ${p.content?.substring(0,1000)||""}` });
+                 } catch (_) {}
+               }
+             }
+             await tg.call("sendMessage", { chat_id: String(userId), text: `✅ ${count} Proof(s) eingereicht! Der Admin wird benachrichtigt und prüft das Feedback nun. Danke!` });
+             return true;
           }
         }
       } catch (_) {}
-      await tg.call("sendMessage", { chat_id: String(userId), text: `✅ ${count} Proof(s) eingereicht! Der Admin wird benachrichtigt. Danke!` });
-      return true;
     }
 
     const proofType = msg?.photo ? "photo" : msg?.video ? "video" : msg?.document ? "document" : "text";
