@@ -66,46 +66,94 @@ function backBtn(channelId, lang) {
   return [{ text: labels[lang] || "◀️ Zurück", callback_data: `cfg_back_${cid}` }];
 }
 
-async function sendSettingsMenu(tg, sendTo, channelId, ch) {
-  // Resolve language first — everything depends on it
-  const lang      = ch?.bot_language || "de";
-  const aiActive  = t("ai_active",        lang);
-  const aiOff     = t("ai_inactive",      lang);
-  const safeOn    = t("ai_active",        lang);
-  const safeOff   = t("ai_inactive",      lang);
-  const approved  = t("status_approved",  lang);
-  const pending   = t("status_pending",   lang);
+// ── v1.4.50: Folder-style menu helpers ───────────────────────────────────────
 
-  const statusText  = ch?.is_approved       ? approved : pending;
-  const aiText      = ch?.ai_enabled        ? aiActive : aiOff;
-  const safeText    = ch?.safelist_enabled  ? safeOn   : safeOff;
-  const fbText      = ch?.feedback_enabled  ? "✅ Ein" : "❌ Aus";
+function _menuBackBtn(channelId) {
+  return [{ text: "◀️ Hauptmenü", callback_data: `cfg_mainmenu_${channelId}` }];
+}
+
+async function sendSettingsMenu(tg, sendTo, channelId, ch) {
+  const aiText   = ch?.ai_enabled       ? "✅ Aktiv" : "❌ Inaktiv";
+  const slText   = ch?.safelist_enabled ? "✅"       : "❌";
+  const fbText   = ch?.feedback_enabled ? "✅"       : "❌";
+  const hasAI    = ch?.ai_enabled || false;
 
   return await tg.call("sendMessage", {
     chat_id: sendTo,
-    text: t("settings_header", lang, ch?.title || channelId) + "\n\n" +
-          `Status: ${statusText}\n` +
-          `KI-Features: ${aiText}\n` +
-          `Safelist: ${safeText} | Feedback: ${fbText}\n\n` +
-          t("choose_action", lang),
+    text: `⚙️ <b>${ch?.title || channelId}</b>\n\n` +
+          `KI: ${aiText} | Safelist: ${slText} | Feedback: ${fbText}\n\n` +
+          `Wähle eine Kategorie:`,
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: [
-      // ── Channel-Einstellungen ────────────────────────────────────────────────
-      [{ text: t("btn_welcome",  lang), callback_data: `cfg_welcome_${channelId}` },
-       { text: t("btn_goodbye",  lang), callback_data: `cfg_goodbye_${channelId}` }],
-      [{ text: t("btn_schedule", lang), callback_data: `cfg_schedule_${channelId}` },
-       { text: t("btn_language", lang), callback_data: `cfg_lang_${channelId}` }],
-      [{ text: t("btn_clean",    lang), callback_data: `cfg_clean_${channelId}` },
-       { text: t("btn_stats",    lang), callback_data: `cfg_stats_${channelId}` }],
-      // ── Moderation ──────────────────────────────────────────────────────────
-      [{ text: t("btn_safelist", lang), callback_data: `cfg_safelist_${channelId}` },
-       { text: "🚫 Blacklist",          callback_data: `cfg_blacklist_${channelId}` }],
-      [{ text: "🔍 UserInfo",           callback_data: `cfg_userinfo_${channelId}` }],
-      // ── AI Features ─────────────────────────────────────────────────────────
-      [{ text: t("btn_ai",       lang), callback_data: `cfg_ai_${channelId}` },
-       { text: "📚 Wissensdatenbank",   callback_data: `cfg_knowledge_${channelId}` }],
-      // ── Feedback & Reputation ─────────────────────────────────────────────
-      [{ text: `💬 Feedback ${ch?.feedback_enabled ? "✅" : "❌"}`, callback_data: `cfg_feedback_${channelId}` }],
+      [{ text: "📋 Channel-Einstellungen", callback_data: `cfg_menu_channel_${channelId}` }],
+      [{ text: "🔒 Moderation",            callback_data: `cfg_menu_mod_${channelId}` }],
+      [{ text: hasAI
+           ? "🤖 AI Features"
+           : "🤖 AI Features 🔒",          callback_data: `cfg_menu_ai_${channelId}` }],
+    ]}
+  });
+}
+
+// ── Category sub-menus ────────────────────────────────────────────────────────
+async function sendChannelMenu(tg, sendTo, channelId, ch) {
+  return tg.call("sendMessage", {
+    chat_id: sendTo,
+    text: `📋 <b>Channel-Einstellungen</b> — ${ch?.title || channelId}`,
+    parse_mode: "HTML",
+    reply_markup: { inline_keyboard: [
+      [{ text: "👋 Willkommen",              callback_data: `cfg_welcome_${channelId}` },
+       { text: "👋 Abschied",                callback_data: `cfg_goodbye_${channelId}` }],
+      [{ text: "📅 Zeitplan / Nachtmodus",   callback_data: `cfg_schedule_${channelId}` }],
+      [{ text: "🔁 Wiederholende Nachrichten", callback_data: `cfg_repeat_${channelId}` }],
+      [{ text: "🌐 Sprache",                 callback_data: `cfg_lang_${channelId}` }],
+      [{ text: "🧹 Bereinigen",              callback_data: `cfg_clean_${channelId}` },
+       { text: "📊 Statistik",               callback_data: `cfg_stats_${channelId}` }],
+      [_menuBackBtn(channelId)],
+    ]}
+  });
+}
+
+async function sendModerationMenu(tg, sendTo, channelId, ch) {
+  const slText = ch?.safelist_enabled ? "✅" : "❌";
+  const fbText = ch?.feedback_enabled ? "✅" : "❌";
+  return tg.call("sendMessage", {
+    chat_id: sendTo,
+    text: `🔒 <b>Moderation</b> — ${ch?.title || channelId}\n\n` +
+          `Safelist: ${slText} | Feedback: ${fbText}`,
+    parse_mode: "HTML",
+    reply_markup: { inline_keyboard: [
+      [{ text: `🛡 Safelist ${slText}`,      callback_data: `cfg_safelist_${channelId}` },
+       { text: `💬 Feedback ${fbText}`,      callback_data: `cfg_feedback_${channelId}` }],
+      [{ text: "🚫 Blacklist",               callback_data: `cfg_blacklist_${channelId}` }],
+      [{ text: "🔍 UserInfo",                callback_data: `cfg_userinfo_${channelId}` }],
+      [_menuBackBtn(channelId)],
+    ]}
+  });
+}
+
+async function sendAiMenu(tg, sendTo, channelId, ch) {
+  const hasAI = ch?.ai_enabled || false;
+  if (!hasAI) {
+    return tg.call("sendMessage", {
+      chat_id: sendTo,
+      text: `🤖 <b>AI Features</b> — Gesperrt\n\n` +
+            `AI Features sind nur mit einem aktiven Paket verfügbar.\n\n` +
+            `Nutze <b>/buy</b> um ein Paket zu kaufen.`,
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: [[_menuBackBtn(channelId)]] }
+    });
+  }
+  return tg.call("sendMessage", {
+    chat_id: sendTo,
+    text: `🤖 <b>AI Features</b> — ${ch?.title || channelId}`,
+    parse_mode: "HTML",
+    reply_markup: { inline_keyboard: [
+      [{ text: "📰 Tagesbericht",            callback_data: `cfg_daily_${channelId}` },
+       { text: "💬 Smalltalk AI",            callback_data: `cfg_smalltalk_${channelId}` }],
+      [{ text: "📚 Wissensdatenbank",        callback_data: `cfg_knowledge_${channelId}` }],
+      [{ text: "✍️ WerbeTexter",             callback_data: `cfg_adwriter_${channelId}` },
+       { text: "🤖 Blacklist Enhancer 🔒",  callback_data: `cfg_bl_ai_${channelId}` }],
+      [_menuBackBtn(channelId)],
     ]}
   });
 }
@@ -130,10 +178,17 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       const cur = ch?.welcome_msg || "(keine)";
       await tg.call("sendMessage", {
         chat_id: String(userId),
-        text: `👋 <b>Willkommensnachricht</b>\n\nAktuell: <i>${cur}</i>\n\nSende deine neue Willkommensnachricht (nutze {name} für den Nutzernamen):\nOder /cancel zum Abbrechen.`,
-        parse_mode: "HTML"
+        text: `👋 <b>Willkommensnachricht</b>\n\nAktuell:\n<i>${cur}</i>\n\n` +
+              `Sende die neue Nachricht oder /cancel zum Abbrechen.\n\n` +
+              `<b>Verfügbare Variablen:</b>\n` +
+              `<code>{name}</code> — Vorname des Users\n` +
+              `<code>{username}</code> — @Username (oder Vorname)\n` +
+              `<code>{id}</code> — Telegram-ID\n` +
+              `<code>{channel}</code> — Channel-Name\n` +
+              `<code>{count}</code> — Aktuelle Mitgliederzahl`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück", callback_data: `cfg_menu_channel_${channelId}` }]] }
       });
-      // Store pending state
       pendingInputs[String(userId)] = { action: "set_welcome", channelId };
       break;
     }
@@ -141,8 +196,15 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       const cur = ch?.goodbye_msg || "(keine)";
       await tg.call("sendMessage", {
         chat_id: String(userId),
-        text: `👋 <b>Abschiedsnachricht</b>\n\nAktuell: <i>${cur}</i>\n\nSende deine neue Abschiedsnachricht (nutze {name} für den Nutzernamen):\nOder /cancel zum Abbrechen.`,
-        parse_mode: "HTML"
+        text: `👋 <b>Abschiedsnachricht</b>\n\nAktuell:\n<i>${cur}</i>\n\n` +
+              `Sende die neue Nachricht oder /cancel zum Abbrechen.\n\n` +
+              `<b>Verfügbare Variablen:</b>\n` +
+              `<code>{name}</code> — Vorname des Users\n` +
+              `<code>{username}</code> — @Username (oder Vorname)\n` +
+              `<code>{id}</code> — Telegram-ID\n` +
+              `<code>{channel}</code> — Channel-Name`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück", callback_data: `cfg_menu_channel_${channelId}` }]] }
       });
       pendingInputs[String(userId)] = { action: "set_goodbye", channelId };
       break;
@@ -158,18 +220,36 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "stats": {
-      let memberCount = null, schedCount = null;
-      try { const r1 = await supabase_db.from("channel_members").select("id", { count: "exact", head: true }).eq("channel_id", channelId); memberCount = r1.count; } catch (_) {}
-      try { const r2 = await supabase_db.from("scheduled_messages").select("id", { count: "exact", head: true }).eq("channel_id", channelId).eq("is_active", true); schedCount = r2.count; } catch (_) {}
-      await tg.call("sendMessage", { chat_id: String(userId),
-        text: `📊 <b>Statistiken: ${ch?.title || channelId}</b>\n\n` +
-              `👥 Verfolgte Mitglieder: ${memberCount || 0}\n` +
-              `⏰ Aktive geplante Nachrichten: ${schedCount || 0}\n` +
-              `📚 KB-Einträge: ${ch?.kb_entry_count || 0}`,
-        parse_mode: "HTML" });
+      try {
+        const now = new Date();
+        const yesterday = new Date(now - 24*60*60*1000).toISOString();
+        const [membRes, joinRes, leftRes, fbRes] = await Promise.all([
+          supabase_db.from("channel_members").select("id", {count:"exact"}).eq("channel_id", channelId).is("left_at", null),
+          supabase_db.from("channel_members").select("id", {count:"exact"}).eq("channel_id", channelId).gte("joined_at", yesterday),
+          supabase_db.from("channel_members").select("id", {count:"exact"}).eq("channel_id", channelId).gte("left_at", yesterday),
+          supabase_db.from("user_feedbacks").select("id", {count:"exact"}).eq("channel_id", channelId).gte("created_at", yesterday)
+        ]);
+        const members = membRes?.count || membRes?.data?.length || 0;
+        const joined24 = joinRes?.count || joinRes?.data?.length || 0;
+        const left24   = leftRes?.count || leftRes?.data?.length || 0;
+        const fb24     = fbRes?.count   || fbRes?.data?.length   || 0;
+        const credits  = (ch?.token_limit||0) - (ch?.token_used||0);
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: `📊 <b>Statistik</b> — ${ch?.title || channelId}\n\n` +
+                `👥 Mitglieder gesamt: <b>${members}</b>\n` +
+                `📈 Beitritte (24h): <b>+${joined24}</b>\n` +
+                `📉 Austritte (24h): <b>-${left24}</b>\n` +
+                `💬 Feedbacks (24h): <b>${fb24}</b>\n` +
+                `🤖 KI-Credits verbleibend: <b>${credits.toLocaleString()}</b>\n` +
+                `⚡ KI: ${ch?.ai_enabled ? "✅ Aktiv" : "❌ Inaktiv"}`,
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück", callback_data: `cfg_menu_channel_${channelId}` }]] }
+        });
+      } catch(e) {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
+      }
       break;
-    }
-    case "safelist": {
+    }    case "safelist": {
       // ── 🛡 Safelist & Scamliste Hub ─────────────────────────────────────
       const lang2 = ch?.bot_language || "de";
       const slEnabled = ch?.safelist_enabled || false;
@@ -368,7 +448,354 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     }
 
 
-        case "back": {
+    
+    // ── Category folder navigation ──────────────────────────────────────────
+    case "mainmenu": {
+      await sendSettingsMenu(tg, String(userId), channelId, ch);
+      break;
+    }
+    case "menu_channel": {
+      await sendChannelMenu(tg, String(userId), channelId, ch);
+      break;
+    }
+    case "menu_mod": {
+      await sendModerationMenu(tg, String(userId), channelId, ch);
+      break;
+    }
+    case "menu_ai": {
+      await sendAiMenu(tg, String(userId), channelId, ch);
+      break;
+    }
+
+    // ── Wiederholdende Nachrichten ─────────────────────────────────────────
+    case "repeat": {
+      const { data: scheds } = await supabase_db.from("scheduled_messages")
+        .select("id, message, cron_expr, is_active, repeat")
+        .eq("channel_id", channelId).order("created_at", { ascending: false }).limit(20);
+      const active = scheds?.filter(s => s.is_active) || [];
+      const inactive = scheds?.filter(s => !s.is_active) || [];
+      const isFree = !ch?.ai_enabled;
+      const MAX_FREE = 3;
+
+      let txt = `🔁 <b>Wiederholende Nachrichten</b>\n\n`;
+      txt += `Aktiv: ${active.length} | Pausiert: ${inactive.length}\n`;
+      if (isFree) txt += `\n⚠️ Free Limit: max ${MAX_FREE} gleichzeitig, max 3x täglich.\n`;
+
+      const kb = (scheds || []).slice(0, 10).map(s => [{
+        text: `${s.is_active ? "✅" : "⏸"} ${(s.message||"(kein Text)").substring(0,35)}… [${s.cron_expr||"1x"}]`,
+        callback_data: `cfg_rep_edit_${s.id}_${channelId}`
+      }]);
+
+      if (!isFree || active.length < MAX_FREE) {
+        kb.unshift([{ text: "➕ Neue Nachricht einrichten", callback_data: `cfg_schedule_${channelId}` }]);
+      } else {
+        kb.unshift([{ text: `🔒 Limit erreicht (${MAX_FREE})`, callback_data: "cfg_noop" }]);
+      }
+      kb.push([_menuBackBtn(channelId)]);
+
+      await tg.call("sendMessage", { chat_id: String(userId), text: txt,
+        parse_mode: "HTML", reply_markup: { inline_keyboard: kb } });
+      break;
+    }
+    case "rep_edit": {
+      // cfg_rep_edit_{schedId}_{channelId}
+      const repMatch = data.match(/^cfg_rep_edit_(\d+)_(-?\d+)$/);
+      if (!repMatch) break;
+      const schedId = repMatch[1];
+      const { data: s } = await supabase_db.from("scheduled_messages").select("*").eq("id", schedId).maybeSingle();
+      if (!s) break;
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `🔁 <b>${(s.message||"(kein Text)").substring(0,60)}</b>\n\n` +
+              `Status: ${s.is_active ? "✅ Aktiv" : "⏸ Pausiert"}\n` +
+              `Intervall: ${s.cron_expr || "Einmalig"}\n` +
+              `Wiederholen: ${s.repeat ? "Ja" : "Nein"}`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [
+          [{ text: s.is_active ? "⏸ Pausieren" : "▶️ Aktivieren",
+             callback_data: `cfg_rep_toggle_${schedId}_${channelId}` }],
+          [{ text: "🗑 Löschen", callback_data: `cfg_rep_del_${schedId}_${channelId}` }],
+          [{ text: "◀️ Zurück", callback_data: `cfg_repeat_${channelId}` }],
+        ]}
+      });
+      break;
+    }
+    case "rep_toggle": {
+      const rtm = data.match(/^cfg_rep_toggle_(\d+)_(-?\d+)$/);
+      if (rtm) {
+        const { data: s2 } = await supabase_db.from("scheduled_messages").select("is_active").eq("id", rtm[1]).maybeSingle();
+        const newActive = !s2?.is_active;
+        await supabase_db.from("scheduled_messages").update({ is_active: newActive }).eq("id", rtm[1]);
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: `${newActive ? "▶️ Aktiviert" : "⏸ Pausiert"}.` });
+      }
+      break;
+    }
+    case "rep_del": {
+      const rdm = data.match(/^cfg_rep_del_(\d+)_(-?\d+)$/);
+      if (rdm) {
+        await supabase_db.from("scheduled_messages").delete().eq("id", rdm[1]);
+        await tg.call("sendMessage", { chat_id: String(userId), text: "🗑 Gelöscht." });
+      }
+      break;
+    }
+    case "noop": {
+      break;
+    }
+
+    // ── Zeitplan / Nachtmodus ───────────────────────────────────────────────
+    case "schedule": {
+      // Re-use existing sched_wizard flow — start it
+      const langSch = ch?.bot_language || "de";
+      pendingInputs[String(userId)] = {
+        action: "sched_wizard_text", channelId,
+        aiOn: ch?.ai_enabled, freeMode: !ch?.ai_enabled
+      };
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `📅 <b>Nachricht einplanen</b>\n\n<b>Schritt 1/4: Text</b>\n\nSende den Text der Nachricht.\nOder /skip für nur ein Bild/GIF/Video.`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück", callback_data: `cfg_menu_channel_${channelId}` }]] }
+      });
+      break;
+    }
+
+    // ── Blacklist management ────────────────────────────────────────────────
+    case "blacklist": {
+      const { data: blEntries } = await supabase_db.from("channel_blacklist")
+        .select("id, word, severity, category, delete_after_hours")
+        .eq("channel_id", channelId).order("severity").limit(30);
+
+      const hard = blEntries?.filter(e => e.severity !== "tolerated") || [];
+      const soft = blEntries?.filter(e => e.severity === "tolerated") || [];
+
+      let txt = `🚫 <b>Blacklist</b> — ${ch?.title || channelId}\n\n`;
+      txt += `🔴 Blacklist: ${hard.length} Einträge\n`;
+      txt += `🟡 Blacklist Light (toleriert): ${soft.length} Einträge\n\n`;
+      txt += `Syntax: <code>Wort | Aktion | Kategorie</code>\n`;
+      txt += `Aktionen: <code>warn</code> · <code>mute</code> · <code>ban</code> · <code>tolerated</code>\n`;
+      txt += `Toleriert: Automatisch gelöscht nach X Stunden.`;
+
+      const kb = [
+        [{ text: "➕ Wort hinzufügen",      callback_data: `cfg_bl_add_${channelId}` }],
+        [{ text: "➕ Toleriertes Wort",      callback_data: `cfg_bl_addsoft_${channelId}` }],
+      ];
+      if (hard.length) kb.push([{ text: `📋 Liste anzeigen (${hard.length})`, callback_data: `cfg_bl_list_${channelId}` }]);
+      if (soft.length) kb.push([{ text: `🟡 Light-Liste (${soft.length})`,    callback_data: `cfg_bl_listsoft_${channelId}` }]);
+      kb.push([{ text: "🤖 KI Blacklist füllen 🔒",                           callback_data: `cfg_bl_ai_${channelId}` }]);
+      kb.push([_menuBackBtn(channelId)]);
+
+      await tg.call("sendMessage", { chat_id: String(userId), text: txt,
+        parse_mode: "HTML", reply_markup: { inline_keyboard: kb } });
+      break;
+    }
+    case "bl_add": {
+      pendingInputs[String(userId)] = { action: "bl_add_word", channelId, severity: "mute" };
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `🚫 <b>Blacklist-Eintrag hinzufügen</b>\n\nFormat: <code>Wort | Aktion | Kategorie</code>\n\nAktionen: <code>warn</code> · <code>mute</code> · <code>ban</code>\n\nBeispiel: <code>Spam | ban | Werbung</code>\n/cancel zum Abbrechen`,
+        parse_mode: "HTML" });
+      break;
+    }
+    case "bl_addsoft": {
+      pendingInputs[String(userId)] = { action: "bl_add_soft", channelId };
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `🟡 <b>Toleriertes Wort hinzufügen</b>\n\nFormat: <code>Wort | Stunden</code>\n\nBeispiel: <code>Werbung | 24</code> → Nachricht wird nach 24h gelöscht.\n/cancel zum Abbrechen`,
+        parse_mode: "HTML" });
+      break;
+    }
+    case "bl_list": {
+      const { data: hardList } = await supabase_db.from("channel_blacklist")
+        .select("id, word, severity, category").eq("channel_id", channelId)
+        .neq("severity", "tolerated").order("word").limit(25);
+      if (!hardList?.length) { await tg.call("sendMessage", { chat_id: String(userId), text: "🚫 Blacklist ist leer." }); break; }
+      const kb2 = hardList.map(e => [{ text: `🗑 ${e.word} [${e.severity}]`, callback_data: `cfg_bl_del_${e.id}_${channelId}` }]);
+      kb2.push([{ text: "◀️ Zurück", callback_data: `cfg_blacklist_${channelId}` }]);
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `🚫 <b>Blacklist</b>\n\n` + hardList.map(e => `• <code>${e.word}</code> [${e.severity}/${e.category||"–"}]`).join("\n"),
+        parse_mode: "HTML", reply_markup: { inline_keyboard: kb2 } });
+      break;
+    }
+    case "bl_listsoft": {
+      const { data: softList } = await supabase_db.from("channel_blacklist")
+        .select("id, word, delete_after_hours").eq("channel_id", channelId)
+        .eq("severity", "tolerated").order("word").limit(25);
+      if (!softList?.length) { await tg.call("sendMessage", { chat_id: String(userId), text: "🟡 Light-Liste ist leer." }); break; }
+      const kb3 = softList.map(e => [{ text: `🗑 ${e.word} [${e.delete_after_hours||24}h]`, callback_data: `cfg_bl_del_${e.id}_${channelId}` }]);
+      kb3.push([{ text: "◀️ Zurück", callback_data: `cfg_blacklist_${channelId}` }]);
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `🟡 <b>Blacklist Light</b>\n\n` + softList.map(e => `• <code>${e.word}</code> — löschen nach ${e.delete_after_hours||24}h`).join("\n"),
+        parse_mode: "HTML", reply_markup: { inline_keyboard: kb3 } });
+      break;
+    }
+    case "bl_del": {
+      const bdm = data.match(/^cfg_bl_del_(\d+)_(-?\d+)$/);
+      if (bdm) {
+        await supabase_db.from("channel_blacklist").delete().eq("id", bdm[1]);
+        await tg.call("sendMessage", { chat_id: String(userId), text: "🗑 Eintrag gelöscht." });
+      }
+      break;
+    }
+
+    // ── Smalltalk AI settings ─────────────────────────────────────────────
+    case "smalltalk": {
+      if (!ch?.ai_enabled) {
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: "🔒 Smalltalk AI ist nur mit aktivem Paket verfügbar." }); break;
+      }
+      const model = ch?.smalltalk_model || "deepseek";
+      const modelName = model === "openai" ? "OpenAI (GPT-4o Mini) — Faktor x1.2" : "AutoActsAI (Standard) — Faktor x1.0";
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `💬 <b>Smalltalk AI</b> — ${ch?.title || channelId}\n\n` +
+              `Modell: ${modelName}\n` +
+              `System-Prompt gesetzt: ${ch?.system_prompt ? "✅" : "❌"}\n` +
+              `Max Tokens: ${ch?.smalltalk_max_tokens || 200}\n` +
+              `Temperature: ${ch?.smalltalk_temperature || 0.8}`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [
+          [{ text: "✏️ System-Prompt bearbeiten", callback_data: `cfg_st_prompt_${channelId}` }],
+          [{ text: model === "openai"
+               ? "🔄 Zu AutoActsAI wechseln (Standard)"
+               : "🔄 Zu OpenAI wechseln (x1.2)",        callback_data: `cfg_st_model_${channelId}` }],
+          [{ text: "◀️ Zurück", callback_data: `cfg_menu_ai_${channelId}` }],
+        ]}
+      });
+      break;
+    }
+    case "st_prompt": {
+      pendingInputs[String(userId)] = { action: "set_ai_prompt", channelId };
+      const cur = ch?.system_prompt || "(kein)";
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✏️ <b>System-Prompt</b>\n\nAktuell: <i>${cur.substring(0,200)}</i>\n\nSende den neuen System-Prompt:\n/cancel zum Abbrechen`,
+        parse_mode: "HTML" });
+      break;
+    }
+    case "st_model": {
+      const curModel = ch?.smalltalk_model || "deepseek";
+      const newModel = curModel === "openai" ? "deepseek" : "openai";
+      await supabase_db.from("bot_channels").update({ smalltalk_model: newModel, updated_at: new Date() }).eq("id", channelId);
+      const newName = newModel === "openai" ? "OpenAI (GPT-4o Mini) — Faktor x1.2" : "AutoActsAI — Faktor x1.0";
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✅ Modell gewechselt zu <b>${newName}</b>.`, parse_mode: "HTML" });
+      break;
+    }
+
+    // ── Tagesbericht ────────────────────────────────────────────────────────
+    case "daily": {
+      if (!ch?.ai_enabled) {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "🔒 Nur mit aktivem Paket." }); break;
+      }
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `📰 <b>Tagesbericht</b> — ${ch?.title || channelId}\n\n` +
+              `Der Bot erstellt täglich eine KI-Zusammenfassung relevanter, wichtiger oder riskanter Ereignisse im Channel.\n\n` +
+              `Jetzt Bericht anfordern:`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [
+          [{ text: "📰 Jetzt Bericht erstellen", callback_data: `cfg_daily_now_${channelId}` }],
+          [{ text: "◀️ Zurück",                  callback_data: `cfg_menu_ai_${channelId}` }],
+        ]}
+      });
+      break;
+    }
+    case "daily_now": {
+      if (!ch?.ai_enabled) break;
+      await tg.call("sendMessage", { chat_id: String(userId), text: "⏳ Erstelle Tagesbericht…" });
+      try {
+        const _createDailySummary = require("./smalltalkBotRoutes")._createDailySummary || (() => {});
+        await _runDailySummary(supabase_db, channelId, userId, tg, ch, ch?.bot_language||"de");
+      } catch (e) {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
+      }
+      break;
+    }
+
+    // ── WerbeTexter ─────────────────────────────────────────────────────────
+    case "adwriter": {
+      if (!ch?.ai_enabled) {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "🔒 Nur mit aktivem Paket." }); break;
+      }
+      const { data: ads } = await supabase_db.from("scheduled_messages")
+        .select("id, message").eq("channel_id", channelId).eq("is_active", true).limit(10);
+
+      const kb = (ads||[]).map(s => [{
+        text: `✍️ ${(s.message||"(kein Text)").substring(0,40)}…`,
+        callback_data: `cfg_aw_vary_${s.id}_${channelId}`
+      }]);
+      kb.unshift([{ text: "✍️ Neuen WerbeText erstellen (30 Credits)", callback_data: `cfg_aw_new_${channelId}` }]);
+      kb.push([{ text: "◀️ Zurück", callback_data: `cfg_menu_ai_${channelId}` }]);
+
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✍️ <b>WerbeTexter</b>\n\n` +
+              `Lasse bestehende Werbetexte variieren oder neue erstellen.\n` +
+              `Jeder Einsatz erstellt <b>3 Variationen</b> und kostet <b>30 Credits</b>.`,
+        parse_mode: "HTML", reply_markup: { inline_keyboard: kb } });
+      break;
+    }
+    case "aw_new": {
+      pendingInputs[String(userId)] = { action: "adwriter_new", channelId };
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✍️ <b>Neuer WerbeText</b>\n\nSende deinen Ausgangstext. Der WerbeTexter erstellt 3 Variationen.\n\n<i>Kosten: 30 Credits</i>\n/cancel zum Abbrechen`,
+        parse_mode: "HTML" });
+      break;
+    }
+    case "aw_vary": {
+      const awm = data.match(/^cfg_aw_vary_(\d+)_(-?\d+)$/);
+      if (!awm) break;
+      const { data: sched } = await supabase_db.from("scheduled_messages").select("message").eq("id", awm[1]).maybeSingle();
+      if (!sched?.message) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Nachricht nicht gefunden." }); break; }
+      pendingInputs[String(userId)] = { action: "adwriter_vary", channelId, schedId: awm[1], origText: sched.message };
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `✍️ <b>Variationen erstellen</b>\n\nOriginaltext:\n<i>${sched.message.substring(0,200)}</i>\n\nBestätige um 3 Variationen zu erstellen (30 Credits):\n/cancel zum Abbrechen`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[
+          { text: "✅ Jetzt variieren (30 Credits)", callback_data: `cfg_aw_run_${awm[1]}_${channelId}` }
+        ]]}
+      });
+      break;
+    }
+    case "aw_run": {
+      const arm = data.match(/^cfg_aw_run_(\d+)_(-?\d+)$/);
+      if (!arm) break;
+      const { data: s3 } = await supabase_db.from("scheduled_messages").select("message").eq("id", arm[1]).maybeSingle();
+      if (!s3?.message) break;
+      await tg.call("sendMessage", { chat_id: String(userId), text: "⏳ WerbeTexter arbeitet…" });
+      try {
+        const axios = require("axios");
+        const r = await axios.post("https://api.openai.com/v1/chat/completions", {
+          model: "gpt-4o-mini", max_tokens: 1200,
+          messages: [{
+            role: "system",
+            content: "Du bist ein professioneller WerbeTexter. Erstelle 3 verschiedene Variationen des folgenden Werbetextes. Der Inhalt muss identisch bleiben, aber Formulierungen, Satzstruktur und Stil sollen variieren. Trenne die Variationen mit ---."
+          }, { role: "user", content: s3.message }]
+        }, { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, timeout: 30000 });
+        const variations = r.data.choices[0].message.content.split("---").map(v => v.trim()).filter(v => v.length > 10);
+        // Deduct 30 credits
+        await supabase_db.rpc("consume_channel_credits", { p_channel_id: channelId, p_tokens: 30 }).catch(() => {});
+        for (let i = 0; i < Math.min(variations.length, 3); i++) {
+          await tg.call("sendMessage", { chat_id: String(userId),
+            text: `✍️ <b>Variation ${i+1}</b>\n\n${variations[i].substring(0,1000)}`,
+            parse_mode: "HTML",
+            reply_markup: { inline_keyboard: [[
+              { text: `📅 Als Nachricht einplanen`, callback_data: `cfg_aw_schedule_${arm[1]}_${i}_${channelId}` }
+            ]]}
+          });
+        }
+      } catch (e) {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
+      }
+      break;
+    }
+
+
+    case "bl_ai": {
+      // 🔒 Blacklist Enhancer locked until GrokAI integration
+      await tg.call("sendMessage", {
+        chat_id: String(userId),
+        text: `🤖 <b>Blacklist Enhancer</b> — 🔒 Bald verfügbar\n\nDieses Feature wird freigeschaltet, sobald GrokAI integriert ist.\n\nBitte schau bald nochmal vorbei!`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück", callback_data: `cfg_menu_ai_${channelId}` }]] }
+      });
+      break;
+    }
+
+    case "back": {
       // Back to main settings menu
       await sendSettingsMenu(tg, String(userId), channelId, ch);
       break;
@@ -494,7 +921,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
           await supabase_db.from("channel_knowledge").delete().eq("id", entryId2).eq("channel_id", chanId2);
           await tg.call("sendMessage", { chat_id: String(userId),
             text: "✅ Eintrag gelöscht.",
-            reply_markup: { inline_keyboard: [[{ text: "📚 Zurück zur Wissensdatenbank",
+            reply_markup: { inline_keyboard: [[{ text: "📚 Wissensdatenbank",
               callback_data: `cfg_knowledge_${chanId2}` }]] }
           });
         } catch (e) {
@@ -748,6 +1175,55 @@ async function handlePendingInput(tg, supabase_db, userId, text, settings, msg) 
       await tg.call("sendMessage", { chat_id: String(userId),
         text: `⛔ @${target} zur Scamliste hinzugefügt!`, parse_mode: "HTML" });
     } catch (e) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ " + e.message }); }
+    return true;
+  }
+
+
+  // ── Blacklist Light: toleriertes Wort hinzufügen ────────────────────────
+  if (action === "bl_add_soft") {
+    delete pendingInputs[String(userId)];
+    const parts = text.split("|").map(s => s.trim());
+    const word  = parts[0];
+    const hours = parseInt(parts[1]) || 24;
+    if (!word) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Kein Wort angegeben." }); return true; }
+    try {
+      await supabase_db.from("channel_blacklist").upsert([{
+        channel_id: String(channelId), word: word.toLowerCase(),
+        severity: "tolerated", delete_after_hours: hours,
+        category: "toleriert", created_by: userId
+      }], { onConflict: "channel_id,word" });
+      await tg.call("sendMessage", { chat_id: String(userId),
+        text: `🟡 <b>${word}</b> hinzugefügt — wird nach ${hours}h gelöscht.`, parse_mode: "HTML" });
+    } catch (e) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ " + e.message }); }
+    return true;
+  }
+
+  // ── WerbeTexter: neuen Text eingeben + variieren ──────────────────────────
+  if (action === "adwriter_new" || action === "adwriter_vary") {
+    const origText = pending.origText || text;
+    delete pendingInputs[String(userId)];
+    await tg.call("sendMessage", { chat_id: String(userId), text: "⏳ WerbeTexter erstellt Variationen…" });
+    try {
+      const axios = require("axios");
+      const r = await axios.post("https://api.openai.com/v1/chat/completions", {
+        model: "gpt-4o-mini", max_tokens: 1200,
+        messages: [
+          { role: "system", content: "Du bist ein professioneller WerbeTexter. Erstelle 3 verschiedene Variationen des folgenden Werbetextes. Der Inhalt muss identisch bleiben, aber Formulierungen, Satzstruktur und Stil sollen variieren. Trenne jede Variation mit ---." },
+          { role: "user", content: origText }
+        ]
+      }, { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, timeout: 30000 });
+      const variations = r.data.choices[0].message.content.split("---").map(v => v.trim()).filter(v => v.length > 10);
+      await supabase_db.rpc("consume_channel_credits", { p_channel_id: channelId, p_tokens: 30 }).catch(() => {});
+      for (let i = 0; i < Math.min(variations.length, 3); i++) {
+        await tg.call("sendMessage", { chat_id: String(userId),
+          text: `✍️ <b>Variation ${i+1}</b>\n\n${variations[i].substring(0,1000)}`,
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [[
+            { text: "📅 Einplanen", callback_data: `cfg_schedule_${channelId}` }
+          ]]}
+        });
+      }
+    } catch (e) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message }); }
     return true;
   }
 
