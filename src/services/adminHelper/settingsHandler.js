@@ -260,7 +260,14 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       if (m) {
         const { data: s } = await supabase_db.from("scheduled_messages").select("*").eq("id", m[1]).maybeSingle();
         if (!s) break;
-        await editOrSend(tg, String(userId), msgId, `🔁 <b>${(s.message||"").substring(0,60)}</b>\n\nStatus: ${s.is_active?"Aktiv":"Pausiert"}`, [
+        
+        let intervalText = "Einmalig";
+        if (s.interval_minutes) {
+           intervalText = s.interval_minutes >= 60 ? `alle ${s.interval_minutes/60} Stunden` : `alle ${s.interval_minutes} Minuten`;
+        }
+        const endText = s.end_at ? new Date(s.end_at).toLocaleString("de-DE") : "Nie (Endlos)";
+        
+        await editOrSend(tg, String(userId), msgId, `🔁 <b>${(s.message||"").substring(0,60)}</b>\n\nStatus: ${s.is_active?"Aktiv":"Pausiert"}\nIntervall: ${intervalText}\nEnddatum: ${endText}`, [
           [{ text: s.is_active?"⏸ Pausieren":"▶️ Aktivieren", callback_data: `cfg_rep_toggle_${m[1]}_${channelId}` }],
           [{ text: "🗑 Löschen", callback_data: `cfg_rep_del_${m[1]}_${channelId}` }],
           [{ text: "◀️ Zurück", callback_data: `cfg_repeat_${channelId}` }]
@@ -268,6 +275,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       }
       break;
     }
+
     case "rep_toggle": {
       const m = data.match(/^cfg_rep_toggle_([a-zA-Z0-9-]+)_(-?\d+)$/);
       if (m) {

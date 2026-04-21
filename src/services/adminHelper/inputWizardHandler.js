@@ -41,29 +41,30 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
     global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_file", msgText: text };
     const aiOn = pending.aiOn;
     if (aiOn) {
-      await tg.call("sendMessage", { chat_id: String(userId), text: "📎 <b>Schritt 2/4: Mediendatei (optional)</b>\n\nSende ein Foto, GIF oder Video – oder schreibe /skip um ohne Medien fortzufahren.", parse_mode: "HTML" });
+      await tg.call("sendMessage", { chat_id: String(userId), text: "📎 <b>Schritt 2/5: Mediendatei (optional)</b>\n\nSende ein Foto, GIF oder Video – oder schreibe /skip um ohne Medien fortzufahren.", parse_mode: "HTML" });
     } else {
       global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_time", msgText: text, fileId: null, fileType: null };
-      await tg.call("sendMessage", { chat_id: String(userId), text: "📅 <b>Schritt 3/4: Datum & Uhrzeit</b>\n\nWann soll die Nachricht gesendet werden?\nFormat: <code>DD.MM.YYYY HH:MM</code>\nBeispiel: <code>20.04.2026 09:00</code>\n\n/skip für sofort (einmalig)", parse_mode: "HTML" });
+      await tg.call("sendMessage", { chat_id: String(userId), text: "📅 <b>Schritt 3/5: Start-Datum & Uhrzeit</b>\n\nWann soll die erste Nachricht gesendet werden?\nFormat: <code>DD.MM.YYYY HH:MM</code>\nBeispiel: <code>20.04.2026 09:00</code>\n\n/skip für sofort.", parse_mode: "HTML" });
     }
     return true;
   }
 
   if (action === "sched_wizard_file") {
     let fileId = null, fileType = null;
-    if (text === "/skip") {
-    } else if (msg?.photo) {
-      fileId = msg.photo[msg.photo.length - 1]?.file_id; fileType = "photo";
-    } else if (msg?.animation) {
-      fileId = msg.animation.file_id; fileType = "animation";
-    } else if (msg?.video) {
-      fileId = msg.video.file_id; fileType = "video";
-    } else {
-      await tg.call("sendMessage", { chat_id: String(userId), text: "Bitte sende ein Foto, GIF oder Video – oder /skip." });
-      return true;
+    if (text !== "/skip") {
+      if (msg?.photo) {
+        fileId = msg.photo[msg.photo.length - 1]?.file_id; fileType = "photo";
+      } else if (msg?.animation) {
+        fileId = msg.animation.file_id; fileType = "animation";
+      } else if (msg?.video) {
+        fileId = msg.video.file_id; fileType = "video";
+      } else {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "Bitte sende ein Foto, GIF oder Video – oder /skip." });
+        return true;
+      }
     }
     global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_time", fileId, fileType };
-    await tg.call("sendMessage", { chat_id: String(userId), text: "📅 <b>Schritt 3/4: Datum & Uhrzeit</b>\n\nWann soll die Nachricht gesendet werden?\nFormat: <code>DD.MM.YYYY HH:MM</code>\nBeispiel: <code>20.04.2026 09:00</code>\n\n/skip für sofort (einmalig)", parse_mode: "HTML" });
+    await tg.call("sendMessage", { chat_id: String(userId), text: "📅 <b>Schritt 3/5: Start-Datum & Uhrzeit</b>\n\nWann soll die erste Nachricht gesendet werden?\nFormat: <code>DD.MM.YYYY HH:MM</code>\nBeispiel: <code>20.04.2026 09:00</code>\n\n/skip für sofort.", parse_mode: "HTML" });
     return true;
   }
 
@@ -78,22 +79,58 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
         return true;
       }
     }
-    global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_repeat", nextRunAt };
-    const freeCount = await _getRepeatCount(channelId);
-    const freeMode = pending.freeMode || !pending.aiOn;
-    const atLimit = freeMode && freeCount >= 3;
-    const pinOpt = "📌 Anpinnen: " + (pending.pinAfterSend ? "✅" : "❌");
-    const delPrevOpt = "🔄 Vorherige löschen: " + (pending.deletePrevious ? "✅" : "❌");
-    await tg.call("sendMessage", {
-      chat_id: String(userId),
-      text: "🔁 <b>Schritt 4/4: Wiederholung & Optionen</b>\n\n" + (atLimit ? "⚠️ Free-Limit: max. 3 Wiederholungs-Nachrichten ohne KI-Erweiterung.\n\n" : "") + (pending.aiOn ? "Unbegrenzte Wiederholungen verfügbar:" : "Free-Plan (max 3):"),
-      parse_mode: "HTML",
-      reply_markup: { inline_keyboard: [
-        [{ text: "1x – Einmalig", callback_data: "sched_repeat_once_" + channelId }, { text: "Täglich", callback_data: atLimit ? "sched_noop" : "sched_repeat_daily_" + channelId }],
-        [{ text: "Wöchentlich", callback_data: atLimit ? "sched_noop" : "sched_repeat_weekly_" + channelId }, { text: "Monatlich", callback_data: atLimit ? "sched_noop" : "sched_repeat_monthly_" + channelId }],
-        [{ text: pinOpt, callback_data: "sched_opt_pin_" + channelId }, { text: delPrevOpt, callback_data: "sched_opt_delprev_" + channelId }]
-      ]}
-    });
+    global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_interval", nextRunAt };
+    await tg.call("sendMessage", { chat_id: String(userId), text: "🔁 <b>Schritt 4/5: Intervall (Minuten/Stunden)</b>\n\nSende das Wiederholungs-Intervall:\n\nBeispiele:\n<code>30m</code> (alle 30 Minuten)\n<code>2h</code> (alle 2 Stunden)\n<code>24h</code> (Täglich)\n\n/skip für einmalige Nachricht.", parse_mode: "HTML" });
+    return true;
+  }
+
+  if (action === "sched_wizard_interval") {
+    let intervalMinutes = null;
+    if (text !== "/skip") {
+      const m = text.trim().toLowerCase().match(/^(\d+)(m|h)$/);
+      if (m) {
+        const val = parseInt(m[1]);
+        intervalMinutes = m[2] === "h" ? val * 60 : val;
+        if (intervalMinutes < 5) {
+          await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Das Minimum sind 5 Minuten. Bitte erneute Eingabe oder /skip." });
+          return true;
+        }
+      } else {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Ungültiges Format. Bitte z.B. <code>30m</code> oder <code>2h</code> senden. Oder /skip.", parse_mode: "HTML" });
+        return true;
+      }
+    }
+    
+    if (!intervalMinutes) {
+      global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_options", intervalMinutes: null, endAt: null };
+      await _sendSchedOptions(tg, userId, global.pendingInputs[String(userId)]);
+      return true;
+    }
+    
+    global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_end", intervalMinutes };
+    await tg.call("sendMessage", { chat_id: String(userId), text: "🛑 <b>Schritt 5/5: Enddatum</b>\n\nBis wann soll wiederholt werden?\nBeispiele:\n<code>14d</code> (In 14 Tagen)\n<code>48h</code> (In 48 Stunden)\n<code>20.05.2026 12:00</code> (Exaktes Datum)\n\n/skip für nie (Endlos).", parse_mode: "HTML" });
+    return true;
+  }
+
+  if (action === "sched_wizard_end") {
+    let endAt = null;
+    if (text !== "/skip") {
+      const mDate = text.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})/);
+      const mRel = text.trim().toLowerCase().match(/^(\d+)(d|h)$/);
+      
+      if (mDate) {
+        endAt = new Date(parseInt(mDate[3]), parseInt(mDate[2])-1, parseInt(mDate[1]), parseInt(mDate[4]), parseInt(mDate[5])).toISOString();
+      } else if (mRel) {
+        const val = parseInt(mRel[1]);
+        const ms = mRel[2] === "d" ? val * 86400000 : val * 3600000;
+        endAt = new Date(Date.now() + ms).toISOString();
+      } else {
+        await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Ungültiges Format. Bitte z.B. <code>14d</code> oder <code>20.05.2026 12:00</code> senden. Oder /skip.", parse_mode: "HTML" });
+        return true;
+      }
+    }
+    global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_options", endAt };
+    await _sendSchedOptions(tg, userId, global.pendingInputs[String(userId)]);
     return true;
   }
 
@@ -105,19 +142,13 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
       try {
         await supabase_db.from("proof_sessions").update({ status: "done", proof_count: count, updated_at: new Date() }).eq("feedback_id", feedbackId).eq("user_id", userId);
         const { data: fb7 } = await supabase_db.from("user_feedbacks").select("feedback_type, target_user_id, target_username, feedback_text").eq("id", feedbackId).maybeSingle();
-        
         if (fb7) {
           let autoApprove = false;
-          if (fb7.feedback_type === "positive") {
-             autoApprove = await safelistService.hasHighReputation(fbChanId, fb7.target_username, fb7.target_user_id);
-          }
-
+          if (fb7.feedback_type === "positive") autoApprove = await safelistService.hasHighReputation(fbChanId, fb7.target_username, fb7.target_user_id);
           if (autoApprove) {
              const ch7 = await getChannel(fbChanId);
              await safelistService.approveFeedback(parseInt(feedbackId), userId, ch7);
-             if (fb7.target_user_id) {
-               await supabase_db.rpc("update_user_reputation", { p_channel_id: fbChanId, p_user_id: fb7.target_user_id, p_username: fb7.target_username, p_delta: 1 }).catch(() => {});
-             }
+             if (fb7.target_user_id) await supabase_db.rpc("update_user_reputation", { p_channel_id: fbChanId, p_user_id: fb7.target_user_id, p_username: fb7.target_username, p_delta: 1 }).catch(() => {});
              await tg.call("sendMessage", { chat_id: String(userId), text: `✅ ${count} Proof(s) eingereicht! Feedback wurde direkt bestätigt (Trusted User).` });
              return true;
           } else {
@@ -146,16 +177,13 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
         }
       } catch (_) {}
     }
-
     const proofType = msg?.photo ? "photo" : msg?.video ? "video" : msg?.document ? "document" : "text";
     const fileId = msg?.photo ? msg.photo[msg.photo.length-1]?.file_id : msg?.video ? msg.video.file_id : msg?.document ? msg.document.file_id : null;
     try {
       await supabase_db.from("feedback_proofs").insert([{ feedback_id: parseInt(feedbackId), proof_type: proofType, fileId: fileId || null, content: proofType === "text" ? (text||"").substring(0,1000) : null, caption: msg?.caption || null, submitted_by: parseInt(userId) }]);
       global.pendingInputs[String(userId)] = { ...pending, proofCount: (pending.proofCount||0) + 1 };
       await tg.call("sendMessage", { chat_id: String(userId), text: `✅ Proof ${(pending.proofCount||0)+1} gespeichert.\nWeitere senden oder /done zum Abschließen.` });
-    } catch (e) {
-      await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message });
-    }
+    } catch (e) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message }); }
     return true;
   }
 
@@ -362,6 +390,21 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
   }
 
   return false;
+}
+
+async function _sendSchedOptions(tg, userId, p) {
+  const pinOpt = "📌 Anpinnen: " + (p.pinAfterSend ? "✅" : "❌");
+  const delPrevOpt = "🔄 Vorherige löschen: " + (p.deletePrevious ? "✅" : "❌");
+  
+  await tg.call("sendMessage", {
+    chat_id: String(userId),
+    text: "⚙️ <b>Letzter Schritt: Optionen prüfen</b>\n\nPasst alles?",
+    parse_mode: "HTML",
+    reply_markup: { inline_keyboard: [
+      [{ text: pinOpt, callback_data: "sched_opt_pin_" + p.channelId }, { text: delPrevOpt, callback_data: "sched_opt_delprev_" + p.channelId }],
+      [{ text: "✅ Nachricht jetzt einplanen", callback_data: "sched_save_final_" + p.channelId }]
+    ]}
+  });
 }
 
 module.exports = { handle };

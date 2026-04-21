@@ -52,9 +52,7 @@ const tgAdminHelper = {
         last_seen: new Date(),
         is_deleted: false
       }], { onConflict: "channel_id,user_id" });
-    } catch (e) {
-      logger.warn("[AdminHelper] trackMember:", e.message);
-    }
+    } catch (e) {}
   },
 
   async trackLeft(channelId, userId) {
@@ -213,12 +211,17 @@ const tgAdminHelper = {
   },
 
   async fireScheduled(token) {
-    const now = new Date().toISOString();
+    const now = new Date();
     try {
       const { data: due } = await supabase.from("scheduled_messages")
-        .select("*").eq("is_active", true).lte("next_run_at", now);
+        .select("*").eq("is_active", true).lte("next_run_at", now.toISOString());
 
       for (const msg of (due || [])) {
+        if (msg.end_at && new Date(msg.end_at) < now) {
+          await supabase.from("scheduled_messages").update({ is_active: false }).eq("id", msg.id);
+          continue;
+        }
+
         const tg = tgApi(token);
         try {
           if (msg.delete_previous && msg.last_sent_msg_id) {
@@ -240,35 +243,21 @@ const tgAdminHelper = {
             run_count: (msg.run_count || 0) + 1,
             last_sent_msg_id: sentMsg?.message_id || null
           };
-          if (msg.repeat && msg.cron_expr) {
-            updatePatch.next_run_at = this._nextCronRun(msg.cron_expr);
+          
+          if (msg.repeat && msg.interval_minutes) {
+             const nextRun = new Date(now.getTime() + (msg.interval_minutes * 60000));
+             if (msg.end_at && nextRun > new Date(msg.end_at)) {
+                updatePatch.is_active = false;
+             } else {
+                updatePatch.next_run_at = nextRun.toISOString();
+             }
           } else {
             updatePatch.is_active = false;
           }
           await supabase.from("scheduled_messages").update(updatePatch).eq("id", msg.id);
-        } catch (e) {
-          logger.warn(`[AdminHelper] Scheduled send fehlgeschlagen (${msg.id}): ${e.message}`);
-        }
+        } catch (e) {}
       }
-    } catch (e) {
-      logger.warn("[AdminHelper] fireScheduled:", e.message);
-    }
-  },
-
-  _nextCronRun(cron) {
-    try {
-      const parts = cron.trim().split(/\s+/);
-      const [min, hour] = [parseInt(parts[0]), parseInt(parts[1])];
-      const dow = parts[4] !== "*" ? parseInt(parts[4]) : -1;
-      const now = new Date();
-      const next = new Date();
-      next.setHours(hour, min || 0, 0, 0);
-      if (next <= now) next.setDate(next.getDate() + 1);
-      if (dow >= 0) {
-        while (next.getDay() !== dow) next.setDate(next.getDate() + 1);
-      }
-      return next.toISOString();
-    } catch { return null; }
+    } catch (e) {}
   }
 };
 

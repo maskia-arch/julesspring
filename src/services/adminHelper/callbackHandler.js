@@ -42,8 +42,7 @@ async function handle(tg, supabase_db, q, token, settings) {
     const ch = await getChannel(targetChannelId);
     const sendTarget = sendPriv ? String(qUserId) : targetChannelId;
 
-    // FIX: Parameter msgId (null) eingefügt für das neue fließende UI
-    await settingsHandler.sendSettingsMenu(tg, sendTarget, null, targetChannelId, ch);
+    await settingsHandler.sendSettingsMenu(tg, sendTarget, targetChannelId, ch, null);
     return;
   }
 
@@ -109,61 +108,60 @@ async function handle(tg, supabase_db, q, token, settings) {
     return;
   }
 
-  if (data.startsWith("sched_repeat_") || data === "sched_noop") {
-    if (data === "sched_noop") {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "⚠️ Free-Limit erreicht", show_alert: true });
-      return;
+  if (data.startsWith("sched_opt_")) {
+    const parts2 = data.split("_");
+    const subOpt = parts2[2];
+    const chanId2 = parts2[3];
+    const key = String(qUserId);
+    if (pendingInputs[key]) {
+      if (subOpt === "pin") pendingInputs[key].pinAfterSend = !pendingInputs[key].pinAfterSend;
+      if (subOpt === "delprev") pendingInputs[key].deletePrevious = !pendingInputs[key].deletePrevious;
     }
-    const rMatch = data.match(/^sched_repeat_([a-z]+)_(-?\d+)$/);
-    const repeatType = rMatch ? rMatch[1] : "once";
-    const chanId2 = rMatch ? rMatch[2] : data.split("_").pop();
+    await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: subOpt === "pin" ? "📌 Anpinnen geändert" : "🔄 Löschen geändert" });
+    const p2 = pendingInputs[key] || {};
+    const pinOpt2 = "📌 Anpinnen: " + (p2.pinAfterSend ? "✅" : "❌");
+    const delPrevOpt2 = "🔄 Vorherige löschen: " + (p2.deletePrevious ? "✅" : "❌");
+    await tg.call("editMessageReplyMarkup", {
+      chat_id: String(qUserId), message_id: q.message?.message_id,
+      reply_markup: { inline_keyboard: [
+        [{ text: pinOpt2, callback_data: "sched_opt_pin_" + chanId2 }, { text: delPrevOpt2, callback_data: "sched_opt_delprev_" + chanId2 }],
+        [{ text: "✅ Nachricht jetzt einplanen", callback_data: "sched_save_final_" + chanId2 }]
+      ]}
+    }).catch(() => {});
+    return;
+  }
+
+  if (data.startsWith("sched_save_final_")) {
+    const chanId2 = data.split("_")[3];
     const wizard = pendingInputs[String(qUserId)];
     
     if (!wizard || !wizard.action.startsWith("sched_wizard")) return;
     delete pendingInputs[String(qUserId)];
 
-    if (repeatType === "opt") {
-      const parts2 = data.split("_");
-      const subOpt = parts2[3];
-      const key = String(qUserId);
-      if (pendingInputs[key]) {
-        if (subOpt === "pin") pendingInputs[key].pinAfterSend = !pendingInputs[key].pinAfterSend;
-        if (subOpt === "delprev") pendingInputs[key].deletePrevious = !pendingInputs[key].deletePrevious;
-      }
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: subOpt === "pin" ? "📌 Anpinnen geändert" : "🔄 Löschen geändert" });
-      const p2 = pendingInputs[key] || {};
-      const pinOpt2 = "📌 Anpinnen: " + (p2.pinAfterSend ? "✅" : "❌");
-      const delPrevOpt2 = "🔄 Vorherige löschen: " + (p2.deletePrevious ? "✅" : "❌");
-      await tg.call("editMessageReplyMarkup", {
-        chat_id: String(qUserId), message_id: q.message?.message_id,
-        reply_markup: { inline_keyboard: [
-          [{ text: "1x – Einmalig", callback_data: "sched_repeat_once_" + chanId2 }, { text: "Täglich", callback_data: "sched_repeat_daily_" + chanId2 }],
-          [{ text: "Wöchentlich", callback_data: "sched_repeat_weekly_" + chanId2 }, { text: "Monatlich", callback_data: "sched_repeat_monthly_" + chanId2 }],
-          [{ text: pinOpt2, callback_data: "sched_opt_pin_" + chanId2 }, { text: delPrevOpt2, callback_data: "sched_opt_delprev_" + chanId2 }]
-        ]}
-      }).catch(() => {});
-      return;
-    }
-
-    const cronMap = { daily: "0 9 * * *", weekly: "0 9 * * 1", monthly: "0 9 1 * *" };
-    const isRepeat = repeatType !== "once";
-    const cronExpr = isRepeat ? cronMap[repeatType] || null : null;
+    const isRepeat = !!wizard.intervalMinutes;
 
     try {
       await supabase_db.from("scheduled_messages").insert([{
         channel_id: chanId2, message: wizard.msgText || "", photo_file_id: wizard.fileId || null,
-        cron_expr: cronExpr, next_run_at: wizard.nextRunAt || new Date().toISOString(), repeat: isRepeat,
+        cron_expr: null, interval_minutes: wizard.intervalMinutes || null, end_at: wizard.endAt || null, 
+        next_run_at: wizard.nextRunAt || new Date().toISOString(), repeat: isRepeat,
         is_active: true, pin_after_send: wizard.pinAfterSend || false, delete_previous: wizard.deletePrevious || false
       }]);
-      const repeatLabel = { once: "einmalig", daily: "täglich", weekly: "wöchentlich", monthly: "monatlich" }[repeatType] || repeatType;
+      
       const dt = wizard.nextRunAt ? new Date(wizard.nextRunAt).toLocaleString("de-DE") : "sofort";
-      await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
-      await tg.call("sendMessage", { chat_id: String(qUserId), text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Zeit: ${dt}\n🔁 Wiederholung: ${repeatLabel}`, parse_mode: "HTML" });
+      let repeatLabel = "einmalig";
+      if (wizard.intervalMinutes) {
+        repeatLabel = wizard.intervalMinutes >= 60 ? `alle ${wizard.intervalMinutes/60}h` : `alle ${wizard.intervalMinutes}m`;
+      }
+      
+      await tg.call("deleteMessage", { chat_id: q.message?.chat?.id, message_id: q.message?.message_id }).catch(() => {});
+      await tg.call("sendMessage", { chat_id: String(qUserId), text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`, parse_mode: "HTML" });
     } catch (e2) {
       await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Fehler beim Speichern: " + e2.message });
     }
     return;
   }
+
   if (data.startsWith("refill_chan_")) {
     const refChanId = data.split("_")[2];
     const pend = pendingInputs[String(qUserId)] || {};
@@ -275,8 +273,7 @@ async function handle(tg, supabase_db, q, token, settings) {
     const selChanId = data.split("_")[2];
     await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     const ch = await getChannel(selChanId);
-    // FIX: Parameter msgId (null) eingefügt für das neue fließende UI
-    await settingsHandler.sendSettingsMenu(tg, String(qUserId), null, selChanId, ch);
+    await settingsHandler.sendSettingsMenu(tg, String(qUserId), selChanId, ch, null);
     return;
   }
 
@@ -370,7 +367,7 @@ async function handle(tg, supabase_db, q, token, settings) {
         const delta6 = fbType === "positive" ? 1 : -10;
         await supabase_db.rpc("update_user_reputation", { p_channel_id: chanId6, p_user_id: parseInt(targetId) || 0, p_username: targetU, p_delta: delta6 }).catch(() => {});
         if (fbType === "negative") {
-          await supabase_db.from("scam_entries").upsert([{ channel_id: chanId6, user_id: parseInt(targetId) || null, username: targetU, reason: "Manuell vom Admin eingetragen", added_by: qUserId }], { onConflict: "channel_id,user_id" }).catch(() => {});
+await supabase_db.from("scam_entries").upsert([{ channel_id: chanId6, user_id: parseInt(targetId) || null, username: targetU, reason: "Manuell vom Admin eingetragen", added_by: qUserId }], { onConflict: "channel_id,user_id" }).catch(() => {});
         }
       }
     } catch (_) {}
