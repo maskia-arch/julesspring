@@ -38,7 +38,7 @@ async function editOrSend(tg, sendTo, msgId, text, kb) {
   return tg.call("sendMessage", { chat_id: sendTo, text, parse_mode: "HTML", reply_markup: { inline_keyboard: kb } });
 }
 
-async function sendSettingsMenu(tg, sendTo, msgId, channelId, ch) {
+async function sendSettingsMenu(tg, sendTo, channelId, ch, msgId = null) {
   const aiText = ch?.ai_enabled ? "✅ Aktiv" : "❌ Inaktiv";
   const text = `⚙️ <b>${ch?.title || channelId}</b>\n\nKI: ${aiText} | Safelist: ${ch?.safelist_enabled ? "✅" : "❌"} | Feedback: ${ch?.feedback_enabled ? "✅" : "❌"}\n\nWähle eine Kategorie:`;
   const kb = [
@@ -49,7 +49,7 @@ async function sendSettingsMenu(tg, sendTo, msgId, channelId, ch) {
   return editOrSend(tg, sendTo, msgId, text, kb);
 }
 
-async function sendChannelMenu(tg, sendTo, msgId, channelId, ch) {
+async function sendChannelMenu(tg, sendTo, channelId, ch, msgId = null) {
   const text = `📋 <b>Channel-Einstellungen</b> — ${ch?.title || channelId}`;
   const kb = [
     [{ text: "👋 Willkommen", callback_data: `cfg_welcome_${channelId}` }, { text: "👋 Abschied", callback_data: `cfg_goodbye_${channelId}` }],
@@ -61,7 +61,7 @@ async function sendChannelMenu(tg, sendTo, msgId, channelId, ch) {
   return editOrSend(tg, sendTo, msgId, text, kb);
 }
 
-async function sendModerationMenu(tg, sendTo, msgId, channelId, ch) {
+async function sendModerationMenu(tg, sendTo, channelId, ch, msgId = null) {
   const text = `🔒 <b>Moderation</b> — ${ch?.title || channelId}`;
   const kb = [
     [{ text: `🛡 Safelist ${ch?.safelist_enabled ? "✅" : "❌"}`, callback_data: `cfg_safelist_${channelId}` }, { text: `💬 Feedback ${ch?.feedback_enabled ? "✅" : "❌"}`, callback_data: `cfg_feedback_${channelId}` }],
@@ -71,7 +71,7 @@ async function sendModerationMenu(tg, sendTo, msgId, channelId, ch) {
   return editOrSend(tg, sendTo, msgId, text, kb);
 }
 
-async function sendAiMenu(tg, sendTo, msgId, channelId, ch) {
+async function sendAiMenu(tg, sendTo, channelId, ch, msgId = null) {
   if (!ch?.ai_enabled) {
     const text = `🤖 <b>AI Features</b> — Gesperrt\n\nAI Features sind nur mit einem aktiven Paket verfügbar.\nNutze <b>/buy</b> um ein Paket zu kaufen.`;
     return editOrSend(tg, sendTo, msgId, text, [[_menuBackBtn(channelId)]]);
@@ -90,7 +90,6 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
   const channelId = parts[parts.length - 1];
   let action = parts[1];
   
-  // Saubere Action-Extrahierung für zusammengesetzte Befehle (z.B. menu_channel, sl_safedel)
   const compositePrefixes = ["menu", "sl", "fb", "rep", "bl", "st", "aw", "kb", "daily"];
   if (compositePrefixes.includes(parts[1]) && parts.length >= 4) {
     action = parts[1] + "_" + parts[2];
@@ -99,12 +98,13 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
   const ch = await getChannel(channelId);
   const lang = ch?.bot_language || "de";
   const msgId = q.message?.message_id;
+  const deleteOld = () => tg.call("deleteMessage", { chat_id: String(userId), message_id: msgId }).catch(() => {});
 
   switch (action) {
-    case "mainmenu": case "back": await sendSettingsMenu(tg, String(userId), msgId, channelId, ch); break;
-    case "menu_channel": await sendChannelMenu(tg, String(userId), msgId, channelId, ch); break;
-    case "menu_mod": await sendModerationMenu(tg, String(userId), msgId, channelId, ch); break;
-    case "menu_ai": await sendAiMenu(tg, String(userId), msgId, channelId, ch); break;
+    case "mainmenu": case "back": await sendSettingsMenu(tg, String(userId), channelId, ch, msgId); break;
+    case "menu_channel": await sendChannelMenu(tg, String(userId), channelId, ch, msgId); break;
+    case "menu_mod": await sendModerationMenu(tg, String(userId), channelId, ch, msgId); break;
+    case "menu_ai": await sendAiMenu(tg, String(userId), channelId, ch, msgId); break;
     
     case "lang": {
       const kb = [];
@@ -122,9 +122,9 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       const m = data.match(/^cfg_setlang_([a-z]{2,3})_(-?\d+)$/);
       if (m) {
         await supabase_db.from("bot_channels").update({ bot_language: m[1], updated_at: new Date() }).eq("id", m[2]);
-        await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: `✅ ${SUPPORTED_LANGUAGES[m[1]]}` });
+        await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: `✅ ${SUPPORTED_LANGUAGES[m[1]]}` }).catch(()=>{});
         const updated = await getChannel(m[2]);
-        await sendChannelMenu(tg, String(userId), msgId, m[2], updated);
+        await sendChannelMenu(tg, String(userId), m[2], updated, msgId);
       }
       break;
     }
@@ -168,8 +168,8 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     case "sl_toggle": {
       const newVal = !ch?.safelist_enabled;
       await supabase_db.from("bot_channels").update({ safelist_enabled: newVal }).eq("id", channelId);
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: newVal ? "🛡 Aktiviert" : "🛡 Deaktiviert" });
-      const u = await getChannel(channelId); await sendModerationMenu(tg, String(userId), msgId, channelId, u);
+      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: newVal ? "🛡 Aktiviert" : "🛡 Deaktiviert" }).catch(()=>{});
+      const u = await getChannel(channelId); await sendModerationMenu(tg, String(userId), channelId, u, msgId);
       break;
     }
     case "sl_safeview": {
@@ -190,12 +190,21 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     }
     case "sl_safedel": {
       const m = data.match(/^cfg_sl_safedel_([a-zA-Z0-9-]+)_(-?\d+)$/);
-      if (m) { await supabase_db.from("channel_safelist").delete().eq("id", m[1]).eq("channel_id", m[2]); await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "✅ Entfernt" }); handleSettingsCallback(tg, supabase_db, `cfg_sl_safeview_${channelId}`, q, userId); }
+      if (m) { await supabase_db.from("channel_safelist").delete().eq("id", m[1]).eq("channel_id", m[2]); await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "✅ Entfernt" }).catch(()=>{}); handleSettingsCallback(tg, supabase_db, `cfg_sl_safeview_${channelId}`, q, userId); }
       break;
     }
     case "sl_scamdel": {
       const m = data.match(/^cfg_sl_scamdel_([a-zA-Z0-9-]+)_(-?\d+)$/);
-      if (m) { await supabase_db.from("scam_entries").delete().eq("id", m[1]).eq("channel_id", m[2]); await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "⛔ Entfernt" }); handleSettingsCallback(tg, supabase_db, `cfg_sl_scamview_${channelId}`, q, userId); }
+      if (m) { await supabase_db.from("scam_entries").delete().eq("id", m[1]).eq("channel_id", m[2]); await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "⛔ Entfernt" }).catch(()=>{}); handleSettingsCallback(tg, supabase_db, `cfg_sl_scamview_${channelId}`, q, userId); }
+      break;
+    }
+    case "sl_reviews": {
+      const reviews = await safelistService.getPendingReviews(channelId);
+      if (!reviews.length) { await editOrSend(tg, String(userId), msgId, "📋 Keine offenen Reviews.", [[backBtn(channelId, lang)[0]]]); break; }
+      await deleteOld();
+      for (const r of reviews.slice(0, 5)) {
+        await tg.call("sendMessage", { chat_id: String(userId), text: `${r.feedback_type === "positive" ? "✅" : "⚠️"} <b>@${r.target_username||r.target_user_id||"?"}</b>\nVon: @${r.submitted_by_username||r.submitted_by||"?"}\n<i>${(r.feedback_text||"").substring(0,150)}</i>`, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "✅ Bestätigen", callback_data: `fb_approve_${r.id}` }, { text: "❌ Ablehnen", callback_data: `fb_reject_${r.id}` }]] } });
+      }
       break;
     }
     case "feedback": {
@@ -209,8 +218,8 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     case "fb_toggle": {
       const newVal = !ch?.feedback_enabled;
       await supabase_db.from("bot_channels").update({ feedback_enabled: newVal }).eq("id", channelId);
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: newVal ? "💬 Aktiviert" : "💬 Deaktiviert" });
-      const u = await getChannel(channelId); await sendModerationMenu(tg, String(userId), msgId, channelId, u);
+      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: newVal ? "💬 Aktiviert" : "💬 Deaktiviert" }).catch(()=>{});
+      const u = await getChannel(channelId); await sendModerationMenu(tg, String(userId), channelId, u, msgId);
       break;
     }
     case "fb_ranking": {
@@ -232,6 +241,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         aw_new: "✍️ <b>WerbeTexter</b>\n\nSende Originaltext (Kosten: 30 Credits).",
         st_prompt: "✏️ <b>System-Prompt</b>\n\nSende neuen Prompt."
       };
+      await deleteOld();
       await tg.call("sendMessage", { chat_id: String(userId), text: msgs[action] + "\n\n/cancel zum Abbrechen.", parse_mode: "HTML" });
       const actionsMap = { sl_adduser: "safelist_add_user", sl_addscam: "scamlist_add_user", userinfo: "userinfo_awaiting", kb_add: "kb_add_entry", bl_add: "bl_add_word", bl_addsoft: "bl_add_soft", schedule: "sched_wizard_text", aw_new: "adwriter_new", st_prompt: "set_ai_prompt" };
       global.pendingInputs[String(userId)] = { action: actionsMap[action], channelId, aiOn: ch?.ai_enabled, freeMode: !ch?.ai_enabled };
@@ -344,6 +354,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     }
     case "daily_now": {
       if (!ch?.ai_enabled) break;
+      await deleteOld();
       await tg.call("sendMessage", { chat_id: String(userId), text: "⏳ Erstelle Tagesbericht..." });
       await dailySummaryService.runDailySummary(supabase_db, channelId, userId, tg, ch, lang);
       break;
@@ -363,6 +374,25 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         const { data: s } = await supabase_db.from("scheduled_messages").select("message").eq("id", m[1]).maybeSingle();
         global.pendingInputs[String(userId)] = { action: "adwriter_vary", channelId, origText: s?.message };
         await editOrSend(tg, String(userId), msgId, `✍️ <b>Variationen</b>\n\n<i>${(s?.message||"").substring(0,100)}</i>\n\nKosten: 30 Credits`, [[{ text: "✅ Ausführen", callback_data: `cfg_aw_run_${m[1]}_${channelId}` }]]);
+      }
+      break;
+    }
+    case "aw_run": {
+      const m = data.match(/^cfg_aw_run_([a-zA-Z0-9-]+)_(-?\d+)$/);
+      if (m) {
+        const { data: s } = await supabase_db.from("scheduled_messages").select("message").eq("id", m[1]).maybeSingle();
+        if (!s?.message) break;
+        await deleteOld();
+        await tg.call("sendMessage", { chat_id: String(userId), text: "⏳ WerbeTexter arbeitet..." });
+        try {
+          const axios = require("axios");
+          const r = await axios.post("https://api.openai.com/v1/chat/completions", { model: "gpt-4o-mini", max_tokens: 1200, messages: [{ role: "system", content: "Du bist ein professioneller WerbeTexter. Erstelle 3 verschiedene Variationen des folgenden Werbetextes. Trenne die Variationen mit ---." }, { role: "user", content: s.message }] }, { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" } });
+          const variations = r.data.choices[0].message.content.split("---").map(v => v.trim()).filter(v => v.length > 10);
+          await supabase_db.rpc("consume_channel_credits", { p_channel_id: channelId, p_tokens: 30 }).catch(() => {});
+          for (let i = 0; i < Math.min(variations.length, 3); i++) {
+            await tg.call("sendMessage", { chat_id: String(userId), text: `✍️ <b>Variation ${i+1}</b>\n\n${variations[i].substring(0,1000)}`, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: `📅 Als Nachricht einplanen`, callback_data: `cfg_schedule_${channelId}` }]] } });
+          }
+        } catch (e) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message }); }
       }
       break;
     }
