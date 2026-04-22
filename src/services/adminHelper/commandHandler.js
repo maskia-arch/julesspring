@@ -28,19 +28,19 @@ function _detectFeedback(text) {
   if (!text || text.length < 5 || text.length > 500) return null;
   const usernameMatch = text.match(/@([a-zA-Z0-9_]+)/);
   if (!usernameMatch) return null;
-  
+
   const username = usernameMatch[1];
   const lower = text.toLowerCase();
-  
-  const posRegex = /\b(safe|seriös|serioes|vouch|vouched|vertrauenswürdig|empfehlung|empfehle|recommend|legit|trusted|zuverlässig|top|super|gut|bester|beste|bester mann|bestätigt|verifiziert|real|echt|alles gut|hat geliefert|hat geklappt|hat funktioniert|pünktlich|schnell|zuverlässig|ehrenmann|korrekt|10\/10|100%|einwandfrei|reibungslos|ohne probleme|zu empfehlen)\b/i;
-  const negRegex = /\b(scam|scammer|betrug|betrüger|fake|nicht safe|unsicher|achtung|warning|vorsicht|ripper|gerippt|rip|abgezockt|abzocke|schwindler|unzuverlässig|nie wieder|schlechte erfahrung|keine empfehlung|nicht empfehlen|nicht zu empfehlen|gestohlen|lügt|falsch|unecht|nicht kaufen|hände weg|haende weg|finger weg|blockiert)\b/i;
-  
+
+  const posRegex = /\b(safe|seriös|serioes|vouch|vouched|vertrauenswürdig|empfehlung|empfehle|recommend|legit|trusted|zuverlässig|top|super|gut|bester|beste|bestätigt|verifiziert|real|echt|reibungslos|korrekt|einwandfrei|10\/10|100%|perfekt|danke|schnell)\b|\b(alles gut|hat geliefert|hat geklappt|hat funktioniert|pünktlich geliefert|bester mann|sehr guter service|guter service|sehr zufrieden|alles bestens|gerne wieder|alles super|hat gepasst)\b|[👍💯🤝🔥🚀❤️]/i;
+  const negRegex = /\b(scam|scammer|betrug|betrüger|fake|unsicher|achtung|warning|vorsicht|ripper|gerippt|rip|abgezockt|abzocke|schwindler|unzuverlässig|gestohlen|lügt|falsch|unecht|blockiert|müll|schrott)\b|\b(nicht safe|nie wieder|schlechte erfahrung|keine empfehlung|nicht empfehlen|nicht zu empfehlen|nicht kaufen|hände weg|haende weg|finger weg|schlechter service|nichts bekommen|nicht bekommen|wurde betrogen)\b|[🤡💩👎🛑⛔]/i;
+
   const isPositive = posRegex.test(lower);
   const isNegative = negRegex.test(lower);
-  
+
   if (isPositive && !isNegative) return { username, type: "positive" };
   if (isNegative && !isPositive) return { username, type: "negative" };
-  
+
   return null;
 }
 
@@ -52,9 +52,9 @@ const commandHandler = {
     const chatId = String(chat.id);
 
     const ch = await getChannel(chatId);
-    
+
     if (chat.type !== "private" && ch && ch.is_active === false) {
-       return; 
+       return;
     }
 
     if (chat.type === "private") {
@@ -67,7 +67,7 @@ const commandHandler = {
       if (/^\/safeliste?(?:\s+@?(.+))?$/i.test(text)) {
         const slMatch = text.match(/^\/safeliste?\s+@?(.+)/i);
         const slTarget = slMatch ? slMatch[1].trim() : null;
-        const { data: myChForSl } = await supabase_db.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
+        const { data: myChForSl } = await supabase.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
         if (!myChForSl?.length) {
           await tg.send(chatId, "❌ Du hast keine aktiven/freigeschalteten Channels.");
           return;
@@ -90,7 +90,7 @@ const commandHandler = {
       if (/^\/scamliste?(?:\s+@?(.+))?$/i.test(text)) {
         const scMatch = text.match(/^\/scamliste?\s+@?(.+)/i);
         const scTarget = scMatch ? scMatch[1].trim() : null;
-        const { data: myChForSc } = await supabase_db.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
+        const { data: myChForSc } = await supabase.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
         if (!myChForSc?.length) {
           await tg.send(chatId, "❌ Du hast keine aktiven/freigeschalteten Channels.");
           return;
@@ -145,7 +145,7 @@ const commandHandler = {
 
       if (/^\/(?:start|menu|settings|dashboard|help)(@\w+)?/i.test(text)) {
         const { data: allMyChannels } = await supabase_db.from("bot_channels").select("id, title, type, is_approved, ai_enabled, bot_language, is_active").eq("added_by_user_id", String(from.id));
-        
+
         if (!allMyChannels?.length) {
           const userLang = detectLang(from);
           await tg.send(chatId, t("welcome_intro", userLang).replace("{name}", from?.first_name ? " " + from.first_name : ""));
@@ -157,15 +157,15 @@ const commandHandler = {
             await tg.send(chatId, "⚠️ <b>Dein Channel/Gruppe wurde deaktiviert.</b>\n\nBitte melde dich bei @autoacts für weitere Informationen oder eine erneute Freischaltung.", { parse_mode: "HTML" });
             return;
         }
-        
+
         const activeChannels = allMyChannels.filter(c => c.is_active !== false);
-        
+
         if (activeChannels.length === 1) {
           const ch2 = await getChannel(String(activeChannels[0].id));
           await settingsHandler.sendSettingsMenu(tg, chatId, String(activeChannels[0].id), ch2, null, from?.language_code?.substring(0,2));
           return;
         }
-        
+
         if (activeChannels.length > 1) {
             const keyboard = activeChannels.map(ch2 => [{ text: (ch2.type === "channel" ? "📢" : "👥") + " " + (ch2.title || ch2.id), callback_data: "sel_channel_" + ch2.id }]);
             await tg.call("sendMessage", { chat_id: chatId, text: "⚙️ Wähle deinen Channel:", reply_markup: { inline_keyboard: keyboard } });
@@ -173,7 +173,7 @@ const commandHandler = {
         }
       }
     }
-    
+
     if (from?.id) {
       await tgApi(token).call("getChatMember", { chat_id: chatId, user_id: from.id }).catch(() => {});
     }
@@ -221,10 +221,10 @@ const commandHandler = {
     if (text === "/clean" || text.startsWith("/clean@")) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       await tg.send(chatId, "🔍 Prüfe Mitgliederliste...");
-      
+
       const { data: members } = await supabase_db.from("channel_members")
         .select("user_id").eq("channel_id", chatId).eq("is_deleted", false).limit(200);
-        
+
       let removed = 0, checked = 0;
       if (members?.length) {
         for (const m of members) {
@@ -313,15 +313,14 @@ const commandHandler = {
     const feedbackMatch = text.match(feedbackCmds);
     if (feedbackMatch && safelistActive && ch?.is_approved && ch?.is_active !== false) {
       const targetUsername = feedbackMatch[1];
-      
-      // Hole Reputations-Score
+
       let score = 0, pos = 0, neg = 0;
       const { data: rep } = await supabase_db.from("user_reputation").select("score, pos_count, neg_count").eq("channel_id", chatId).ilike("username", targetUsername).maybeSingle();
       if (rep) { score = rep.score; pos = rep.pos_count; neg = rep.neg_count; }
 
       const scamEntry = await safelistService.checkScamlist(chatId, targetUsername, null);
       let replyText = `📊 <b>@${targetUsername}</b>\n`;
-      
+
       if (scamEntry) {
         replyText = `⛔ <b>ACHTUNG: @${targetUsername} steht auf der Scamliste!</b>\n\n`;
         replyText += `⭐️ <b>Score:</b> ${score} Pkt (✅ ${pos} | ⚠️ ${neg})\n`;
@@ -340,9 +339,7 @@ const commandHandler = {
       }
 
       const sentMsg = await tg.send(chatId, replyText);
-      // Auto-Delete nach 5 Minuten (300.000 ms)
       if (sentMsg?.message_id) void safelistService.trackBotMessage(chatId, sentMsg.message_id, "check_result", 5 * 60 * 1000);
-      // Die Eingabe des Users löschen, damit der Chat sauber bleibt
       await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
       return;
     }
