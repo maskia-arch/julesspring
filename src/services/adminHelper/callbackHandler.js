@@ -28,7 +28,6 @@ async function handle(tg, supabase_db, q, token, settings) {
 
   await tg.call("answerCallbackQuery", { callback_query_id: q.id }).catch(() => {});
 
-  // /skip wird als noop vom Wizard abgeworfen, fangen wir hier für das fluid UI ab
   if (data === "cfg_noop") {
     return;
   }
@@ -67,7 +66,6 @@ async function handle(tg, supabase_db, q, token, settings) {
     const parts3 = data.split("_");
     const fbType = parts3[2];
     
-    // FIX: "Keins" sofort ausführen und Nachricht kommentarlos löschen, BEVOR IDs geprüft werden
     if (fbType === "no") {
       await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
       return;
@@ -76,6 +74,14 @@ async function handle(tg, supabase_db, q, token, settings) {
     const targetUname = parts3[3];
     const submitterId = parts3[4];
     const chanId3 = parts3[parts3.length - 1];
+
+    // Globale Schutzsperre: Unbestätigte Kanäle dürfen keine Feedbacks bestätigen!
+    const ch = await getChannel(chanId3);
+    if (!ch || !ch.is_approved) {
+      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Kanal ist nicht verifiziert. Aktion blockiert.", show_alert: true });
+      await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
+      return;
+    }
 
     if (String(qUserId) !== String(submitterId)) {
       await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Nur die Person die das Feedback geschrieben hat kann es bestätigen.", show_alert: true });
@@ -163,7 +169,6 @@ async function handle(tg, supabase_db, q, token, settings) {
         repeatLabel = wizard.intervalMinutes >= 60 ? `alle ${wizard.intervalMinutes/60}h` : `alle ${wizard.intervalMinutes}m`;
       }
       
-      // UX: Edit statt neues sendMessage
       await tg.call("editMessageText", {
         chat_id: String(qUserId),
         message_id: q.message?.message_id,
@@ -306,6 +311,15 @@ async function handle(tg, supabase_db, q, token, settings) {
       return;
     }
     const [, fbId2, , chanId4] = pm;
+    
+    // Schutzsperre: Proof-Sammlung nur für approved Channels
+    const ch4 = await getChannel(chanId4);
+    if (!ch4 || !ch4.is_approved) {
+      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Kanal ist nicht verifiziert. Aktion blockiert.", show_alert: true });
+      await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
+      return;
+    }
+
     await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     
     try {
@@ -330,6 +344,15 @@ async function handle(tg, supabase_db, q, token, settings) {
       return;
     }
     const [, fbId3, , chanId5] = npm;
+    
+    // Schutzsperre
+    const ch5 = await getChannel(chanId5);
+    if (!ch5 || !ch5.is_approved) {
+      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Kanal ist nicht verifiziert. Aktion blockiert.", show_alert: true });
+      await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
+      return;
+    }
+
     await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     
     try {
@@ -343,7 +366,6 @@ async function handle(tg, supabase_db, q, token, settings) {
         }
 
         if (autoApprove) {
-          const ch5 = await getChannel(chanId5);
           await safelistService.approveFeedback(parseInt(fbId3), qUserId, ch5);
           if (fbRow.target_user_id) {
             await supabase_db.rpc("update_user_reputation", { p_channel_id: chanId5, p_user_id: fbRow.target_user_id, p_username: fbRow.target_username, p_delta: 1 }).catch(() => {});
@@ -373,13 +395,21 @@ async function handle(tg, supabase_db, q, token, settings) {
     if (!mm) return;
     const [, , targetU, targetId, chanId6] = mm;
     const fbType = isMPos ? "positive" : "negative";
+    
+    // Schutzsperre für manuelle Eingaben
+    const ch6 = await getChannel(chanId6);
+    if (!ch6 || !ch6.is_approved) {
+      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Kanal ist nicht verifiziert. Aktion blockiert.", show_alert: true });
+      await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
+      return;
+    }
+
     try {
       const fbR = await safelistService.submitFeedback({
         channelId: chanId6, submittedBy: qUserId, submittedByUsername: q.from?.username || null,
         targetUsername: targetU, targetUserId: parseInt(targetId) || null, feedbackType: fbType, feedbackText: "Manuell eingetragen (Admin)"
       });
       if (fbR?.id) {
-        const ch6 = await getChannel(chanId6);
         await safelistService.approveFeedback(fbR.id, qUserId, ch6);
         const delta6 = fbType === "positive" ? 1 : -10;
         await supabase_db.rpc("update_user_reputation", { p_channel_id: chanId6, p_user_id: parseInt(targetId) || 0, p_username: targetU, p_delta: delta6 }).catch(() => {});
@@ -394,6 +424,18 @@ async function handle(tg, supabase_db, q, token, settings) {
 
   if (data.startsWith("fb_approve_") || data.startsWith("fb_reject_")) {
     const feedbackId = data.split("_")[2];
+    
+    // Schutzsperre bei endgültiger Admin-Bestätigung
+    const { data: fbData } = await supabase_db.from("user_feedbacks").select("channel_id").eq("id", feedbackId).maybeSingle();
+    if (fbData) {
+      const chFb = await getChannel(fbData.channel_id);
+      if (!chFb || !chFb.is_approved) {
+        await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Kanal ist nicht verifiziert. Aktion blockiert.", show_alert: true });
+        await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
+        return;
+      }
+    }
+
     const ch2 = {}; 
     await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     if (data.startsWith("fb_approve_")) {

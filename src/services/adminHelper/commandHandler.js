@@ -246,7 +246,7 @@ const commandHandler = {
       void safelistService.saveContextMsg(chatId, from.id, from.username, text);
     }
 
-    if (text && from?.id && !text.startsWith("/") && (ch?.feedback_enabled || ch?.safelist_enabled) && !from.is_bot) {
+    if (text && from?.id && !text.startsWith("/") && (ch?.feedback_enabled || ch?.safelist_enabled) && !from.is_bot && ch?.is_approved) {
       const fbDetect = _detectFeedback(text);
       if (fbDetect) {
         const confirmMsg = await tg.call("sendMessage", { chat_id: chatId,
@@ -264,7 +264,7 @@ const commandHandler = {
 
     const safelistActive = ch?.safelist_enabled || false;
 
-    if (/^\/safeliste?$/i.test(text) && safelistActive) {
+    if (/^\/safeliste?$/i.test(text) && safelistActive && ch?.is_approved) {
       const { data: sl2 } = await supabase_db.from("channel_safelist").select("username, user_id, score, created_at").eq("channel_id", chatId).order("created_at", { ascending: false }).limit(20);
       let slText = "🛡 <b>Safelist</b>\n\n";
       slText += sl2?.length ? sl2.map((e,i) => `${i+1}. ✅ @${e.username||e.user_id}` + (e.score ? ` (${e.score} Pkt)` : "")).join("\n") : "<i>Noch keine Einträge.</i>";
@@ -273,7 +273,7 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/scamliste?$/i.test(text) && safelistActive) {
+    if (/^\/scamliste?$/i.test(text) && safelistActive && ch?.is_approved) {
       const { data: sc2 } = await supabase_db.from("scam_entries").select("username, user_id, reason, created_at").eq("channel_id", chatId).order("created_at", { ascending: false }).limit(20);
       let scText = "⛔ <b>Scamliste</b>\n\n";
       scText += sc2?.length ? sc2.map((e,i) => `${i+1}. ⛔ @${e.username||e.user_id}` + (e.reason ? ` — <i>${e.reason.substring(0,60)}</i>` : "")).join("\n") : "<i>Noch keine Einträge.</i>";
@@ -282,7 +282,7 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/feedbacks?$/i.test(text) && safelistActive) {
+    if (/^\/feedbacks?$/i.test(text) && safelistActive && ch?.is_approved) {
       const { data: top10 } = await supabase_db.rpc("get_top_sellers", { p_channel_id: chatId, p_limit: 10 }).catch(() => ({ data: null }));
       const medals = ["🥇","🥈","🥉"];
       let rankText = "🏆 <b>Top 10 Verkäufer</b>\n\n";
@@ -294,7 +294,7 @@ const commandHandler = {
 
     const feedbackCmds = /^\/(?:feedbacks?|check)\s+@?(\w+)/i;
     const feedbackMatch = text.match(feedbackCmds);
-    if (feedbackMatch && safelistActive) {
+    if (feedbackMatch && safelistActive && ch?.is_approved) {
       const targetUsername = feedbackMatch[1];
       const feedbacks = await safelistService.getFeedbacks(chatId, targetUsername, null);
       const scamEntry = await safelistService.checkScamlist(chatId, targetUsername, null);
@@ -314,7 +314,7 @@ const commandHandler = {
     }
 
     const safelistAdminMatch = text.match(/^\/safe?list[e]?\s+@?(\w+)\s*(.*)/i);
-    if (safelistAdminMatch && safelistActive) {
+    if (safelistAdminMatch && safelistActive && ch?.is_approved) {
       if (!await isGroupAdmin(tg, chatId, from.id)) {
         const sent = await tg.send(chatId, "🔒 Nur Channel-Admins können Mitglieder verifizieren.");
         if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 10000);
@@ -336,7 +336,7 @@ const commandHandler = {
     }
 
     const scamMatch = text.match(/^\/scam?list[e]?\s+@?(\w+)\s*(.*)/i);
-    if (scamMatch && safelistActive) {
+    if (scamMatch && safelistActive && ch?.is_approved) {
       const [, username, reason] = scamMatch;
       const fb = await safelistService.submitFeedback({
         channelId: chatId, submittedBy: from?.id, submittedByUsername: from?.username,
@@ -354,7 +354,7 @@ const commandHandler = {
       return;
     }
 
-    if (/ich habe proofs?/i.test(text) && from?.id && safelistActive) {
+    if (/ich habe proofs?/i.test(text) && from?.id && safelistActive && ch?.is_approved) {
       const key = "scam_confirm_" + String(from.id) + "_" + chatId;
       const pending = pendingInputs[key];
       if (pending) {
@@ -403,7 +403,7 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/ban(@\w+)?/i.test(text) && msg.reply_to_message) {
+    if (/^\/ban(@\w+)?/i.test(text) && msg.reply_to_message && ch?.is_approved) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       const banTarget = msg.reply_to_message.from;
       if (!banTarget?.id) return;
@@ -418,7 +418,7 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/unban(@\w+)?\s+(\S+)/i.test(text)) {
+    if (/^\/unban(@\w+)?\s+(\S+)/i.test(text) && ch?.is_approved) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       const unbanId = text.match(/^\/unban(@\w+)?\s+(\S+)/i)?.[2];
       if (!unbanId) return;
@@ -438,7 +438,7 @@ const commandHandler = {
     const muteTarget = msg.reply_to_message?.from || null;
     const muteByIdMatch = !msg.reply_to_message && text.match(/^\/mute(@\w+)?\s+(\d+)(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?/i);
 
-    if ((muteMatch && muteTarget) || muteByIdMatch) {
+    if (((muteMatch && muteTarget) || muteByIdMatch) && ch?.is_approved) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       let targetId, targetName, durationStr, muteReason;
 

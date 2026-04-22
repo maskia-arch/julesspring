@@ -200,6 +200,14 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
 
   if (action === "safelist_add_user") {
     delete global.pendingInputs[String(userId)];
+    
+    // Check if the channel is approved before proceeding
+    const ch = await getChannel(channelId);
+    if (!ch || !ch.is_approved) {
+      await nextStep(tg, userId, pending, "❌ <b>Kanal nicht verifiziert</b>\n\nDieser Kanal ist noch nicht verifiziert. Du kannst erst Benutzer zur Safelist hinzufügen, wenn dein Kanal freigegeben wurde.", [[{ text: "◀️ Zurück", callback_data: `cfg_menu_channel_${channelId}` }]]);
+      return true;
+    }
+
     const parts = text.replace(/^@/, "").split("|").map(s => s.trim());
     const target = parts[0];
     const note = parts[1] || "Manuell durch Admin";
@@ -223,6 +231,14 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
   
   if (action === "scamlist_add_user") {
     delete global.pendingInputs[String(userId)];
+    
+    // Check if the channel is approved before proceeding
+    const ch = await getChannel(channelId);
+    if (!ch || !ch.is_approved) {
+      await nextStep(tg, userId, pending, "❌ <b>Kanal nicht verifiziert</b>\n\nDieser Kanal ist noch nicht verifiziert. Du kannst erst Scammer melden, wenn dein Kanal freigegeben wurde.", [[{ text: "◀️ Zurück", callback_data: `cfg_menu_channel_${channelId}` }]]);
+      return true;
+    }
+
     const parts2 = text.replace(/^@/, "").split("|").map(s => s.trim());
     const target2 = parts2[0];
     const reason = parts2[1] || "Manuell vom Admin eingetragen";
