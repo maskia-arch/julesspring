@@ -28,6 +28,11 @@ async function handle(tg, supabase_db, q, token, settings) {
 
   await tg.call("answerCallbackQuery", { callback_query_id: q.id }).catch(() => {});
 
+  // /skip wird als noop vom Wizard abgeworfen, fangen wir hier für das fluid UI ab
+  if (data === "cfg_noop") {
+    return;
+  }
+
   if (data.startsWith("uinfo_names_")) {
     const targetId = data.split("_")[2];
     const { data: history } = await supabase_db.from("user_name_history").select("*").eq("user_id", targetId).order("detected_at", { ascending: false }).limit(10);
@@ -36,7 +41,7 @@ async function handle(tg, supabase_db, q, token, settings) {
       return;
     }
     const list = history.map(h => `• ${new Date(h.detected_at).toLocaleDateString("de-DE")}: ${h.first_name||""} ${h.last_name||""} ${h.username?"(@"+h.username+")":""}`).join("\n");
-    await tg.call("sendMessage", { chat_id: String(qUserId), text: `📜 <b>Namenshistorie für <code>${targetId}</code></b>\n\n${list}`, parse_mode: "HTML" });
+    await tg.call("sendMessage", { chat_id: qChatId, text: `📜 <b>Namenshistorie für <code>${targetId}</code></b>\n\n${list}`, parse_mode: "HTML" });
     return;
   }
 
@@ -61,6 +66,13 @@ async function handle(tg, supabase_db, q, token, settings) {
   if (data.startsWith("fb_confirm_")) {
     const parts3 = data.split("_");
     const fbType = parts3[2];
+    
+    // FIX: "Keins" sofort ausführen und Nachricht kommentarlos löschen, BEVOR IDs geprüft werden
+    if (fbType === "no") {
+      await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
+      return;
+    }
+
     const targetUname = parts3[3];
     const submitterId = parts3[4];
     const chanId3 = parts3[parts3.length - 1];
@@ -71,11 +83,6 @@ async function handle(tg, supabase_db, q, token, settings) {
     }
 
     await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
-
-    if (fbType === "no") {
-      // Löscht die Nachricht kommentarlos und bricht ab
-      return;
-    }
 
     const feedbackType = fbType === "pos" ? "positive" : "negative";
     const origText = q.message?.reply_to_message?.text?.substring(0, 300) || "";
@@ -126,7 +133,8 @@ async function handle(tg, supabase_db, q, token, settings) {
       chat_id: String(qUserId), message_id: q.message?.message_id,
       reply_markup: { inline_keyboard: [
         [{ text: pinOpt2, callback_data: "sched_opt_pin_" + chanId2 }, { text: delPrevOpt2, callback_data: "sched_opt_delprev_" + chanId2 }],
-        [{ text: "✅ Nachricht jetzt einplanen", callback_data: "sched_save_final_" + chanId2 }]
+        [{ text: "✅ Nachricht jetzt einplanen", callback_data: "sched_save_final_" + chanId2 }],
+        [{ text: "❌ Abbrechen", callback_data: `cfg_back_${chanId2}` }]
       ]}
     }).catch(() => {});
     return;
@@ -155,8 +163,16 @@ async function handle(tg, supabase_db, q, token, settings) {
         repeatLabel = wizard.intervalMinutes >= 60 ? `alle ${wizard.intervalMinutes/60}h` : `alle ${wizard.intervalMinutes}m`;
       }
       
-      await tg.call("deleteMessage", { chat_id: q.message?.chat?.id, message_id: q.message?.message_id }).catch(() => {});
-      await tg.call("sendMessage", { chat_id: String(qUserId), text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`, parse_mode: "HTML" });
+      // UX: Edit statt neues sendMessage
+      await tg.call("editMessageText", {
+        chat_id: String(qUserId),
+        message_id: q.message?.message_id,
+        text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`,
+        parse_mode: "HTML",
+        reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück zu Wiederholungen", callback_data: `cfg_repeat_${chanId2}` }]] }
+      }).catch(async () => {
+        await tg.call("sendMessage", { chat_id: String(qUserId), text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück zu Wiederholungen", callback_data: `cfg_repeat_${chanId2}` }]] } });
+      });
     } catch (e2) {
       await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Fehler beim Speichern: " + e2.message });
     }
@@ -217,6 +233,7 @@ async function handle(tg, supabase_db, q, token, settings) {
     } catch (e2) { await tg.call("sendMessage", { chat_id: String(qUserId), text: `❌ Refill fehlgeschlagen:\n<i>${e2.message}</i>`, parse_mode: "HTML" }); }
     return;
   }
+
   if (data.startsWith("buy_chan_")) {
     const buyChanId = data.split("_")[2];
     const pend = pendingInputs[String(qUserId)] || {};
@@ -367,7 +384,7 @@ async function handle(tg, supabase_db, q, token, settings) {
         const delta6 = fbType === "positive" ? 1 : -10;
         await supabase_db.rpc("update_user_reputation", { p_channel_id: chanId6, p_user_id: parseInt(targetId) || 0, p_username: targetU, p_delta: delta6 }).catch(() => {});
         if (fbType === "negative") {
-await supabase_db.from("scam_entries").upsert([{ channel_id: chanId6, user_id: parseInt(targetId) || null, username: targetU, reason: "Manuell vom Admin eingetragen", added_by: qUserId }], { onConflict: "channel_id,user_id" }).catch(() => {});
+          await supabase_db.from("scam_entries").upsert([{ channel_id: chanId6, user_id: parseInt(targetId) || null, username: targetU, reason: "Manuell vom Admin eingetragen", added_by: qUserId }], { onConflict: "channel_id,user_id" }).catch(() => {});
         }
       }
     } catch (_) {}

@@ -120,7 +120,6 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
   const userLang = q.from?.language_code?.substring(0, 2) || "de";
   const lang = ch?.bot_language || userLang;
   const msgId = q.message?.message_id;
-  const deleteOld = () => tg.call("deleteMessage", { chat_id: String(userId), message_id: msgId }).catch(() => {});
 
   switch (action) {
     case "mainmenu": case "back": await sendSettingsMenu(tg, String(userId), channelId, ch, msgId, userLang); break;
@@ -152,15 +151,15 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     }
     case "welcome": case "goodbye": {
       const isW = action === "welcome";
-      await editOrSend(tg, String(userId), msgId, `📝 <b>${isW ? "Willkommen" : "Abschied"} bearbeiten</b>\n\nAktuell: <i>${(isW ? ch?.welcome_msg : ch?.goodbye_msg) || "(leer)"}</i>\n\nSende neuen Text oder /cancel.`, [[backBtn(channelId, lang)[0]]]);
-      global.pendingInputs[String(userId)] = { action: `set_${action}`, channelId };
+      const sent = await editOrSend(tg, String(userId), msgId, `📝 <b>${isW ? "Willkommen" : "Abschied"} bearbeiten</b>\n\nAktuell: <i>${(isW ? ch?.welcome_msg : ch?.goodbye_msg) || "(leer)"}</i>\n\nSende neuen Text oder /cancel.`, [[backBtn(channelId, lang)[0]]]);
+      global.pendingInputs[String(userId)] = { action: `set_${action}`, channelId, wizardMsgId: sent?.message_id || msgId };
       break;
     }
     case "clean": {
-      await tg.call("sendMessage", { chat_id: String(userId), text: "🔍 Bereinigung läuft..." });
+      await editOrSend(tg, String(userId), msgId, "🔍 Bereinigung läuft...", []);
       const settings = await getSettings();
       const res = await tgAdminHelper.cleanDeletedAccounts(settings?.smalltalk_bot_token, channelId);
-      await tg.call("sendMessage", { chat_id: String(userId), text: `🧹 Fertig! ${res.removed} Accounts entfernt.` });
+      await editOrSend(tg, String(userId), msgId, `🧹 Fertig! ${res.removed} Accounts entfernt.`, [[backBtn(channelId, lang)[0]]]);
       break;
     }
     case "stats": {
@@ -223,7 +222,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     case "sl_reviews": {
       const reviews = await safelistService.getPendingReviews(channelId);
       if (!reviews.length) { await editOrSend(tg, String(userId), msgId, "📋 Keine offenen Reviews.", [[backBtn(channelId, lang)[0]]]); break; }
-      await deleteOld();
+      await tg.call("deleteMessage", { chat_id: String(userId), message_id: msgId }).catch(() => {});
       for (const r of reviews.slice(0, 5)) {
         await tg.call("sendMessage", { chat_id: String(userId), text: `${r.feedback_type === "positive" ? "✅" : "⚠️"} <b>@${r.target_username||r.target_user_id||"?"}</b>\nVon: @${r.submitted_by_username||r.submitted_by||"?"}\n<i>${(r.feedback_text||"").substring(0,150)}</i>`, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "✅ Bestätigen", callback_data: `fb_approve_${r.id}` }, { text: "❌ Ablehnen", callback_data: `fb_reject_${r.id}` }]] } });
       }
@@ -263,10 +262,10 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         aw_new: "✍️ <b>WerbeTexter</b>\n\nSende Originaltext (Kosten: 30 Credits).",
         st_prompt: "✏️ <b>System-Prompt</b>\n\nSende neuen Prompt."
       };
-      await deleteOld();
-      await tg.call("sendMessage", { chat_id: String(userId), text: msgs[action] + "\n\n/cancel zum Abbrechen.", parse_mode: "HTML" });
+      
+      const sent = await editOrSend(tg, String(userId), msgId, msgs[action] + "\n\n/cancel zum Abbrechen.", [[{ text: "❌ Abbrechen", callback_data: `cfg_back_${channelId}` }]]);
       const actionsMap = { sl_adduser: "safelist_add_user", sl_addscam: "scamlist_add_user", userinfo: "userinfo_awaiting", kb_add: "kb_add_entry", bl_add: "bl_add_word", bl_addsoft: "bl_add_soft", schedule: "sched_wizard_text", aw_new: "adwriter_new", st_prompt: "set_ai_prompt" };
-      global.pendingInputs[String(userId)] = { action: actionsMap[action], channelId, aiOn: ch?.ai_enabled, freeMode: !ch?.ai_enabled };
+      global.pendingInputs[String(userId)] = { action: actionsMap[action], channelId, aiOn: ch?.ai_enabled, freeMode: !ch?.ai_enabled, wizardMsgId: sent?.message_id || msgId };
       break;
     }
     case "repeat": {
@@ -379,8 +378,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     }
     case "daily_now": {
       if (!ch?.ai_enabled) break;
-      await deleteOld();
-      await tg.call("sendMessage", { chat_id: String(userId), text: "⏳ Erstelle Tagesbericht..." });
+      await editOrSend(tg, String(userId), msgId, "⏳ Erstelle Tagesbericht...", []);
       await dailySummaryService.runDailySummary(supabase_db, channelId, userId, tg, ch, lang);
       break;
     }
@@ -397,8 +395,8 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       const m = data.match(/^cfg_aw_vary_([a-zA-Z0-9-]+)_(-?\d+)$/);
       if (m) {
         const { data: s } = await supabase_db.from("scheduled_messages").select("message").eq("id", m[1]).maybeSingle();
-        global.pendingInputs[String(userId)] = { action: "adwriter_vary", channelId, origText: s?.message };
-        await editOrSend(tg, String(userId), msgId, `✍️ <b>Variationen</b>\n\n<i>${(s?.message||"").substring(0,100)}</i>\n\nKosten: 30 Credits`, [[{ text: "✅ Ausführen", callback_data: `cfg_aw_run_${m[1]}_${channelId}` }]]);
+        const sent = await editOrSend(tg, String(userId), msgId, `✍️ <b>Variationen</b>\n\n<i>${(s?.message||"").substring(0,100)}</i>\n\nKosten: 30 Credits`, [[{ text: "✅ Ausführen", callback_data: `cfg_aw_run_${m[1]}_${channelId}` }]]);
+        global.pendingInputs[String(userId)] = { action: "adwriter_vary", channelId, origText: s?.message, wizardMsgId: sent?.message_id || msgId };
       }
       break;
     }
@@ -407,17 +405,18 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       if (m) {
         const { data: s } = await supabase_db.from("scheduled_messages").select("message").eq("id", m[1]).maybeSingle();
         if (!s?.message) break;
-        await deleteOld();
-        await tg.call("sendMessage", { chat_id: String(userId), text: "⏳ WerbeTexter arbeitet..." });
+        await editOrSend(tg, String(userId), msgId, "⏳ WerbeTexter arbeitet...", []);
         try {
           const axios = require("axios");
           const r = await axios.post("https://api.openai.com/v1/chat/completions", { model: "gpt-4o-mini", max_tokens: 1200, messages: [{ role: "system", content: "Du bist ein professioneller WerbeTexter. Erstelle 3 verschiedene Variationen des folgenden Werbetextes. Trenne die Variationen mit ---." }, { role: "user", content: s.message }] }, { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" } });
           const variations = r.data.choices[0].message.content.split("---").map(v => v.trim()).filter(v => v.length > 10);
           await supabase_db.rpc("consume_channel_credits", { p_channel_id: channelId, p_tokens: 30 }).catch(() => {});
+          
+          await tg.call("deleteMessage", { chat_id: String(userId), message_id: msgId }).catch(() => {});
           for (let i = 0; i < Math.min(variations.length, 3); i++) {
             await tg.call("sendMessage", { chat_id: String(userId), text: `✍️ <b>Variation ${i+1}</b>\n\n${variations[i].substring(0,1000)}`, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: `📅 Als Nachricht einplanen`, callback_data: `cfg_schedule_${channelId}` }]] } });
           }
-        } catch (e) { await tg.call("sendMessage", { chat_id: String(userId), text: "❌ Fehler: " + e.message }); }
+        } catch (e) { await editOrSend(tg, String(userId), msgId, "❌ Fehler: " + e.message, [[backBtn(channelId, lang)[0]]]); }
       }
       break;
     }
