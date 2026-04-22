@@ -73,18 +73,7 @@ async function handle(tg, supabase_db, q, token, settings) {
     await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
 
     if (fbType === "no") {
-      const origMsg = q.message?.text || "";
-      const { data: chAdmin } = await supabase_db.from("bot_channels").select("added_by_user_id").eq("id", String(chanId3)).maybeSingle().catch(() => ({ data: null }));
-      if (chAdmin?.added_by_user_id) {
-        await tg.call("sendMessage", { chat_id: String(chAdmin.added_by_user_id),
-          text: `❓ <b>Feedback-Einordnung unklar</b>\n\n<i>${origMsg.substring(0,200)}</i>\n\nUser hat auf ❌ geklickt. Bitte manuell prüfen.`,
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: [[
-            { text: "✅ Positiv buchen", callback_data: `fb_manual_pos_${targetUname}_0_${chanId3}` },
-            { text: "⚠️ Negativ buchen", callback_data: `fb_manual_neg_${targetUname}_0_${chanId3}` }
-          ]]}
-        });
-      }
+      // Löscht die Nachricht kommentarlos und bricht ab
       return;
     }
 

@@ -26,16 +26,21 @@ async function isGroupAdmin(tg, chatId, userId) {
 
 function _detectFeedback(text) {
   if (!text || text.length < 5 || text.length > 500) return null;
-  const usernameMatch = text.match(/@([\w\d_]+)/);
+  const usernameMatch = text.match(/@([a-zA-Z0-9_]+)/);
   if (!usernameMatch) return null;
+  
   const username = usernameMatch[1];
   const lower = text.toLowerCase();
-  const posKeywords = /\b(safe|seriös|serioes|vertrauenswürdig|vertrauenswuerdig|empfehlung|empfehle|recommend|legit|trusted|zuverlässig|zuverlaessig|top|super|gut|guter|sehr gut|bestätigt|bestaetigt|verifiziert|real|echt|ok|alles gut|hat geliefert|hat gezahlt|pünktlich|puenktlich)\b/i;
-  const negKeywords = /\b(scam|betrug|betrüger|betrueger|fake|nicht safe|unsicher|achtung|warning|vorsicht|schwindler|unzuverlässig|unzuverlaessig|nie wieder|schlechte erfahrung|kein empfehlung|nicht empfehlen|gestohlen|abgezockt|lügt|luegt|abzocke|falsch|unecht)\b/i;
-  const isPositive = posKeywords.test(lower);
-  const isNegative = negKeywords.test(lower);
+  
+  const posRegex = /\b(safe|seriös|serioes|vouch|vouched|vertrauenswürdig|empfehlung|empfehle|recommend|legit|trusted|zuverlässig|top|super|gut|bester|beste|bester mann|bestätigt|verifiziert|real|echt|alles gut|hat geliefert|hat geklappt|hat funktioniert|pünktlich|schnell|zuverlässig|ehrenmann|korrekt|10\/10|100%|einwandfrei|reibungslos|ohne probleme|zu empfehlen)\b/i;
+  const negRegex = /\b(scam|scammer|betrug|betrüger|fake|nicht safe|unsicher|achtung|warning|vorsicht|ripper|gerippt|rip|abgezockt|abzocke|schwindler|unzuverlässig|nie wieder|schlechte erfahrung|keine empfehlung|nicht empfehlen|nicht zu empfehlen|gestohlen|lügt|falsch|unecht|nicht kaufen|hände weg|haende weg|finger weg|blockiert)\b/i;
+  
+  const isPositive = posRegex.test(lower);
+  const isNegative = negRegex.test(lower);
+  
   if (isPositive && !isNegative) return { username, type: "positive" };
   if (isNegative && !isPositive) return { username, type: "negative" };
+  
   return null;
 }
 
@@ -133,15 +138,15 @@ const commandHandler = {
       }
 
       if (/^\/(?:start|menu|settings|dashboard|help)(@\w+)?/i.test(text)) {
-        const { data: myChannels2 } = await supabase_db.from("bot_channels").select("id, title, type, is_approved, ai_enabled").eq("added_by_user_id", String(from.id));
+        const { data: myChannels2 } = await supabase_db.from("bot_channels").select("id, title, type, is_approved, ai_enabled, bot_language").eq("added_by_user_id", String(from.id));
         if (!myChannels2?.length) {
           const userLang = detectLang(from);
-          await tg.send(chatId, t("welcome_intro", userLang, from?.first_name || ""));
+          await tg.send(chatId, t("welcome_intro", userLang).replace("{name}", from?.first_name ? " " + from.first_name : ""));
           return;
         }
         if (myChannels2.length === 1) {
           const ch2 = await getChannel(String(myChannels2[0].id));
-          await settingsHandler.sendSettingsMenu(tg, chatId, String(myChannels2[0].id), ch2);
+          await settingsHandler.sendSettingsMenu(tg, chatId, String(myChannels2[0].id), ch2, null, from?.language_code?.substring(0,2));
           return;
         }
         const keyboard = myChannels2.map(ch2 => [{ text: (ch2.type === "channel" ? "📢" : "👥") + " " + (ch2.title || ch2.id), callback_data: "sel_channel_" + ch2.id }]);
@@ -149,6 +154,7 @@ const commandHandler = {
         return;
       }
     }
+    
     const ch = await getChannel(chatId);
 
     if (from?.id) {
@@ -259,9 +265,9 @@ const commandHandler = {
     const safelistActive = ch?.safelist_enabled || false;
 
     if (/^\/safeliste?$/i.test(text) && safelistActive) {
-      const { data: sl2 } = await supabase_db.from("user_feedbacks").select("target_username, target_user_id, submitted_by_username, created_at").eq("channel_id", chatId).eq("feedback_type", "positive").eq("status", "approved").order("created_at", { ascending: false }).limit(20);
+      const { data: sl2 } = await supabase_db.from("channel_safelist").select("username, user_id, score, created_at").eq("channel_id", chatId).order("created_at", { ascending: false }).limit(20);
       let slText = "🛡 <b>Safelist</b>\n\n";
-      slText += sl2?.length ? sl2.map((e,i) => `${i+1}. ✅ @${e.target_username||e.target_user_id}` + (e.submitted_by_username ? ` — von @${e.submitted_by_username}` : "")).join("\n") : "<i>Noch keine Einträge.</i>";
+      slText += sl2?.length ? sl2.map((e,i) => `${i+1}. ✅ @${e.username||e.user_id}` + (e.score ? ` (${e.score} Pkt)` : "")).join("\n") : "<i>Noch keine Einträge.</i>";
       const slMsg = await tg.call("sendMessage", { chat_id: chatId, text: slText, parse_mode: "HTML", reply_to_message_id: msg.message_id }).catch(() => null);
       if (slMsg?.message_id) void safelistService.trackBotMessage(chatId, slMsg.message_id, "temp", 5*60*1000);
       return;
@@ -307,14 +313,6 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/feedbacks?$/i.test(text)) {
-      const all = await safelistService.getFeedbacks(chatId, null, null);
-      const pos = all.filter(f => f.feedback_type === "positive").length;
-      const neg = all.filter(f => f.feedback_type === "negative").length;
-      const sent = await tg.send(chatId, `📋 <b>Feedback-Übersicht</b>\n✅ ${pos} positive · ⚠️ ${neg} negative bestätigte Einträge.`);
-      if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "check_result", 5 * 60 * 1000);
-      return;
-    }
     const safelistAdminMatch = text.match(/^\/safe?list[e]?\s+@?(\w+)\s*(.*)/i);
     if (safelistAdminMatch && safelistActive) {
       if (!await isGroupAdmin(tg, chatId, from.id)) {
@@ -368,19 +366,6 @@ const commandHandler = {
         };
         const sent = await tg.send(chatId, `📩 Bitte schicke deine Beweise <b>direkt im privaten Chat</b>.\n→ Öffne den Bot-Chat und tippe /start falls noch nicht geschehen.`);
         if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 30000);
-      }
-      return;
-    }
-
-    if (/^\/scam?list[e]?(@\w+)?$/i.test(text) && safelistActive) {
-      const { data: scamList } = await supabase_db.from("scam_entries").select("username, user_id, reason").eq("channel_id", chatId).limit(20);
-      if (!scamList?.length) {
-        const sent = await tg.send(chatId, "⚠️ <b>Scamliste</b>\n\nNoch keine bestätigten Einträge.");
-        if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "check_result", 5 * 60 * 1000);
-      } else {
-        const lines = scamList.map(s => `⛔ @${s.username || s.user_id}${s.reason ? " – " + s.reason.substring(0, 60) : ""}`).join("\n");
-        const sent = await tg.send(chatId, `⚠️ <b>Scamliste (${scamList.length})</b>\n\n${lines}`);
-        if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "check_result", 5 * 60 * 1000);
       }
       return;
     }
