@@ -27,7 +27,7 @@ const safelistService = {
     if (aiSummary) text += `\n🤖 <b>KI-Zusammenfassung:</b>\n${aiSummary}\n`;
     const quotes = [...neg.slice(0, 3), ...pos.slice(0, 2)];
     if (quotes.length) {
-      text += `\n💬 <b>Feedbacks:</b>\n`;
+      text += `\n💬 <b>Letzte Feedbacks:</b>\n`;
       quotes.forEach(f => {
         const e = f.feedback_type === "positive" ? "✅" : "⚠️";
         const by = f.submitted_by_username ? `@${f.submitted_by_username}` : "anonym";
@@ -40,17 +40,49 @@ const safelistService = {
   async generateAiSummary(channelId, username, userId) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return null;
+
     const feedbacks = await this.getFeedbacks(channelId, username, userId);
     if (!feedbacks.length) return null;
+
+    // 1. Cache aus der Datenbank laden
+    let q = supabase.from("user_reputation").select("ai_summary, ai_summary_updated_at").eq("channel_id", String(channelId));
+    if (userId) q = q.eq("user_id", userId);
+    else if (username) q = q.ilike("username", username);
+    const { data: rep } = await q.maybeSingle();
+
+    const newestFeedbackTime = new Date(feedbacks[0].created_at).getTime();
+    const cacheTime = rep?.ai_summary_updated_at ? new Date(rep.ai_summary_updated_at).getTime() : 0;
+
+    // 2. Kosten sparen: Ist der Cache aktuell? Dann sofort zurückgeben!
+    if (rep && rep.ai_summary && cacheTime >= newestFeedbackTime) {
+      return rep.ai_summary;
+    }
+
+    // 3. Neu generieren, da neues Feedback vorliegt
     const allText = feedbacks.map(f => `[${f.feedback_type === "positive" ? "+" : "-"}] ${f.feedback_text || ""}`).join("\n");
     try {
       const resp = await axios.post("https://api.openai.com/v1/chat/completions",
         {
           model: "gpt-4o-mini", max_tokens: 200, temperature: 0.1,
-          messages: [{ role: "user", content: `Fasse alle Feedbacks für @${username} in 3 Sätzen zusammen:\n${allText}\nNur Zusammenfassung.` }]
+          messages: [
+            { role: "system", content: "Du fasst Handels-Feedbacks extrem präzise zusammen. Kein 'Die Feedbacks zeigen' – direkt zur Sache. Max 3 kurze Sätze." },
+            { role: "user", content: `Zusammenfassung der Feedbacks für @${username}:\n${allText}` }
+          ]
         },
         { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, timeout: 15000 });
-      return resp.data.choices[0].message.content.trim();
+      
+      const summary = resp.data.choices[0].message.content.trim();
+
+      // 4. Neuen Cache in der Datenbank speichern
+      if (rep) {
+        let updateQ = supabase.from("user_reputation").update({
+            ai_summary: summary, ai_summary_updated_at: new Date().toISOString()
+        }).eq("channel_id", String(channelId));
+        if (userId) updateQ = updateQ.eq("user_id", userId);
+        else updateQ = updateQ.ilike("username", username);
+        await updateQ;
+      }
+      return summary;
     } catch { return null; }
   },
 
@@ -83,20 +115,34 @@ const safelistService = {
     let fb = null;
     try { const r2 = await supabase.from("user_feedbacks").select("*").eq("id", feedbackId).single(); fb = r2.data; } catch (_) { }
     if (!fb) return null;
-    let aiSummary = null;
-    if (channel?.ai_enabled) aiSummary = await this.generateAiSummary(fb.channel_id, fb.target_username, fb.target_user_id);
-    await supabase.from("user_feedbacks").update({ status: "approved", reviewed_by: adminUserId, ai_summary: aiSummary, updated_at: new Date() }).eq("id", feedbackId);
-    if (fb.feedback_type === "negative") {
-      let token = channel?.smalltalk_bot_token;
-      if (!token) { try { const r3 = await supabase.from("settings").select("smalltalk_bot_token").single(); token = r3.data?.smalltalk_bot_token; } catch (_) { } }
-      const tgProfile = fb.target_user_id ? await this._fetchTgProfile(fb.target_user_id, token) : {};
+
+    // 1. Status updaten
+    await supabase.from("user_feedbacks").update({ status: "approved", reviewed_by: adminUserId, updated_at: new Date() }).eq("id", feedbackId);
+
+    // 2. Reputation updaten (+1 Positiv / -10 Negativ)
+    const isPos = fb.feedback_type === "positive";
+    const delta = isPos ? 1 : -10;
+
+    let currentScore = 0;
+    try {
+      await supabase.rpc("update_user_reputation", {
+         p_channel_id: String(fb.channel_id), p_user_id: fb.target_user_id || 0,
+         p_username: fb.target_username, p_delta: delta
+      });
+      // Score direkt abfragen für Autokick-Prüfung
+      const repCheck = await supabase.from("user_reputation").select("score").eq("channel_id", String(fb.channel_id)).ilike("username", fb.target_username).maybeSingle();
+      currentScore = repCheck.data?.score || 0;
+    } catch (e) { logger.warn("Reputation Update Error: ", e.message); }
+
+    // 3. Autokick auf Scamliste ab Score -50
+    if (currentScore <= -50) {
       await supabase.from("scam_entries").upsert([{
         channel_id: String(fb.channel_id), user_id: fb.target_user_id,
-        username: fb.target_username, tg_profile: tgProfile,
-        reason: fb.feedback_text, ai_summary: aiSummary, added_by: adminUserId, feedback_ids: [feedbackId]
-      }], { onConflict: "channel_id,user_id" });
+        username: fb.target_username, reason: "🤖 Automatisch gesperrt: Score ist auf -50 gefallen.", added_by: adminUserId
+      }], { onConflict: "channel_id,user_id" }).catch(()=>{});
     }
-    return { approved: true, aiSummary };
+
+    return { approved: true };
   },
 
   async rejectFeedback(feedbackId, adminUserId) {
@@ -126,28 +172,17 @@ const safelistService = {
   },
 
   async sendSafelistMenu(token, chatId, msgId) {
-    const { data } = await supabase.from("user_feedbacks")
-      .select("target_username, target_user_id")
-      .eq("channel_id", String(chatId))
-      .eq("feedback_type", "positive")
-      .eq("status", "approved");
-
+    const { data } = await supabase.from("user_feedbacks").select("target_username, target_user_id").eq("channel_id", String(chatId)).eq("feedback_type", "positive").eq("status", "approved");
     const uniqueUsers = [];
     const seen = new Set();
     for (const row of (data || [])) {
       const id = row.target_username || row.target_user_id;
-      if (id && !seen.has(id)) {
-        seen.add(id);
-        uniqueUsers.push({ username: row.target_username, id: row.target_user_id });
-      }
+      if (id && !seen.has(id)) { seen.add(id); uniqueUsers.push({ username: row.target_username, id: row.target_user_id }); }
     }
-
     let text = `✅ <b>Safelist (${uniqueUsers.length})</b>\n\n`;
     const keyboard = { inline_keyboard: [] };
-
-    if (uniqueUsers.length === 0) {
-      text += "Die Safelist ist aktuell leer.";
-    } else {
+    if (uniqueUsers.length === 0) text += "Die Safelist ist aktuell leer.";
+    else {
       uniqueUsers.forEach((u, i) => {
         const display = u.username ? `@${u.username}` : String(u.id);
         const cbData = u.username ? u.username : String(u.id);
@@ -155,42 +190,23 @@ const safelistService = {
         keyboard.inline_keyboard.push([{ text: `🗑 ${display}`, callback_data: `safelist_del_${cbData}` }]);
       });
     }
-
     keyboard.inline_keyboard.push([{ text: "◀️ Zurück", callback_data: "admin_menu" }]);
-
     const base = `https://api.telegram.org/bot${token}`;
-    await axios.post(`${base}/editMessageText`, {
-      chat_id: chatId,
-      message_id: msgId,
-      text: text,
-      parse_mode: "HTML",
-      reply_markup: keyboard
-    }).catch(() => { });
+    await axios.post(`${base}/editMessageText`, { chat_id: chatId, message_id: msgId, text: text, parse_mode: "HTML", reply_markup: keyboard }).catch(() => { });
   },
 
   async removeFromSafelist(channelId, target) {
     try {
       const cleanTarget = target.replace('@', '');
-      let q = supabase.from("user_feedbacks")
-        .delete()
-        .eq("channel_id", String(channelId))
-        .eq("feedback_type", "positive");
-
-      if (/^\d+$/.test(cleanTarget)) {
-        q = q.eq("target_user_id", cleanTarget);
-      } else {
-        q = q.ilike("target_username", cleanTarget);
-      }
+      let q = supabase.from("user_feedbacks").delete().eq("channel_id", String(channelId)).eq("feedback_type", "positive");
+      if (/^\d+$/.test(cleanTarget)) q = q.eq("target_user_id", cleanTarget);
+      else q = q.ilike("target_username", cleanTarget);
       await q;
-    } catch (e) {
-      logger.warn("[Safelist] Fehler beim Löschen:", e.message);
-    }
+    } catch (e) { logger.warn("[Safelist] Fehler beim Löschen:", e.message); }
   },
 
   async getPendingReviews(channelId) {
-    const { data } = await supabase.from("user_feedbacks")
-      .select("*").eq("channel_id", String(channelId)).eq("status", "pending")
-      .order("created_at", { ascending: false }).limit(20);
+    const { data } = await supabase.from("user_feedbacks").select("*").eq("channel_id", String(channelId)).eq("status", "pending").order("created_at", { ascending: false }).limit(20);
     return data || [];
   },
 
@@ -213,31 +229,20 @@ const safelistService = {
   async saveUserMessage(channelId, userId, content, msgId) {
     if (!content?.trim()) return;
     try {
-      await supabase.from("channel_chat_history").insert([{
-        channel_id: String(channelId), user_id: userId,
-        role: "user", content: content.substring(0, 1000), msg_id: msgId || null
-      }]);
+      await supabase.from("channel_chat_history").insert([{ channel_id: String(channelId), user_id: userId, role: "user", content: content.substring(0, 1000), msg_id: msgId || null }]);
       await this._pruneHistory(channelId, userId);
     } catch (_) { }
   },
 
   async saveAssistantMessage(channelId, userId, content, msgId) {
     if (!content?.trim()) return;
-    try {
-      await supabase.from("channel_chat_history").insert([{
-        channel_id: String(channelId), user_id: userId,
-        role: "assistant", content: content.substring(0, 2000), msg_id: msgId || null
-      }]);
-    } catch (_) { }
+    try { await supabase.from("channel_chat_history").insert([{ channel_id: String(channelId), user_id: userId, role: "assistant", content: content.substring(0, 2000), msg_id: msgId || null }]); } catch (_) { }
   },
 
   async getConversationHistory(channelId, userId, maxPairs) {
     maxPairs = maxPairs || 5;
     try {
-      const { data } = await supabase.from("channel_chat_history")
-        .select("role, content")
-        .eq("channel_id", String(channelId)).eq("user_id", userId)
-        .order("created_at", { ascending: false }).limit(maxPairs * 2);
+      const { data } = await supabase.from("channel_chat_history").select("role, content").eq("channel_id", String(channelId)).eq("user_id", userId).order("created_at", { ascending: false }).limit(maxPairs * 2);
       return (data || []).reverse().map(function (m) { return { role: m.role, content: m.content }; });
     } catch (_) { return []; }
   },
@@ -245,26 +250,19 @@ const safelistService = {
   async isBotMessage(channelId, msgId) {
     if (!msgId) return false;
     try {
-      const { data } = await supabase.from("channel_chat_history")
-        .select("id").eq("channel_id", String(channelId)).eq("msg_id", msgId).eq("role", "assistant").maybeSingle();
+      const { data } = await supabase.from("channel_chat_history").select("id").eq("channel_id", String(channelId)).eq("msg_id", msgId).eq("role", "assistant").maybeSingle();
       return !!data;
     } catch (_) { return false; }
   },
 
   async _pruneHistory(channelId, userId) {
     try {
-      const { data: all } = await supabase.from("channel_chat_history")
-        .select("id").eq("channel_id", String(channelId)).eq("user_id", userId)
-        .order("created_at", { ascending: false });
-      if (all?.length > 20) {
-        await supabase.from("channel_chat_history").delete().in("id", all.slice(20).map(function (r) { return r.id; }));
-      }
+      const { data: all } = await supabase.from("channel_chat_history").select("id").eq("channel_id", String(channelId)).eq("user_id", userId).order("created_at", { ascending: false });
+      if (all?.length > 20) { await supabase.from("channel_chat_history").delete().in("id", all.slice(20).map(function (r) { return r.id; })); }
     } catch (_) { }
   },
 
-  async saveContextMsg(channelId, userId, username, message) {
-    await this.saveUserMessage(channelId, userId, message, null);
-  },
+  async saveContextMsg(channelId, userId, username, message) { await this.saveUserMessage(channelId, userId, message, null); },
 
   async getContextMsgs(channelId, userId) {
     const hist = await this.getConversationHistory(channelId, userId, 3);

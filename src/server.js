@@ -33,6 +33,7 @@ const server = app.listen(port, () => {
   logger.info(`Server läuft auf Port ${port}`);
   setTimeout(() => {
     autoRegisterWebhook();
+    setAutoCommands();
     startKeepAlive();
     
     try {
@@ -95,6 +96,36 @@ async function autoRegisterWebhook() {
     } else {
       logger.warn(`[Webhook] Auto-Registrierung fehlgeschlagen: ${result.description}`);
     }
+  } catch (err) {
+    logger.warn(err.message);
+  }
+}
+
+async function setAutoCommands() {
+  try {
+    const axios = require('axios');
+    const supabase = require('./config/supabase');
+    let token = process.env.BOT_TOKEN;
+    
+    if (!token) {
+      const { data } = await supabase.from('settings').select('smalltalk_bot_token').single();
+      token = data?.smalltalk_bot_token;
+    }
+    
+    if (!token) return;
+
+    await axios.post(`https://api.telegram.org/bot${token}/setMyCommands`, {
+      commands: [
+        { command: "check", description: "Feedback eines Users prüfen (/check @user)" },
+        { command: "scamliste", description: "Scamliste anzeigen oder Scammer melden" },
+        { command: "feedbacks", description: "Zeigt das Ranking der Top-Verkäufer" },
+        { command: "safeliste", description: "Zeigt die verifizierten Mitglieder" },
+        { command: "userinfo", description: "Analysiert einen User (5x/Tag kostenlos)" },
+        { command: "ai", description: "KI-Assistent befragen (/ai Frage)" },
+        { command: "help", description: "Zeigt alle verfügbaren Befehle" }
+      ]
+    });
+    logger.info('[Telegram] Autocomplete Befehle registriert');
   } catch (err) {
     logger.warn(err.message);
   }

@@ -1,9 +1,12 @@
 const supabase = require("../../config/supabase");
 const logger = require("../../utils/logger");
+const { tgApi } = require("./tgAdminHelper");
 const safelistService = require("./safelistService");
-const { tgAdminHelper } = require("./tgAdminHelper");
 const settingsHandler = require("./settingsHandler");
-const packageService = require("../packageService");
+const inputWizardHandler = require("./inputWizardHandler");
+const userInfoService = require("./userInfoService");
+const blacklistService = require("./blacklistService");
+const { detectLang, t } = require("../i18n");
 
 const pendingInputs = global.pendingInputs = global.pendingInputs || {};
 
@@ -21,475 +24,517 @@ async function isGroupAdmin(tg, chatId, userId) {
   } catch { return false; }
 }
 
-async function handle(tg, supabase_db, q, token, settings) {
-  const qChatId = String(q.message?.chat?.id || "");
-  const qUserId = q.from?.id;
-  const data = q.data || "";
-
-  // Cleverer Wrapper: Antwortet auf den Button-Klick, aber blockiert uns nicht die Alerts!
-  let answered = false;
-  const answerCb = async (opts = {}) => {
-    if (answered) return;
-    answered = true;
-    return tg.call("answerCallbackQuery", { callback_query_id: q.id, ...opts }).catch(() => {});
-  };
-
-  if (data === "cfg_noop") {
-    return answerCb();
-  }
-
-  if (data.startsWith("uinfo_names_")) {
-    const targetId = data.split("_")[2];
-    const { data: history } = await supabase_db.from("user_name_history").select("*").eq("user_id", targetId).order("detected_at", { ascending: false }).limit(10);
-    if (!history?.length) {
-      return answerCb({ text: "❌ Keine Namenshistorie gefunden.", show_alert: true });
-    }
-    await answerCb();
-    const list = history.map(h => `• ${new Date(h.detected_at).toLocaleDateString("de-DE")}: ${h.first_name||""} ${h.last_name||""} ${h.username?"(@"+h.username+")":""}`).join("\n");
-    await tg.call("sendMessage", { chat_id: qChatId, text: `📜 <b>Namenshistorie für <code>${targetId}</code></b>\n\n${list}`, parse_mode: "HTML" });
-    return;
-  }
-
-  if (data.startsWith("settings_here_") || data.startsWith("settings_private_")) {
-    const parts = data.split("_");
-    const sendPriv = data.startsWith("settings_private_");
-    const targetChannelId = parts[2];
-    const ownerId = parts[3] ? parseInt(parts[3]) : null;
-
-    if (sendPriv && ownerId && qUserId !== ownerId) return answerCb({ text: "❌ Nur für den Befehlsausführer.", show_alert: true });
-    if (!await isGroupAdmin(tg, targetChannelId, qUserId)) return answerCb({ text: "❌ Keine Berechtigung.", show_alert: true });
-
-    const ch = await getChannel(targetChannelId);
-    if (ch && ch.is_active === false) {
-      return answerCb({ text: "⚠️ Dein Channel/Gruppe wurde deaktiviert, melde dich bei @autoacts", show_alert: true });
-    }
-
-    await answerCb();
-    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
-
-    const sendTarget = sendPriv ? String(qUserId) : targetChannelId;
-    await settingsHandler.sendSettingsMenu(tg, sendTarget, targetChannelId, ch, null);
-    return;
-  }
-
-  if (data.startsWith("fb_confirm_")) {
-    // Sicheres Parsen von hinten, damit Usernames mit "_" (z.B. @bester_seller_1) nicht den Code sprengen
-    const parts = data.split("_");
-    const chanId3 = parts.pop();
-    const submitterId = parts.pop();
-    const fbType = parts[2];
-    const targetUname = parts.slice(3).join("_");
-
-    // 🔒 TÜRSTEHER #1: Nur der Verfasser darf hier drücken!
-    if (String(qUserId) !== String(submitterId)) {
-      return answerCb({ text: "❌ Nur der Verfasser darf das auswählen.", show_alert: true });
-    }
-
-    // Wenn der Verfasser "Keins" wählt -> Sofortiges, spurloses Löschen
-    if (fbType === "no") {
-      await answerCb();
-      await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
-      return;
-    }
-
-    // 🔒 TÜRSTEHER #2: Ist der Kanal überhaupt noch zugelassen?
-    const ch = await getChannel(chanId3);
-    if (!ch || !ch.is_approved || ch.is_active === false) {
-      await answerCb({ text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
-      await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
-      return;
-    }
-
-    await answerCb();
-    await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
-
-    const feedbackType = fbType === "pos" ? "positive" : "negative";
-    const origText = q.message?.reply_to_message?.text?.substring(0, 300) || "";
-    let fbId = null;
-
-    try {
-      const fbResult = await safelistService.submitFeedback({
-        channelId: chanId3, submittedBy: submitterId,
-        submittedByUsername: q.from?.username || null,
-        targetUsername: targetUname, feedbackType, feedbackText: origText
-      });
-      fbId = fbResult?.id;
-    } catch (_) {}
-
-    const proofKb = [[
-      { text: "📎 Ja, Proofs senden", callback_data: `fb_want_proof_${fbId}_${submitterId}_${chanId3}` },
-      { text: "✌️ Nein, reicht mir", callback_data: `fb_no_proof_${fbId}_${submitterId}_${chanId3}` }
-    ]];
-    const proofMsg = await tg.call("sendMessage", {
-      chat_id: q.message.chat.id,
-      text: feedbackType === "positive"
-        ? `✅ <b>Positives Feedback</b> für @${targetUname} wurde gespeichert!\n\nMöchtest du Beweise/Screenshots als Proof beifügen?`
-        : `⚠️ <b>Negatives Feedback</b> für @${targetUname} wurde gespeichert.\n\nNegative Feedbacks ohne Proof können oft nicht berücksichtigt werden. Möchtest du Beweise beifügen?`,
-      parse_mode: "HTML",
-      reply_markup: { inline_keyboard: proofKb }
-    }).catch(() => null);
-
-    if (proofMsg?.message_id) {
-      void safelistService.trackBotMessage(q.message.chat.id, proofMsg.message_id, "temp", 5*60*1000);
-    }
-    return;
-  }
-
-  if (data.startsWith("sched_opt_")) {
-    const parts2 = data.split("_");
-    const subOpt = parts2[2];
-    const chanId2 = parts2[3];
-    const key = String(qUserId);
-    if (pendingInputs[key]) {
-      if (subOpt === "pin") pendingInputs[key].pinAfterSend = !pendingInputs[key].pinAfterSend;
-      if (subOpt === "delprev") pendingInputs[key].deletePrevious = !pendingInputs[key].deletePrevious;
-    }
-    await answerCb({ text: subOpt === "pin" ? "📌 Anpinnen geändert" : "🔄 Löschen geändert" });
-    
-    const p2 = pendingInputs[key] || {};
-    const pinOpt2 = "📌 Anpinnen: " + (p2.pinAfterSend ? "✅" : "❌");
-    const delPrevOpt2 = "🔄 Vorherige löschen: " + (p2.deletePrevious ? "✅" : "❌");
-    await tg.call("editMessageReplyMarkup", {
-      chat_id: String(qUserId), message_id: q.message?.message_id,
-      reply_markup: { inline_keyboard: [
-        [{ text: pinOpt2, callback_data: "sched_opt_pin_" + chanId2 }, { text: delPrevOpt2, callback_data: "sched_opt_delprev_" + chanId2 }],
-        [{ text: "✅ Nachricht jetzt einplanen", callback_data: "sched_save_final_" + chanId2 }],
-        [{ text: "❌ Abbrechen", callback_data: `cfg_back_${chanId2}` }]
-      ]}
-    }).catch(() => {});
-    return;
-  }
-
-  if (data.startsWith("sched_save_final_")) {
-    await answerCb();
-    const chanId2 = data.split("_")[3];
-    const wizard = pendingInputs[String(qUserId)];
-    
-    if (!wizard || !wizard.action.startsWith("sched_wizard")) return;
-    delete pendingInputs[String(qUserId)];
-
-    const isRepeat = !!wizard.intervalMinutes;
-
-    try {
-      await supabase_db.from("scheduled_messages").insert([{
-        channel_id: chanId2, message: wizard.msgText || "", photo_file_id: wizard.fileId || null,
-        cron_expr: null, interval_minutes: wizard.intervalMinutes || null, end_at: wizard.endAt || null, 
-        next_run_at: wizard.nextRunAt || new Date().toISOString(), repeat: isRepeat,
-        is_active: true, pin_after_send: wizard.pinAfterSend || false, delete_previous: wizard.deletePrevious || false
-      }]);
-      
-      const dt = wizard.nextRunAt ? new Date(wizard.nextRunAt).toLocaleString("de-DE") : "sofort";
-      let repeatLabel = "einmalig";
-      if (wizard.intervalMinutes) {
-        repeatLabel = wizard.intervalMinutes >= 60 ? `alle ${wizard.intervalMinutes/60}h` : `alle ${wizard.intervalMinutes}m`;
-      }
-      
-      await tg.call("editMessageText", {
-        chat_id: String(qUserId),
-        message_id: q.message?.message_id,
-        text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`,
-        parse_mode: "HTML",
-        reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück zu Wiederholungen", callback_data: `cfg_repeat_${chanId2}` }]] }
-      }).catch(async () => {
-        await tg.call("sendMessage", { chat_id: String(qUserId), text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück zu Wiederholungen", callback_data: `cfg_repeat_${chanId2}` }]] } });
-      });
-    } catch (e2) {
-      await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Fehler beim Speichern: " + e2.message });
-    }
-    return;
-  }
-
-  if (data.startsWith("refill_chan_")) {
-    await answerCb();
-    const refChanId = data.split("_")[2];
-    const pend = pendingInputs[String(qUserId)] || {};
-    let showRefills = pend.refills || [];
-    
-    if (!showRefills.length) {
-      const { data: r } = await supabase_db.from("channel_refills").select("*").eq("is_active", true).order("sort_order");
-      showRefills = r || [];
-    }
-    
-    const { data: chStat } = await (async () => { try { return await supabase_db.from("bot_channels").select("token_used, token_limit, credits_expire_at, title").eq("id", refChanId).maybeSingle(); } catch { return { data: null }; } })();
-    const used = chStat?.token_used || 0;
-    const lim = chStat?.token_limit || 0;
-    const exp = chStat?.credits_expire_at ? new Date(chStat.credits_expire_at).toLocaleDateString("de-DE") : "–";
-    
-    const kb = showRefills.map(r => [{
-      text: `🔋 ${r.name} — ${r.credits.toLocaleString()} Credits · ${parseFloat(r.price_eur).toFixed(2)} €`,
-      callback_data: "refill_opt_" + r.id + "_" + refChanId
-    }]);
-    kb.push([{ text: "❌ Abbrechen", callback_data: "buy_cancel" }]);
-    
-    await tg.call("editMessageText", {
-      chat_id: String(qUserId), message_id: q.message?.message_id,
-      text: `🔋 <b>Credits nachladen für "${chStat?.title||refChanId}"</b>\n\nVerbraucht: ${used.toLocaleString()} / ${lim.toLocaleString()} Credits\nGültig bis: ${exp}\n\nℹ️ Refills verlängern NICHT die Laufzeit.\n💎 Ungenutzte Refills laufen NIE ab und dienen als Notfallreserve.`,
-      parse_mode: "HTML", reply_markup: { inline_keyboard: kb }
-    }).catch(async () => {
-      await tg.call("sendMessage", { chat_id: String(qUserId), text: `🔋 Refill-Optionen für "${chStat?.title||refChanId}":`, parse_mode: "HTML", reply_markup: { inline_keyboard: kb } });
-    });
-    return;
-  }
-
-  if (data.startsWith("refill_opt_")) {
-    await answerCb();
-    const roMatch = data.match(/^refill_opt_(\d+)_(-?\d+)$/);
-    if (!roMatch) return;
-    const refillId = parseInt(roMatch[1]);
-    const roChanId = roMatch[2];
-    delete pendingInputs[String(qUserId)];
-    
-    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
-    const { data: refill } = await (async () => { try { return await supabase_db.from("channel_refills").select("*").eq("id", refillId).single(); } catch { return { data: null }; } })();
-    if (!refill) { await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Refill nicht gefunden." }); return; }
-    
-    await tg.call("sendMessage", { chat_id: String(qUserId), text: "⏳ Erstelle Checkout…" });
-    try {
-      const result = await packageService.generateRefillUrl(refill, roChanId);
-      if (result.checkoutUrl) {
-        await tg.call("sendMessage", { chat_id: String(qUserId),
-          text: `🔋 <b>${refill.name}</b>\n\n+${refill.credits.toLocaleString()} Credits\n💰 ${parseFloat(refill.price_eur).toFixed(2)} €\n\nCredits werden sofort nach Zahlung gutgeschrieben.`,
-          parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "💳 Jetzt nachladen", url: result.checkoutUrl }]] }
-        });
-      }
-    } catch (e2) { await tg.call("sendMessage", { chat_id: String(qUserId), text: `❌ Refill fehlgeschlagen:\n<i>${e2.message}</i>`, parse_mode: "HTML" }); }
-    return;
-  }
-
-  if (data.startsWith("buy_chan_")) {
-    await answerCb();
-    const buyChanId = data.split("_")[2];
-    const pend = pendingInputs[String(qUserId)] || {};
-    let pkgs = pend.packages;
-    if (!pkgs?.length) {
-      const { data: pkgsFresh } = await supabase_db.from("channel_packages").select("*").eq("is_active", true).order("sort_order");
-      pkgs = pkgsFresh;
-      pendingInputs[String(qUserId)] = { action: "buy_select_pkg", channelId: buyChanId, packages: pkgsFresh };
-    } else {
-      pendingInputs[String(qUserId)] = { ...pend, action: "buy_select_pkg", channelId: buyChanId };
-    }
-    const activePkgs = (pkgs || []).filter(p => p.is_active !== false);
-    const pkgKb = activePkgs.map(p => [{ text: `📦 ${p.name} — ${p.credits.toLocaleString()} Credits · ${parseFloat(p.price_eur).toFixed(2)} €`, callback_data: "buy_pkg_" + p.id + "_" + buyChanId }]);
-    pkgKb.push([{ text: "❌ Abbrechen", callback_data: "buy_cancel" }]);
-    
-    const chTitle = (await supabase_db.from("bot_channels").select("title").eq("id", buyChanId).maybeSingle()).data?.title || buyChanId;
-    await tg.call("editMessageText", { chat_id: String(qUserId), message_id: q.message?.message_id, text: `🛒 <b>Paket für "${chTitle}" wählen:</b>\n\nAlle Pakete laufen 30 Tage.`, parse_mode: "HTML", reply_markup: { inline_keyboard: pkgKb } }).catch(async () => {
-      await tg.call("sendMessage", { chat_id: String(qUserId), text: `🛒 <b>Paket für "${chTitle}" wählen:</b>\n\nAlle Pakete laufen 30 Tage.`, parse_mode: "HTML", reply_markup: { inline_keyboard: pkgKb } });
-    });
-    return;
-  }
-
-  if (data.startsWith("buy_pkg_")) {
-    await answerCb();
-    const parts4 = data.match(/^buy_pkg_(\d+)_(-?\d+)$/);
-    if (!parts4) return;
-    const pkgId = parseInt(parts4[1]);
-    const chanId4 = parts4[2];
-    delete pendingInputs[String(qUserId)];
-
-    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
-    const { data: pkg } = await (async () => { try { return await supabase_db.from("channel_packages").select("*").eq("id", pkgId).single(); } catch { return { data: null }; } })();
-    if (!pkg) { await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Paket nicht gefunden." }); return; }
-
-    await tg.call("sendMessage", { chat_id: String(qUserId), text: "⏳ Erstelle Checkout…" });
-    try {
-      const result = await packageService.generateCheckoutUrl(pkg, chanId4);
-      if (result.checkoutUrl) {
-        await tg.call("sendMessage", { chat_id: String(qUserId),
-          text: `✅ <b>${pkg.name} — ${pkg.credits.toLocaleString()} Credits</b>\n\n💰 Preis: ${parseFloat(pkg.price_eur).toFixed(2)} €\n📅 Laufzeit: ${pkg.duration_days || 30} Tage <i>(ab Kaufdatum)</i>\nℹ️ Während dein Paket läuft, kannst du Refills als Notfall-Vorrat kaufen.\n\nZum Bezahlen tippst du auf den Button:`,
-          parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "💳 Jetzt kaufen", url: result.checkoutUrl }]] }
-        });
-      }
-    } catch (e2) { await tg.call("sendMessage", { chat_id: String(qUserId), text: `❌ Checkout fehlgeschlagen:\n<i>${e2.message}</i>`, parse_mode: "HTML" }); }
-    return;
-  }
-
-  if (data === "buy_cancel") {
-    await answerCb();
-    await tg.call("deleteMessage", { chat_id: String(qUserId), message_id: q.message?.message_id }).catch(() => {});
-    delete pendingInputs[String(qUserId)];
-    return;
-  }
-
-  if (data.startsWith("sel_channel_")) {
-    const selChanId = data.split("_")[2];
-    const ch = await getChannel(selChanId);
-    if (ch && ch.is_active === false) {
-      return answerCb({ text: "⚠️ Dein Channel/Gruppe wurde deaktiviert, melde dich bei @autoacts", show_alert: true });
-    }
-    await answerCb();
-    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
-    await settingsHandler.sendSettingsMenu(tg, String(qUserId), selChanId, ch, null);
-    return;
-  }
-
-  if (data.startsWith("cfg_")) {
-    const parts = data.split("_");
-    const channelId = parts[parts.length - 1];
-    const ch = await getChannel(channelId);
-    if (ch && ch.is_active === false) {
-      return answerCb({ text: "⚠️ Dein Channel/Gruppe wurde deaktiviert, melde dich bei @autoacts", show_alert: true });
-    }
-    await answerCb();
-    await settingsHandler.handleSettingsCallback(tg, supabase_db, data, q, qUserId);
-    return;
-  }
-
-  if (data.startsWith("fb_want_proof_")) {
-    const parts = data.split("_");
-    const chanId4 = parts.pop();
-    const submitterId = parts.pop();
-    const fbId2 = parts.pop();
-
-    if (String(qUserId) !== String(submitterId)) {
-      return answerCb({ text: "❌ Nicht für dich.", show_alert: true });
-    }
-    
-    const ch4 = await getChannel(chanId4);
-    if (!ch4 || !ch4.is_approved || ch4.is_active === false) {
-      await answerCb({ text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
-      await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
-      return;
-    }
-
-    await answerCb();
-    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
-    
-    try {
-      await supabase_db.from("proof_sessions").insert([{ feedback_id: parseInt(fbId2), user_id: parseInt(qUserId), channel_id: chanId4, status: "collecting" }]);
-    } catch (_) {}
-    
-    pendingInputs[String(qUserId)] = { action: "collecting_proofs", feedbackId: fbId2, channelId: chanId4, proofCount: 0 };
-    const botName = settings?.bot_name || "AdminHelper";
-    
-    await tg.call("sendMessage", { chat_id: qChatId, text: `📎 Bitte sende Proofs dem Bot privat.`, parse_mode: "HTML" });
-    await tg.call("sendMessage", { chat_id: String(qUserId),
-      text: `📎 <b>Proofs einreichen</b>\n\nSchreibe dem Bot <b>direkt privat</b> und sende deine Beweise (Fotos, Videos, Screenshots, Text).\n\nWenn du fertig bist: /done\nAbbrechen: /cancel`,
-      parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "💬 Dem Bot schreiben", url: `https://t.me/${botName}?start=proofs_${fbId2}` }]] }
-    }).catch(() => {});
-    return;
-  }
-
-  if (data.startsWith("fb_no_proof_")) {
-    const parts = data.split("_");
-    const chanId5 = parts.pop();
-    const submitterId = parts.pop();
-    const fbId3 = parts.pop();
-
-    if (String(qUserId) !== String(submitterId)) {
-      return answerCb({ text: "❌ Nicht für dich.", show_alert: true });
-    }
-    
-    const ch5 = await getChannel(chanId5);
-    if (!ch5 || !ch5.is_approved || ch5.is_active === false) {
-      await answerCb({ text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
-      await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
-      return;
-    }
-
-    await answerCb();
-    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
-    
-    try {
-      const { data: fbRow } = await supabase_db.from("user_feedbacks").select("feedback_type, target_user_id, target_username, feedback_text").eq("id", fbId3).maybeSingle();
-      if (fbRow) {
-        const isPos = fbRow.feedback_type === "positive";
-        let autoApprove = false;
-        
-        if (isPos) {
-          autoApprove = await safelistService.hasHighReputation(chanId5, fbRow.target_username, fbRow.target_user_id);
-        }
-
-        if (autoApprove) {
-          await safelistService.approveFeedback(parseInt(fbId3), qUserId, ch5);
-          if (fbRow.target_user_id) {
-            await supabase_db.rpc("update_user_reputation", { p_channel_id: chanId5, p_user_id: fbRow.target_user_id, p_username: fbRow.target_username, p_delta: 1 }).catch(() => {});
-          }
-          const sent = await tg.call("sendMessage", { chat_id: q.message.chat.id, text: "✅ Positives Feedback wurde automatisch bestätigt (Trusted User)!", parse_mode: "HTML" }).catch(() => null);
-          if (sent?.message_id) void safelistService.trackBotMessage(q.message.chat.id, sent.message_id, "temp", 15000);
-        } else {
-          const { data: chAdmin } = await supabase_db.from("bot_channels").select("added_by_user_id, title").eq("id", String(chanId5)).maybeSingle();
-          if (chAdmin?.added_by_user_id) {
-            const emoji = isPos ? "✅" : "⚠️";
-            await tg.call("sendMessage", { chat_id: String(chAdmin.added_by_user_id),
-              text: `📋 <b>Neues Feedback (Ohne Proofs)</b>\n\nChannel: ${chAdmin.title || chanId5}\nZiel: @${fbRow.target_username}\nVon: @${q.from?.username || qUserId}\nTyp: ${emoji} ${isPos ? "Positiv" : "Negativ"}\n\n<i>${(fbRow.feedback_text||"").substring(0,150)}</i>`,
-              parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "✅ Bestätigen", callback_data: `fb_approve_${fbId3}` }, { text: "❌ Ablehnen", callback_data: `fb_reject_${fbId3}` }]]}
-            }).catch(() => {});
-          }
-          const sent = await tg.call("sendMessage", { chat_id: q.message.chat.id, text: "✅ Feedback gespeichert. Es wird nun vom Admin geprüft.", parse_mode: "HTML" }).catch(() => null);
-          if (sent?.message_id) void safelistService.trackBotMessage(q.message.chat.id, sent.message_id, "temp", 15000);
-        }
-      }
-    } catch (_) {}
-    return;
-  }
-
-  if (data.startsWith("fb_manual_pos_") || data.startsWith("fb_manual_neg_")) {
-    const parts = data.split("_");
-    const chanId6 = parts.pop();
-    const targetId = parts.pop();
-    const fbType = parts[2];
-    const targetU = parts.slice(3).join("_");
-    
-    const ch6 = await getChannel(chanId6);
-    if (!ch6 || !ch6.is_approved || ch6.is_active === false) {
-      await answerCb({ text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
-      await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
-      return;
-    }
-
-    await answerCb();
-    try {
-      const fbR = await safelistService.submitFeedback({
-        channelId: chanId6, submittedBy: qUserId, submittedByUsername: q.from?.username || null,
-        targetUsername: targetU, targetUserId: parseInt(targetId) || null, feedbackType: fbType, feedbackText: "Manuell eingetragen (Admin)"
-      });
-      if (fbR?.id) {
-        await safelistService.approveFeedback(fbR.id, qUserId, ch6);
-        const delta6 = fbType === "positive" ? 1 : -10;
-        await supabase_db.rpc("update_user_reputation", { p_channel_id: chanId6, p_user_id: parseInt(targetId) || 0, p_username: targetU, p_delta: delta6 }).catch(() => {});
-        if (fbType === "negative") {
-          await supabase_db.from("scam_entries").upsert([{ channel_id: chanId6, user_id: parseInt(targetId) || null, username: targetU, reason: "Manuell vom Admin eingetragen", added_by: qUserId }], { onConflict: "channel_id,user_id" }).catch(() => {});
-        }
-      }
-    } catch (_) {}
-    await tg.call("editMessageText", { chat_id: String(qUserId), message_id: q.message.message_id, text: `${fbType === "positive" ? "✅ Positives" : "⚠️ Negatives"} Feedback für @${targetU} manuell eingetragen.`, parse_mode: "HTML" }).catch(() => {});
-    return;
-  }
-
-  if (data.startsWith("fb_approve_") || data.startsWith("fb_reject_")) {
-    const feedbackId = data.split("_")[2];
-    
-    const { data: fbData } = await supabase_db.from("user_feedbacks").select("channel_id").eq("id", feedbackId).maybeSingle();
-    if (fbData) {
-      const chFb = await getChannel(fbData.channel_id);
-      if (!chFb || !chFb.is_approved || chFb.is_active === false) {
-        await answerCb({ text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
-        await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
-        return;
-      }
-    }
-
-    await answerCb();
-    const ch2 = {}; 
-    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
-    if (data.startsWith("fb_approve_")) {
-      await safelistService.approveFeedback(feedbackId, qUserId, ch2);
-      await tg.call("sendMessage", { chat_id: String(qUserId), text: "✅ Meldung bestätigt. User wurde aktualisiert." });
-    } else {
-      await safelistService.rejectFeedback(feedbackId, qUserId);
-      await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Meldung abgelehnt." });
-    }
-    return;
-  }
-
-  const chData = await getChannel(qChatId);
-  if (q.message?.chat?.type !== "private" && chData && chData.is_active === false) {
-    return answerCb({ text: "❌ Kanal ist deaktiviert.", show_alert: true });
-  }
+function _detectFeedback(text) {
+  if (!text || text.length < 5 || text.length > 500) return null;
+  const usernameMatch = text.match(/@([a-zA-Z0-9_]+)/);
+  if (!usernameMatch) return null;
   
-  await answerCb(); // Fallback, falls bis hierhin noch kein Answer kam
-  await tgAdminHelper.handleCallback(token, q, chData);
+  const username = usernameMatch[1];
+  const lower = text.toLowerCase();
+  
+  const posRegex = /\b(safe|seriös|serioes|vouch|vouched|vertrauenswürdig|empfehlung|empfehle|recommend|legit|trusted|zuverlässig|top|super|gut|bester|beste|bester mann|bestätigt|verifiziert|real|echt|alles gut|hat geliefert|hat geklappt|hat funktioniert|pünktlich|schnell|zuverlässig|ehrenmann|korrekt|10\/10|100%|einwandfrei|reibungslos|ohne probleme|zu empfehlen)\b/i;
+  const negRegex = /\b(scam|scammer|betrug|betrüger|fake|nicht safe|unsicher|achtung|warning|vorsicht|ripper|gerippt|rip|abgezockt|abzocke|schwindler|unzuverlässig|nie wieder|schlechte erfahrung|keine empfehlung|nicht empfehlen|nicht zu empfehlen|gestohlen|lügt|falsch|unecht|nicht kaufen|hände weg|haende weg|finger weg|blockiert)\b/i;
+  
+  const isPositive = posRegex.test(lower);
+  const isNegative = negRegex.test(lower);
+  
+  if (isPositive && !isNegative) return { username, type: "positive" };
+  if (isNegative && !isPositive) return { username, type: "negative" };
+  
+  return null;
 }
 
-module.exports = { handle };
+const commandHandler = {
+  async handleMessage(tg, supabase_db, msg, token, settings) {
+    const chat = msg.chat || {};
+    const from = msg.from || {};
+    const text = msg.text?.trim() || "";
+    const chatId = String(chat.id);
+
+    const ch = await getChannel(chatId);
+    
+    if (chat.type !== "private" && ch && ch.is_active === false) {
+       return; 
+    }
+
+    if (chat.type === "private") {
+      const hasPending = pendingInputs[String(from.id)];
+      if (hasPending) {
+        const handled = await inputWizardHandler.handle(tg, supabase_db, from.id, text, settings, msg);
+        if (handled) return;
+      }
+
+      if (/^\/safeliste?(?:\s+@?(.+))?$/i.test(text)) {
+        const slMatch = text.match(/^\/safeliste?\s+@?(.+)/i);
+        const slTarget = slMatch ? slMatch[1].trim() : null;
+        const { data: myChForSl } = await supabase_db.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
+        if (!myChForSl?.length) {
+          await tg.send(chatId, "❌ Du hast keine aktiven/freigeschalteten Channels.");
+          return;
+        }
+        if (slTarget) {
+          if (myChForSl.length === 1) {
+            pendingInputs[String(chatId)] = { action: "safelist_add_user", channelId: String(myChForSl[0].id) };
+            await inputWizardHandler.handle(tg, supabase_db, chatId, slTarget, settings, msg);
+          } else {
+            const kb = myChForSl.map(ch2 => [{ text: `📢 ${ch2.title||ch2.id}`, callback_data: `cfg_sl_adduser_${ch2.id}` }]);
+            await tg.send(chatId, `Für welchen Channel soll @${slTarget} zur Safelist?`);
+            await tg.call("sendMessage", { chat_id: chatId, text: "Channel auswählen:", reply_markup: { inline_keyboard: kb } });
+          }
+        } else {
+          await settingsHandler.handleSettingsCallback(tg, supabase_db, `cfg_sl_safeview_${myChForSl[0].id}`, { from: { id: chatId } }, chatId);
+        }
+        return;
+      }
+
+      if (/^\/scamliste?(?:\s+@?(.+))?$/i.test(text)) {
+        const scMatch = text.match(/^\/scamliste?\s+@?(.+)/i);
+        const scTarget = scMatch ? scMatch[1].trim() : null;
+        const { data: myChForSc } = await supabase_db.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
+        if (!myChForSc?.length) {
+          await tg.send(chatId, "❌ Du hast keine aktiven/freigeschalteten Channels.");
+          return;
+        }
+        if (scTarget) {
+          if (myChForSc.length === 1) {
+            pendingInputs[String(chatId)] = { action: "scamlist_add_user", channelId: String(myChForSc[0].id) };
+            await inputWizardHandler.handle(tg, supabase_db, chatId, scTarget, settings, msg);
+          } else {
+            const kb2 = myChForSc.map(ch2 => [{ text: `📢 ${ch2.title||ch2.id}`, callback_data: `cfg_sl_addscam_${ch2.id}` }]);
+            await tg.send(chatId, `Für welchen Channel soll @${scTarget} zur Scamliste?`);
+            await tg.call("sendMessage", { chat_id: chatId, text: "Channel auswählen:", reply_markup: { inline_keyboard: kb2 } });
+          }
+        } else {
+          await settingsHandler.handleSettingsCallback(tg, supabase_db, `cfg_sl_scamview_${myChForSc[0].id}`, { from: { id: chatId } }, chatId);
+        }
+        return;
+      }
+
+      if (text === "/cancel") {
+        delete pendingInputs[String(from.id)];
+        await tg.send(chatId, "❌ Abgebrochen.");
+        return;
+      }
+
+      if (/^\/refill(@\w+)?/i.test(text) || text.toLowerCase() === "credits nachladen") {
+        const { data: myChans } = await supabase_db.from("bot_channels").select("id, title, type, token_used, token_limit, credits_expire_at").eq("added_by_user_id", String(from.id)).eq("is_active", true);
+        if (!myChans?.length) {
+          await tg.send(chatId, "❌ Kein aktiver registrierter Channel gefunden.");
+          return;
+        }
+        const chanKb = myChans.map(ch2 => {
+          const used = ch2.token_used || 0;
+          const lim = ch2.token_limit || 0;
+          const pct = lim ? Math.round(used/lim*100) : 0;
+          return [{ text: `${ch2.type==="channel"?"📢":"👥"} ${ch2.title||ch2.id} (${pct}% verbraucht)`, callback_data: "refill_chan_" + ch2.id }];
+        });
+        await tg.call("sendMessage", { chat_id: chatId, text: "🔋 <b>Credits nachladen</b>\n\nFür welchen Channel?", parse_mode: "HTML", reply_markup: { inline_keyboard: chanKb } });
+        return;
+      }
+
+      if (/^\/buy(@\w+)?/i.test(text) || text.toLowerCase() === "credits kaufen") {
+        const { data: myChans } = await supabase_db.from("bot_channels").select("id, title, type").eq("added_by_user_id", String(from.id)).eq("is_active", true);
+        if (!myChans?.length) {
+          await tg.send(chatId, "❌ Du hast noch keinen aktiven registrierten Channel.");
+          return;
+        }
+        const chanKb = myChans.map(ch2 => [{ text: (ch2.type==="channel"?"📢":"👥") + " " + (ch2.title||ch2.id), callback_data: "buy_chan_" + ch2.id }]);
+        await tg.call("sendMessage", { chat_id: chatId, text: "🛒 <b>Credit-Paket kaufen</b>\n\nFür welchen Channel?", parse_mode: "HTML", reply_markup: { inline_keyboard: chanKb } });
+        return;
+      }
+
+      if (/^\/(?:start|menu|settings|dashboard|help)(@\w+)?/i.test(text)) {
+        const { data: allMyChannels } = await supabase_db.from("bot_channels").select("id, title, type, is_approved, ai_enabled, bot_language, is_active").eq("added_by_user_id", String(from.id));
+        
+        if (!allMyChannels?.length) {
+          const userLang = detectLang(from);
+          await tg.send(chatId, t("welcome_intro", userLang).replace("{name}", from?.first_name ? " " + from.first_name : ""));
+          return;
+        }
+
+        const deactivatedChannels = allMyChannels.filter(c => c.is_active === false);
+        if (deactivatedChannels.length > 0 && allMyChannels.length === deactivatedChannels.length) {
+            await tg.send(chatId, "⚠️ <b>Dein Channel/Gruppe wurde deaktiviert.</b>\n\nBitte melde dich bei @autoacts für weitere Informationen oder eine erneute Freischaltung.", { parse_mode: "HTML" });
+            return;
+        }
+        
+        const activeChannels = allMyChannels.filter(c => c.is_active !== false);
+        
+        if (activeChannels.length === 1) {
+          const ch2 = await getChannel(String(activeChannels[0].id));
+          await settingsHandler.sendSettingsMenu(tg, chatId, String(activeChannels[0].id), ch2, null, from?.language_code?.substring(0,2));
+          return;
+        }
+        
+        if (activeChannels.length > 1) {
+            const keyboard = activeChannels.map(ch2 => [{ text: (ch2.type === "channel" ? "📢" : "👥") + " " + (ch2.title || ch2.id), callback_data: "sel_channel_" + ch2.id }]);
+            await tg.call("sendMessage", { chat_id: chatId, text: "⚙️ Wähle deinen Channel:", reply_markup: { inline_keyboard: keyboard } });
+            return;
+        }
+      }
+    }
+    
+    if (from?.id) {
+      await tgApi(token).call("getChatMember", { chat_id: chatId, user_id: from.id }).catch(() => {});
+    }
+
+    if (!text) return;
+
+    const adminCmds = ["/admin", "/menu", "/help"];
+    if (adminCmds.some(cmd => text.startsWith(cmd))) {
+      if (await isGroupAdmin(tg, chatId, from.id)) {
+        await tg.call("sendMessage", {
+          chat_id: chatId,
+          text: "⚙️ <b>Admin-Menü</b>\nWähle eine Funktion:",
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "🧹 Gelöschte Accounts entfernen", callback_data: "admin_clean" }],
+              [{ text: "📌 Nachricht pinnen", callback_data: "admin_pin_last" }],
+              [{ text: "📋 Mitglieder-Anzahl", callback_data: "admin_count" }],
+              [{ text: "🗑 Letzte Nachricht löschen", callback_data: "admin_del_last" }],
+              [{ text: "⏰ Geplante Nachrichten", callback_data: "admin_schedule" }],
+              [{ text: "🛡 Safelist verwalten", callback_data: "admin_safelist" }]
+            ]
+          },
+          reply_to_message_id: msg.message_id
+        });
+      } else {
+        await tg.send(chatId, "🔧 Hier wird gerade gearbeitet.");
+      }
+      return;
+    }
+
+    if (text === "/settings" || text.startsWith("/settings@")) {
+      if (!await isGroupAdmin(tg, chatId, from.id)) return;
+      await tg.call("sendMessage", {
+        chat_id: chatId,
+        text: "⚙️ Wo soll das Einstellungs-Menü geöffnet werden?",
+        reply_markup: { inline_keyboard: [[
+          { text: "💬 Hier im Chat", callback_data: `settings_here_${chatId}` },
+          { text: "🔒 Privat (nur für mich)", callback_data: `settings_private_${chatId}_${from.id}` }
+        ]]}
+      });
+      return;
+    }
+
+    if (text === "/clean" || text.startsWith("/clean@")) {
+      if (!await isGroupAdmin(tg, chatId, from.id)) return;
+      await tg.send(chatId, "🔍 Prüfe Mitgliederliste...");
+      
+      const { data: members } = await supabase_db.from("channel_members")
+        .select("user_id").eq("channel_id", chatId).eq("is_deleted", false).limit(200);
+        
+      let removed = 0, checked = 0;
+      if (members?.length) {
+        for (const m of members) {
+          try {
+            const cm = await tg.call("getChatMember", { chat_id: chatId, user_id: m.user_id });
+            checked++;
+            const isDeleted = !cm?.user?.first_name && !cm?.user?.username && cm?.status !== "left" && cm?.status !== "kicked";
+            if (isDeleted || cm?.user?.is_deleted) {
+              await tg.call("banChatMember", { chat_id: chatId, user_id: m.user_id, revoke_messages: false });
+              await tg.call("unbanChatMember", { chat_id: chatId, user_id: m.user_id, only_if_banned: true });
+              await supabase_db.from("channel_members").update({ is_deleted: true }).eq("channel_id", chatId).eq("user_id", m.user_id);
+              removed++;
+            }
+          } catch {}
+        }
+      }
+      await tg.send(chatId, `🧹 Fertig! ${checked} geprüft, ${removed} entfernt.`);
+      return;
+    }
+
+    if ((text === "/pin" || text.startsWith("/pin@")) && msg.reply_to_message) {
+      if (!await isGroupAdmin(tg, chatId, from.id)) return;
+      await tg.call("pinChatMessage", { chat_id: chatId, message_id: msg.reply_to_message.message_id, disable_notification: false });
+      await tg.send(chatId, "📌 Gepinnt!");
+      return;
+    }
+
+    if ((text === "/del" || text.startsWith("/del@")) && msg.reply_to_message) {
+      if (!await isGroupAdmin(tg, chatId, from.id)) return;
+      await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.reply_to_message.message_id }).catch(() => {});
+      await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+      return;
+    }
+
+    if (text && from?.id && !text.startsWith("/")) {
+      void safelistService.saveContextMsg(chatId, from.id, from.username, text);
+    }
+
+    if (text && from?.id && !text.startsWith("/") && (ch?.feedback_enabled || ch?.safelist_enabled) && !from.is_bot && ch?.is_approved) {
+      const fbDetect = _detectFeedback(text);
+      if (fbDetect) {
+        const confirmMsg = await tg.call("sendMessage", { chat_id: chatId,
+          text: `💬 Feedback erkannt für @${fbDetect.username}\n<i>${text.substring(0,100)}</i>\n\nEinordnung:`,
+          parse_mode: "HTML", reply_to_message_id: msg.message_id,
+          reply_markup: { inline_keyboard: [[
+            { text: "✅ Positiv", callback_data: `fb_confirm_pos_${fbDetect.username}_${from.id}_${chatId}` },
+            { text: "⚠️ Negativ", callback_data: `fb_confirm_neg_${fbDetect.username}_${from.id}_${chatId}` },
+            { text: "❌ Keins",   callback_data: `fb_confirm_no_${fbDetect.username}_${from.id}_${chatId}` }
+          ]]}
+        }).catch(() => null);
+        if (confirmMsg?.message_id) void safelistService.trackBotMessage(chatId, confirmMsg.message_id, "temp", 2*60*1000);
+      }
+    }
+
+    const safelistActive = ch?.safelist_enabled || false;
+
+    if (/^\/safeliste?$/i.test(text) && safelistActive && ch?.is_approved) {
+      const { data: sl2 } = await supabase_db.from("channel_safelist").select("username, user_id, score, created_at").eq("channel_id", chatId).order("created_at", { ascending: false }).limit(20);
+      let slText = "🛡 <b>Safelist</b>\n\n";
+      slText += sl2?.length ? sl2.map((e,i) => `${i+1}. ✅ @${e.username||e.user_id}` + (e.score ? ` (${e.score} Pkt)` : "")).join("\n") : "<i>Noch keine Einträge.</i>";
+      const slMsg = await tg.call("sendMessage", { chat_id: chatId, text: slText, parse_mode: "HTML", reply_to_message_id: msg.message_id }).catch(() => null);
+      if (slMsg?.message_id) void safelistService.trackBotMessage(chatId, slMsg.message_id, "temp", 5*60*1000);
+      return;
+    }
+
+    if (/^\/scamliste?$/i.test(text) && safelistActive && ch?.is_approved) {
+      const { data: sc2 } = await supabase_db.from("scam_entries").select("username, user_id, reason, created_at").eq("channel_id", chatId).order("created_at", { ascending: false }).limit(20);
+      let scText = "⛔ <b>Scamliste</b>\n\n";
+      scText += sc2?.length ? sc2.map((e,i) => `${i+1}. ⛔ @${e.username||e.user_id}` + (e.reason ? ` — <i>${e.reason.substring(0,60)}</i>` : "")).join("\n") : "<i>Noch keine Einträge.</i>";
+      const scMsg = await tg.call("sendMessage", { chat_id: chatId, text: scText, parse_mode: "HTML", reply_to_message_id: msg.message_id }).catch(() => null);
+      if (scMsg?.message_id) void safelistService.trackBotMessage(chatId, scMsg.message_id, "temp", 5*60*1000);
+      return;
+    }
+
+    if (/^\/feedbacks?$/i.test(text) && safelistActive && ch?.is_approved) {
+      const { data: top10 } = await supabase_db.rpc("get_top_sellers", { p_channel_id: chatId, p_limit: 10 }).catch(() => ({ data: null }));
+      const medals = ["🥇","🥈","🥉"];
+      let rankText = "🏆 <b>Top 10 Verkäufer</b>\n\n";
+      rankText += top10?.length ? top10.map((u,i) => `${medals[i]||`${i+1}.`} @${u.username||u.user_id} — <b>${u.score} Pkt</b> (✅ ${u.pos_count} | ⚠️ ${u.neg_count})`).join("\n") : "<i>Noch kein Ranking verfügbar.</i>";
+      const rkMsg = await tg.call("sendMessage", { chat_id: chatId, text: rankText, parse_mode: "HTML", reply_to_message_id: msg.message_id }).catch(() => null);
+      if (rkMsg?.message_id) void safelistService.trackBotMessage(chatId, rkMsg.message_id, "temp", 5*60*1000);
+      return;
+    }
+
+    const feedbackCmds = /^\/(?:check)\s+@?(\w+)/i;
+    const feedbackMatch = text.match(feedbackCmds);
+    if (feedbackMatch && safelistActive && ch?.is_approved && ch?.is_active !== false) {
+      const targetUsername = feedbackMatch[1];
+      
+      let score = 0, pos = 0, neg = 0;
+      const { data: rep } = await supabase_db.from("user_reputation").select("score, pos_count, neg_count").eq("channel_id", chatId).ilike("username", targetUsername).maybeSingle();
+      if (rep) { score = rep.score; pos = rep.pos_count; neg = rep.neg_count; }
+
+      const scamEntry = await safelistService.checkScamlist(chatId, targetUsername, null);
+      let replyText = `📊 <b>@${targetUsername}</b>\n`;
+      
+      if (scamEntry) {
+        replyText = `⛔ <b>ACHTUNG: @${targetUsername} steht auf der Scamliste!</b>\n\n`;
+        replyText += `⭐️ <b>Score:</b> ${score} Pkt (✅ ${pos} | ⚠️ ${neg})\n`;
+        replyText += `<i>Grund: ${scamEntry.reason ? scamEntry.reason.substring(0,150) : "Kein Grund angegeben."}</i>\n`;
+      } else {
+        replyText += `⭐️ <b>Score:</b> ${score} Pkt\n`;
+        replyText += `✅ ${pos} Positiv · ⚠️ ${neg} Negativ\n\n`;
+
+        if (ch?.ai_enabled) {
+          const aiSummary = await safelistService.generateAiSummary(chatId, targetUsername, null);
+          if (aiSummary) replyText += `🤖 <b>KI-Zusammenfassung:</b>\n${aiSummary}`;
+          else replyText += `<i>Noch nicht genug Text-Feedbacks für eine Zusammenfassung.</i>`;
+        } else {
+          replyText += `<i>KI-Zusammenfassung ist in diesem Channel nicht aktiviert.</i>`;
+        }
+      }
+
+      const sentMsg = await tg.send(chatId, replyText);
+      if (sentMsg?.message_id) void safelistService.trackBotMessage(chatId, sentMsg.message_id, "check_result", 5 * 60 * 1000);
+      await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+      return;
+    }
+
+    const safelistAdminMatch = text.match(/^\/safe?list[e]?\s+@?(\w+)\s*(.*)/i);
+    if (safelistAdminMatch && safelistActive && ch?.is_approved) {
+      if (!await isGroupAdmin(tg, chatId, from.id)) {
+        const sent = await tg.send(chatId, "🔒 Nur Channel-Admins können Mitglieder verifizieren.");
+        if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 10000);
+        return;
+      }
+      const [, username, feedback] = safelistAdminMatch;
+      const fb = await safelistService.submitFeedback({
+        channelId: chatId, submittedBy: from?.id, submittedByUsername: from?.username,
+        targetUsername: username, feedbackType: "positive",
+        feedbackText: feedback || "Vom Channel-Admin verifiziert"
+      });
+      if (fb?.id) {
+        const ch2 = await getChannel(chatId);
+        await safelistService.approveFeedback(fb.id, from.id, ch2);
+      }
+      const sent = await tg.send(chatId, `✅ @${username} wurde auf die Safelist gesetzt.`);
+      if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 15000);
+      return;
+    }
+
+    const scamMatch = text.match(/^\/scam?list[e]?\s+@?(\w+)\s*(.*)/i);
+    if (scamMatch && safelistActive && ch?.is_approved) {
+      const [, username, reason] = scamMatch;
+      const fb = await safelistService.submitFeedback({
+        channelId: chatId, submittedBy: from?.id, submittedByUsername: from?.username,
+        targetUsername: username, feedbackType: "negative",
+        feedbackText: reason || "Scam-Verdacht"
+      });
+      if (fb?.id) {
+        pendingInputs["scam_confirm_" + String(from?.id) + "_" + chatId] = {
+          action: "await_proof_confirm", feedbackId: fb.id,
+          targetUsername: username, channelId: chatId, reporterUsername: from?.username
+        };
+        const sent = await tg.send(chatId, `⚠️ Scam-Meldung gegen @${username} eingereicht.\n\nHast du Beweise (Screenshots, Videos, Texte)?\nAntworte mit <b>"Ich habe Proofs"</b> um Beweise privat einzureichen.\n\n<i>Ohne Beweise wird die Meldung möglicherweise abgelehnt.</i>`);
+        if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 60000);
+      }
+      return;
+    }
+
+    if (/ich habe proofs?/i.test(text) && from?.id && safelistActive && ch?.is_approved) {
+      const key = "scam_confirm_" + String(from.id) + "_" + chatId;
+      const pending = pendingInputs[key];
+      if (pending) {
+        delete pendingInputs[key];
+        pendingInputs[String(from.id)] = {
+          action: "collecting_proofs", feedbackId: pending.feedbackId,
+          channelId: chatId, targetUsername: pending.targetUsername,
+          reporterUsername: pending.reporterUsername, proofCount: 0
+        };
+        const sent = await tg.send(chatId, `📩 Bitte schicke deine Beweise <b>direkt im privaten Chat</b>.\n→ Öffne den Bot-Chat und tippe /start falls noch nicht geschehen.`);
+        if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 30000);
+      }
+      return;
+    }
+
+    const isUserinfoCmd = /^\/userinfo(@\w+)?/i.test(text);
+    if (isUserinfoCmd) {
+      let lookupId = null;
+      const uiArg = text.replace(/^\/userinfo(@\w+)?\s*/i, "").trim();
+      if (uiArg) {
+        lookupId = uiArg;
+      } else if (msg.reply_to_message?.from) {
+        lookupId = String(msg.reply_to_message.from.id);
+      }
+      if (!lookupId) {
+        const hint = await tg.send(chatId, "💡 Nutze /userinfo @username, /userinfo [ID] oder als Reply auf eine Nachricht mit /userinfo");
+        if (hint?.message_id) void safelistService.trackBotMessage(chatId, hint.message_id, "temp", 10000);
+        await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+      } else {
+        await userInfoService.runUserInfo(tg, supabase_db, from.id, lookupId, chatId, null, chatId);
+        await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+      }
+      return;
+    }
+
+    if (/^\/help(@\w+)?$/i.test(text)) {
+      const isAdm = await isGroupAdmin(tg, chatId, from.id);
+      let helpText;
+      if (isAdm) {
+        helpText = `📋 <b>Admin-Befehle</b>\n\n<b>/ai [Frage]</b> – KI-Antwort anfordern\n<b>/ban [Grund]</b> (Reply) – User dauerhaft bannen\n<b>/unban [ID]</b> – User entbannen\n<b>/mute [Dauer] [Grund]</b> (Reply) – User stummschalten\n  Dauer: 1h / 12h / 24h / 7d / 30d / permanent\n<b>/del</b> (Reply) – Nachricht löschen\n<b>/pin</b> (Reply) – Nachricht pinnen\n<b>/userinfo [ID|@user]</b> – User-Informationen abrufen\n<b>/safelist @user</b> – User verifizieren\n<b>/scamlist @user</b> – Scam melden\n<b>/feedbacks @user</b> – Feedbacks einsehen\n<b>/clean</b> – Gelöschte Accounts entfernen\n<b>/settings</b> – Bot-Einstellungen (privat)`;
+      } else {
+        helpText = `📋 <b>Verfügbare Befehle</b>\n\n` + (ch?.ai_enabled ? `<b>/ai [Frage]</b> – KI-Assistent befragen\n` : "") + (ch?.safelist_enabled ? `<b>/feedbacks @user</b> – Feedbacks zu einem User\n<b>/check @user</b> – Status prüfen\n<b>/scamlist @user [Grund]</b> – Scammer melden\n` : "") + `<b>/userinfo [ID|@user]</b> – User-Info (5x/Tag kostenlos)\n<b>/help</b> – Diese Hilfe`;
+      }
+      const helpMsg = await tg.send(chatId, helpText);
+      if (helpMsg?.message_id) void safelistService.trackBotMessage(chatId, helpMsg.message_id, "temp", 5 * 60 * 1000);
+      return;
+    }
+
+    if (/^\/ban(@\w+)?/i.test(text) && msg.reply_to_message && ch?.is_approved) {
+      if (!await isGroupAdmin(tg, chatId, from.id)) return;
+      const banTarget = msg.reply_to_message.from;
+      if (!banTarget?.id) return;
+      const banReason = text.replace(/^\/ban(@\w+)?\s*/i, "").trim() || "Kein Grund angegeben";
+      try {
+        await tg.call("banChatMember", { chat_id: chatId, user_id: banTarget.id, until_date: 0, revoke_messages: false });
+        const target = banTarget.username ? "@" + banTarget.username : (banTarget.first_name || String(banTarget.id));
+        const banMsg = await tg.send(chatId, `🚫 ${target} wurde gebannt.\nGrund: ${banReason.substring(0,100)}`);
+        if (banMsg?.message_id) void safelistService.trackBotMessage(chatId, banMsg.message_id, "temp", 5 * 60 * 1000);
+        await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+      } catch (e2) { logger.warn("[Ban]", e2.message); }
+      return;
+    }
+
+    if (/^\/unban(@\w+)?\s+(\S+)/i.test(text) && ch?.is_approved) {
+      if (!await isGroupAdmin(tg, chatId, from.id)) return;
+      const unbanId = text.match(/^\/unban(@\w+)?\s+(\S+)/i)?.[2];
+      if (!unbanId) return;
+      try {
+        await tg.call("unbanChatMember", { chat_id: chatId, user_id: unbanId, only_if_banned: false });
+        const unbanMsg = await tg.send(chatId, `✅ User <code>${unbanId}</code> wurde entbannt.`);
+        if (unbanMsg?.message_id) void safelistService.trackBotMessage(chatId, unbanMsg.message_id, "temp", 15000);
+        await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+      } catch (e2) {
+        const errMsg = await tg.send(chatId, `❌ Entbannen fehlgeschlagen: ${e2.message}`);
+        if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 10000);
+      }
+      return;
+    }
+
+    const muteMatch = text.match(/^\/mute(@\w+)?(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?/i);
+    const muteTarget = msg.reply_to_message?.from || null;
+    const muteByIdMatch = !msg.reply_to_message && text.match(/^\/mute(@\w+)?\s+(\d+)(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?/i);
+
+    if (((muteMatch && muteTarget) || muteByIdMatch) && ch?.is_approved) {
+      if (!await isGroupAdmin(tg, chatId, from.id)) return;
+      let targetId, targetName, durationStr, muteReason;
+
+      if (muteByIdMatch) {
+        targetId = muteByIdMatch[2];
+        durationStr = muteByIdMatch[3] || "24h";
+        muteReason = muteByIdMatch[4] || "";
+        targetName = `<code>${targetId}</code>`;
+      } else {
+        targetId = muteTarget.id;
+        targetName = muteTarget.username ? "@" + muteTarget.username : (muteTarget.first_name || String(muteTarget.id));
+        durationStr = muteMatch[2] || "24h";
+        muteReason = muteMatch[3] || "";
+      }
+
+      const durationSeconds = blacklistService.parseDuration ? blacklistService.parseDuration(durationStr) : 86400;
+      const untilDate = durationSeconds === -1 ? 0 : Math.floor(Date.now() / 1000) + durationSeconds;
+      const displayDur = durationSeconds === -1 ? "permanent" : durationStr;
+
+      try {
+        await tg.call("restrictChatMember", { chat_id: chatId, user_id: targetId, permissions: { can_send_messages: false, can_send_other_messages: false, can_add_web_page_previews: false }, until_date: untilDate });
+        const muteMsg = await tg.send(chatId, `🔇 ${targetName} wurde ${displayDur} stummgeschaltet.${muteReason ? "\nGrund: " + muteReason.substring(0,100) : ""}`);
+        if (muteMsg?.message_id) void safelistService.trackBotMessage(chatId, muteMsg.message_id, "temp", 5 * 60 * 1000);
+        await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+      } catch (e2) { logger.warn("[Mute]", e2.message); }
+      return;
+    }
+
+    const isReplyToBot = msg.reply_to_message && from?.id ? await safelistService.isBotMessage(chatId, msg.reply_to_message.message_id) : false;
+    const aiMatch = text.match(/^\/ai\s+(.*)/i);
+    const aiQuestion = aiMatch ? aiMatch[1].trim() : (isReplyToBot && !text.startsWith("/") ? text : null);
+    const blockedThreads = Array.isArray(ch?.blocked_thread_ids) ? ch.blocked_thread_ids : [];
+    const currentThread = msg.message_thread_id || 0;
+    const threadBlocked = currentThread && blockedThreads.includes(currentThread);
+
+    if (aiQuestion && ch?.is_approved && ch?.ai_enabled && !threadBlocked) {
+      const history = from?.id ? await safelistService.getConversationHistory(chatId, from.id, 5) : [];
+      if (from?.id) void safelistService.saveUserMessage(chatId, from.id, aiQuestion, msg.message_id);
+      const smalltalkAgent = require("../ai/smalltalkAgent");
+      const result = await smalltalkAgent.handle({ chatId, text: aiQuestion, settings, channelRecord: ch, history });
+      if (result.reply) {
+        const replyExtra = {};
+        if (msg.message_id) replyExtra.reply_to_message_id = msg.message_id;
+        if (msg.message_thread_id) replyExtra.message_thread_id = msg.message_thread_id;
+        const sentAiMsg = await tg.send(chatId, result.reply, replyExtra);
+        if (from?.id && sentAiMsg?.message_id) {
+          void safelistService.saveAssistantMessage(chatId, from.id, result.reply, sentAiMsg.message_id);
+        }
+      }
+    } else if (aiMatch && ch && ch.token_budget_exhausted) {
+      const sent = await tg.send(chatId, "⚠️ KI aktuell nicht verfügbar. Credits erschöpft – der Channel-Admin kann Credits nachladen.");
+      if (ch?.added_by_user_id && token) {
+        let refills2 = [];
+        try { const r2 = await supabase_db.from("channel_refills").select("id, name, credits, price_eur").eq("is_active", true).order("credits").limit(3); refills2 = r2.data || []; } catch (_) {}
+        if (refills2?.length) {
+          const rfKb = refills2.map(r => [{ text: `🔋 ${r.name} +${r.credits.toLocaleString()} Credits · ${parseFloat(r.price_eur).toFixed(2)} €`, callback_data: "refill_opt_" + r.id + "_" + chatId }]);
+          await tg.call("sendMessage", { chat_id: String(ch.added_by_user_id), text: `⚠️ <b>Credits für "${ch.title||chatId}" erschöpft!</b>\n\nChannel-Mitglieder können die KI nicht mehr nutzen. Lade jetzt Credits nach:`, parse_mode: "HTML", reply_markup: { inline_keyboard: rfKb } }).catch(() => {});
+        }
+      }
+      if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 15000);
+    } else if (aiMatch && ch && !ch.ai_enabled) {
+      const sent = await tg.send(chatId, "🔒 AI-Features sind für diesen Channel noch nicht freigeschaltet.\n\nWende dich an @autoacts für die Aktivierung.");
+      if (sent?.message_id) void safelistService.trackBotMessage(chatId, sent.message_id, "temp", 15000);
+    }
+  }
+};
+
+module.exports = commandHandler;

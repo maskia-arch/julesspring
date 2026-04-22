@@ -51,11 +51,8 @@ const commandHandler = {
     const text = msg.text?.trim() || "";
     const chatId = String(chat.id);
 
-    // Hole den Channel direkt am Anfang, um zu prüfen, ob er deaktiviert ist
     const ch = await getChannel(chatId);
     
-    // Wenn der Bot in einer Gruppe/einem Channel ist und der Channel in der DB als is_active = false markiert ist, 
-    // dann ignoriert er die Nachricht komplett (er agiert als "Deaktiviert").
     if (chat.type !== "private" && ch && ch.is_active === false) {
        return; 
     }
@@ -70,7 +67,6 @@ const commandHandler = {
       if (/^\/safeliste?(?:\s+@?(.+))?$/i.test(text)) {
         const slMatch = text.match(/^\/safeliste?\s+@?(.+)/i);
         const slTarget = slMatch ? slMatch[1].trim() : null;
-        // Nur aktive Channels abfragen
         const { data: myChForSl } = await supabase_db.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
         if (!myChForSl?.length) {
           await tg.send(chatId, "❌ Du hast keine aktiven/freigeschalteten Channels.");
@@ -94,7 +90,6 @@ const commandHandler = {
       if (/^\/scamliste?(?:\s+@?(.+))?$/i.test(text)) {
         const scMatch = text.match(/^\/scamliste?\s+@?(.+)/i);
         const scTarget = scMatch ? scMatch[1].trim() : null;
-        // Nur aktive Channels abfragen
         const { data: myChForSc } = await supabase_db.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
         if (!myChForSc?.length) {
           await tg.send(chatId, "❌ Du hast keine aktiven/freigeschalteten Channels.");
@@ -122,7 +117,6 @@ const commandHandler = {
       }
 
       if (/^\/refill(@\w+)?/i.test(text) || text.toLowerCase() === "credits nachladen") {
-        // Nur aktive Channels abfragen
         const { data: myChans } = await supabase_db.from("bot_channels").select("id, title, type, token_used, token_limit, credits_expire_at").eq("added_by_user_id", String(from.id)).eq("is_active", true);
         if (!myChans?.length) {
           await tg.send(chatId, "❌ Kein aktiver registrierter Channel gefunden.");
@@ -139,7 +133,6 @@ const commandHandler = {
       }
 
       if (/^\/buy(@\w+)?/i.test(text) || text.toLowerCase() === "credits kaufen") {
-         // Nur aktive Channels abfragen
         const { data: myChans } = await supabase_db.from("bot_channels").select("id, title, type").eq("added_by_user_id", String(from.id)).eq("is_active", true);
         if (!myChans?.length) {
           await tg.send(chatId, "❌ Du hast noch keinen aktiven registrierten Channel.");
@@ -151,7 +144,6 @@ const commandHandler = {
       }
 
       if (/^\/(?:start|menu|settings|dashboard|help)(@\w+)?/i.test(text)) {
-        // Wir prüfen, ob der User GANZ GENERELL Channels hat (auch deaktivierte)
         const { data: allMyChannels } = await supabase_db.from("bot_channels").select("id, title, type, is_approved, ai_enabled, bot_language, is_active").eq("added_by_user_id", String(from.id));
         
         if (!allMyChannels?.length) {
@@ -160,15 +152,12 @@ const commandHandler = {
           return;
         }
 
-        // Check if ANY of the channels are deactivated
         const deactivatedChannels = allMyChannels.filter(c => c.is_active === false);
         if (deactivatedChannels.length > 0 && allMyChannels.length === deactivatedChannels.length) {
-            // Alle seine Channels sind deaktiviert
             await tg.send(chatId, "⚠️ <b>Dein Channel/Gruppe wurde deaktiviert.</b>\n\nBitte melde dich bei @autoacts für weitere Informationen oder eine erneute Freischaltung.", { parse_mode: "HTML" });
             return;
         }
         
-        // Wir zeigen nur die AKTIVEN im Menü an
         const activeChannels = allMyChannels.filter(c => c.is_active !== false);
         
         if (activeChannels.length === 1) {
@@ -283,7 +272,6 @@ const commandHandler = {
           reply_markup: { inline_keyboard: [[
             { text: "✅ Positiv", callback_data: `fb_confirm_pos_${fbDetect.username}_${from.id}_${chatId}` },
             { text: "⚠️ Negativ", callback_data: `fb_confirm_neg_${fbDetect.username}_${from.id}_${chatId}` },
-            // HIER IST DER FIX: from.id wird an den Keins-Button angehängt!
             { text: "❌ Keins",   callback_data: `fb_confirm_no_${fbDetect.username}_${from.id}_${chatId}` }
           ]]}
         }).catch(() => null);
@@ -321,24 +309,41 @@ const commandHandler = {
       return;
     }
 
-    const feedbackCmds = /^\/(?:feedbacks?|check)\s+@?(\w+)/i;
+    const feedbackCmds = /^\/(?:check)\s+@?(\w+)/i;
     const feedbackMatch = text.match(feedbackCmds);
-    if (feedbackMatch && safelistActive && ch?.is_approved) {
+    if (feedbackMatch && safelistActive && ch?.is_approved && ch?.is_active !== false) {
       const targetUsername = feedbackMatch[1];
-      const feedbacks = await safelistService.getFeedbacks(chatId, targetUsername, null);
+      
+      // Hole Reputations-Score
+      let score = 0, pos = 0, neg = 0;
+      const { data: rep } = await supabase_db.from("user_reputation").select("score, pos_count, neg_count").eq("channel_id", chatId).ilike("username", targetUsername).maybeSingle();
+      if (rep) { score = rep.score; pos = rep.pos_count; neg = rep.neg_count; }
+
       const scamEntry = await safelistService.checkScamlist(chatId, targetUsername, null);
-      let replyText;
+      let replyText = `📊 <b>@${targetUsername}</b>\n`;
+      
       if (scamEntry) {
-        replyText = `⛔ <b>@${targetUsername} steht auf der Scamliste!</b>\n${scamEntry.reason ? scamEntry.reason.substring(0,150) : ""}\n`;
-        if (scamEntry.ai_summary) replyText += `\n🤖 ${scamEntry.ai_summary}`;
-      } else if (ch?.ai_enabled) {
-        const aiSummary = await safelistService.generateAiSummary(chatId, targetUsername, null);
-        replyText = safelistService.buildFullText(feedbacks, targetUsername, aiSummary);
+        replyText = `⛔ <b>ACHTUNG: @${targetUsername} steht auf der Scamliste!</b>\n\n`;
+        replyText += `⭐️ <b>Score:</b> ${score} Pkt (✅ ${pos} | ⚠️ ${neg})\n`;
+        replyText += `<i>Grund: ${scamEntry.reason ? scamEntry.reason.substring(0,150) : "Kein Grund angegeben."}</i>\n`;
       } else {
-        replyText = safelistService.buildStatsText(feedbacks, targetUsername);
+        replyText += `⭐️ <b>Score:</b> ${score} Pkt\n`;
+        replyText += `✅ ${pos} Positiv · ⚠️ ${neg} Negativ\n\n`;
+
+        if (ch?.ai_enabled) {
+          const aiSummary = await safelistService.generateAiSummary(chatId, targetUsername, null);
+          if (aiSummary) replyText += `🤖 <b>KI-Zusammenfassung:</b>\n${aiSummary}`;
+          else replyText += `<i>Noch nicht genug Text-Feedbacks für eine Zusammenfassung.</i>`;
+        } else {
+          replyText += `<i>KI-Zusammenfassung ist in diesem Channel nicht aktiviert.</i>`;
+        }
       }
+
       const sentMsg = await tg.send(chatId, replyText);
+      // Auto-Delete nach 5 Minuten (300.000 ms)
       if (sentMsg?.message_id) void safelistService.trackBotMessage(chatId, sentMsg.message_id, "check_result", 5 * 60 * 1000);
+      // Die Eingabe des Users löschen, damit der Chat sauber bleibt
+      await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
       return;
     }
 
