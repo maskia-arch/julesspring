@@ -2,11 +2,26 @@ const crypto = require("crypto");
 const { tgAdminHelper } = require("./tgAdminHelper");
 
 async function handleBotAdded(tg, supabase, mcm, token) {
-  if (["administrator", "creator"].includes(mcm.new_chat_member?.status)) {
-    const chat = mcm.chat;
+  const status = mcm.new_chat_member?.status;
+  const chat = mcm.chat;
+  const chatIdStr = String(chat.id);
+
+  // 1. Bot wurde entfernt, gekickt oder hat seine Admin-Rechte verloren
+  if (["left", "kicked", "member", "restricted"].includes(status)) {
+    try {
+      await supabase.from("bot_channels").update({
+        is_active: false,
+        updated_at: new Date()
+      }).eq("id", chatIdStr);
+      logger.info(`Bot wurde aus ${chatIdStr} entfernt. Status auf inaktiv gesetzt.`);
+    } catch (e) {}
+    return;
+  }
+
+  // 2. Bot wurde als Admin hinzugefügt
+  if (["administrator", "creator"].includes(status)) {
     const addedBy = mcm.from;
     const settingsToken = crypto.randomBytes(16).toString("hex");
-    const chatIdStr = String(chat.id);
 
     try {
       const { data: existing } = await supabase.from("bot_channels").select("id").eq("id", chatIdStr).maybeSingle();
@@ -17,6 +32,7 @@ async function handleBotAdded(tg, supabase, mcm, token) {
           title: chat.title || chatIdStr,
           username: chat.username || null,
           type: chat.type,
+          is_active: true, // Wird wieder aktiviert, falls er neu hinzugefügt wurde
           updated_at: new Date()
         }).eq("id", chatIdStr).select("id");
       } else {
@@ -25,12 +41,12 @@ async function handleBotAdded(tg, supabase, mcm, token) {
           title: chat.title || chatIdStr,
           username: chat.username || null,
           type: chat.type,
-          is_active: false,
+          is_active: true, // Standardmäßig aktiv beim Hinzufügen
           updated_at: new Date()
         }]).select("id");
       }
 
-      if (!dbResult.error) {
+      if (!dbResult?.error) {
         await supabase.from("bot_channels").update({
           ai_enabled: false,
           added_by_user_id: addedBy?.id || null,

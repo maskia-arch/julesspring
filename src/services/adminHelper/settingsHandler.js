@@ -12,6 +12,7 @@ const DICT = {
     lang: "🌐 Sprache", clean: "🧹 Bereinigen", stats: "📊 Statistik",
     sl_btn: "🛡 Safelist {sl}", fb_btn: "💬 Feedback {fb}", bl: "🚫 Blacklist", ui: "🔍 UserInfo",
     ai_locked: "🤖 <b>AI Features</b> — Gesperrt\n\nNutze <b>/buy</b> um ein Paket zu kaufen.",
+    mod_locked: "🔒 <b>Moderation</b> — Gesperrt\n\nDein Kanal ist noch nicht verifiziert.\nBitte melde dich bei @autoacts für die Freischaltung.",
     daily: "📰 Tagesbericht", st: "💬 Smalltalk AI", kb: "📚 Wissensdatenbank", aw: "✍️ WerbeTexter", bl_ai: "🤖 Blacklist Enhancer 🔒",
     back: "◀️ Zurück", main: "◀️ Hauptmenü"
   },
@@ -22,6 +23,7 @@ const DICT = {
     lang: "🌐 Language", clean: "🧹 Cleanup", stats: "📊 Stats",
     sl_btn: "🛡 Safelist {sl}", fb_btn: "💬 Feedback {fb}", bl: "🚫 Blacklist", ui: "🔍 UserInfo",
     ai_locked: "🤖 <b>AI Features</b> — Locked\n\nUse <b>/buy</b> to get a package.",
+    mod_locked: "🔒 <b>Moderation</b> — Locked\n\nYour channel is not yet verified.\nPlease contact @autoacts for approval.",
     daily: "📰 Daily Report", st: "💬 Smalltalk AI", kb: "📚 Knowledge Base", aw: "✍️ AdWriter", bl_ai: "🤖 Blacklist Enhancer 🔒",
     back: "◀️ Back", main: "◀️ Main Menu"
   }
@@ -63,7 +65,7 @@ async function sendSettingsMenu(tg, sendTo, channelId, ch, msgId = null, userLan
   const text = t("title", l).replace("{name}", ch?.title || channelId).replace("{ai}", aiText).replace("{sl}", ch?.safelist_enabled ? "✅" : "❌").replace("{fb}", ch?.feedback_enabled ? "✅" : "❌");
   const kb = [
     [{ text: t("ch_settings", l), callback_data: `cfg_menu_channel_${channelId}` }],
-    [{ text: t("mod", l), callback_data: `cfg_menu_mod_${channelId}` }],
+    [{ text: ch?.is_approved ? t("mod", l) : t("mod", l) + " 🔒", callback_data: `cfg_menu_mod_${channelId}` }],
     [{ text: ch?.ai_enabled ? t("ai_feat", l) : t("ai_feat", l) + " 🔒", callback_data: `cfg_menu_ai_${channelId}` }]
   ];
   return editOrSend(tg, sendTo, msgId, text, kb);
@@ -84,6 +86,8 @@ async function sendChannelMenu(tg, sendTo, channelId, ch, msgId = null, userLang
 
 async function sendModerationMenu(tg, sendTo, channelId, ch, msgId = null, userLang = "de") {
   const l = ch?.bot_language || userLang;
+  if (!ch?.is_approved) return editOrSend(tg, sendTo, msgId, t("mod_locked", l), [[_menuBackBtn(channelId, l)]]);
+  
   const text = `${t("mod", l).split(" ")[0]} <b>${t("mod", l).replace(/^[^\s]+\s/, "")}</b> — ${ch?.title || channelId}`;
   const kb = [
     [{ text: t("sl_btn", l).replace("{sl}", ch?.safelist_enabled ? "✅" : "❌"), callback_data: `cfg_safelist_${channelId}` }, { text: t("fb_btn", l).replace("{fb}", ch?.feedback_enabled ? "✅" : "❌"), callback_data: `cfg_feedback_${channelId}` }],

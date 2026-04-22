@@ -51,6 +51,15 @@ const commandHandler = {
     const text = msg.text?.trim() || "";
     const chatId = String(chat.id);
 
+    // Hole den Channel direkt am Anfang, um zu prüfen, ob er deaktiviert ist
+    const ch = await getChannel(chatId);
+    
+    // Wenn der Bot in einer Gruppe/einem Channel ist und der Channel in der DB als is_active = false markiert ist, 
+    // dann ignoriert er die Nachricht komplett (er agiert als "Deaktiviert").
+    if (chat.type !== "private" && ch && ch.is_active === false) {
+       return; 
+    }
+
     if (chat.type === "private") {
       const hasPending = pendingInputs[String(from.id)];
       if (hasPending) {
@@ -61,9 +70,10 @@ const commandHandler = {
       if (/^\/safeliste?(?:\s+@?(.+))?$/i.test(text)) {
         const slMatch = text.match(/^\/safeliste?\s+@?(.+)/i);
         const slTarget = slMatch ? slMatch[1].trim() : null;
-        const { data: myChForSl } = await supabase_db.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).limit(5);
+        // Nur aktive Channels abfragen
+        const { data: myChForSl } = await supabase_db.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
         if (!myChForSl?.length) {
-          await tg.send(chatId, "❌ Du hast keine freigeschalteten Channels.");
+          await tg.send(chatId, "❌ Du hast keine aktiven/freigeschalteten Channels.");
           return;
         }
         if (slTarget) {
@@ -84,9 +94,10 @@ const commandHandler = {
       if (/^\/scamliste?(?:\s+@?(.+))?$/i.test(text)) {
         const scMatch = text.match(/^\/scamliste?\s+@?(.+)/i);
         const scTarget = scMatch ? scMatch[1].trim() : null;
-        const { data: myChForSc } = await supabase_db.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).limit(5);
+        // Nur aktive Channels abfragen
+        const { data: myChForSc } = await supabase_db.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
         if (!myChForSc?.length) {
-          await tg.send(chatId, "❌ Du hast keine freigeschalteten Channels.");
+          await tg.send(chatId, "❌ Du hast keine aktiven/freigeschalteten Channels.");
           return;
         }
         if (scTarget) {
@@ -111,9 +122,10 @@ const commandHandler = {
       }
 
       if (/^\/refill(@\w+)?/i.test(text) || text.toLowerCase() === "credits nachladen") {
-        const { data: myChans } = await supabase_db.from("bot_channels").select("id, title, type, token_used, token_limit, credits_expire_at").eq("added_by_user_id", String(from.id));
+        // Nur aktive Channels abfragen
+        const { data: myChans } = await supabase_db.from("bot_channels").select("id, title, type, token_used, token_limit, credits_expire_at").eq("added_by_user_id", String(from.id)).eq("is_active", true);
         if (!myChans?.length) {
-          await tg.send(chatId, "❌ Kein registrierter Channel gefunden.");
+          await tg.send(chatId, "❌ Kein aktiver registrierter Channel gefunden.");
           return;
         }
         const chanKb = myChans.map(ch2 => {
@@ -127,9 +139,10 @@ const commandHandler = {
       }
 
       if (/^\/buy(@\w+)?/i.test(text) || text.toLowerCase() === "credits kaufen") {
-        const { data: myChans } = await supabase_db.from("bot_channels").select("id, title, type").eq("added_by_user_id", String(from.id));
+         // Nur aktive Channels abfragen
+        const { data: myChans } = await supabase_db.from("bot_channels").select("id, title, type").eq("added_by_user_id", String(from.id)).eq("is_active", true);
         if (!myChans?.length) {
-          await tg.send(chatId, "❌ Du hast noch keinen registrierten Channel.");
+          await tg.send(chatId, "❌ Du hast noch keinen aktiven registrierten Channel.");
           return;
         }
         const chanKb = myChans.map(ch2 => [{ text: (ch2.type==="channel"?"📢":"👥") + " " + (ch2.title||ch2.id), callback_data: "buy_chan_" + ch2.id }]);
@@ -138,24 +151,40 @@ const commandHandler = {
       }
 
       if (/^\/(?:start|menu|settings|dashboard|help)(@\w+)?/i.test(text)) {
-        const { data: myChannels2 } = await supabase_db.from("bot_channels").select("id, title, type, is_approved, ai_enabled, bot_language").eq("added_by_user_id", String(from.id));
-        if (!myChannels2?.length) {
+        // Wir prüfen, ob der User GANZ GENERELL Channels hat (auch deaktivierte)
+        const { data: allMyChannels } = await supabase_db.from("bot_channels").select("id, title, type, is_approved, ai_enabled, bot_language, is_active").eq("added_by_user_id", String(from.id));
+        
+        if (!allMyChannels?.length) {
           const userLang = detectLang(from);
           await tg.send(chatId, t("welcome_intro", userLang).replace("{name}", from?.first_name ? " " + from.first_name : ""));
           return;
         }
-        if (myChannels2.length === 1) {
-          const ch2 = await getChannel(String(myChannels2[0].id));
-          await settingsHandler.sendSettingsMenu(tg, chatId, String(myChannels2[0].id), ch2, null, from?.language_code?.substring(0,2));
+
+        // Check if ANY of the channels are deactivated
+        const deactivatedChannels = allMyChannels.filter(c => c.is_active === false);
+        if (deactivatedChannels.length > 0 && allMyChannels.length === deactivatedChannels.length) {
+            // Alle seine Channels sind deaktiviert
+            await tg.send(chatId, "⚠️ <b>Dein Channel/Gruppe wurde deaktiviert.</b>\n\nBitte melde dich bei @autoacts für weitere Informationen oder eine erneute Freischaltung.", { parse_mode: "HTML" });
+            return;
+        }
+        
+        // Wir zeigen nur die AKTIVEN im Menü an
+        const activeChannels = allMyChannels.filter(c => c.is_active !== false);
+        
+        if (activeChannels.length === 1) {
+          const ch2 = await getChannel(String(activeChannels[0].id));
+          await settingsHandler.sendSettingsMenu(tg, chatId, String(activeChannels[0].id), ch2, null, from?.language_code?.substring(0,2));
           return;
         }
-        const keyboard = myChannels2.map(ch2 => [{ text: (ch2.type === "channel" ? "📢" : "👥") + " " + (ch2.title || ch2.id), callback_data: "sel_channel_" + ch2.id }]);
-        await tg.call("sendMessage", { chat_id: chatId, text: "⚙️ Wähle deinen Channel:", reply_markup: { inline_keyboard: keyboard } });
-        return;
+        
+        if (activeChannels.length > 1) {
+            const keyboard = activeChannels.map(ch2 => [{ text: (ch2.type === "channel" ? "📢" : "👥") + " " + (ch2.title || ch2.id), callback_data: "sel_channel_" + ch2.id }]);
+            await tg.call("sendMessage", { chat_id: chatId, text: "⚙️ Wähle deinen Channel:", reply_markup: { inline_keyboard: keyboard } });
+            return;
+        }
       }
     }
     
-    const ch = await getChannel(chatId);
 
     if (from?.id) {
       await tgApi(token).call("getChatMember", { chat_id: chatId, user_id: from.id }).catch(() => {});
