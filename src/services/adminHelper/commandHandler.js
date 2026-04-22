@@ -185,7 +185,6 @@ const commandHandler = {
       }
     }
     
-
     if (from?.id) {
       await tgApi(token).call("getChatMember", { chat_id: chatId, user_id: from.id }).catch(() => {});
     }
@@ -284,7 +283,8 @@ const commandHandler = {
           reply_markup: { inline_keyboard: [[
             { text: "✅ Positiv", callback_data: `fb_confirm_pos_${fbDetect.username}_${from.id}_${chatId}` },
             { text: "⚠️ Negativ", callback_data: `fb_confirm_neg_${fbDetect.username}_${from.id}_${chatId}` },
-            { text: "❌ Keins",   callback_data: `fb_confirm_no_${chatId}` }
+            // HIER IST DER FIX: from.id wird an den Keins-Button angehängt!
+            { text: "❌ Keins",   callback_data: `fb_confirm_no_${fbDetect.username}_${from.id}_${chatId}` }
           ]]}
         }).catch(() => null);
         if (confirmMsg?.message_id) void safelistService.trackBotMessage(chatId, confirmMsg.message_id, "temp", 2*60*1000);

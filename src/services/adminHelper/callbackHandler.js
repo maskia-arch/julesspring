@@ -26,19 +26,25 @@ async function handle(tg, supabase_db, q, token, settings) {
   const qUserId = q.from?.id;
   const data = q.data || "";
 
-  await tg.call("answerCallbackQuery", { callback_query_id: q.id }).catch(() => {});
+  // Cleverer Wrapper: Antwortet auf den Button-Klick, aber blockiert uns nicht die Alerts!
+  let answered = false;
+  const answerCb = async (opts = {}) => {
+    if (answered) return;
+    answered = true;
+    return tg.call("answerCallbackQuery", { callback_query_id: q.id, ...opts }).catch(() => {});
+  };
 
   if (data === "cfg_noop") {
-    return;
+    return answerCb();
   }
 
   if (data.startsWith("uinfo_names_")) {
     const targetId = data.split("_")[2];
     const { data: history } = await supabase_db.from("user_name_history").select("*").eq("user_id", targetId).order("detected_at", { ascending: false }).limit(10);
     if (!history?.length) {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Keine Namenshistorie gefunden.", show_alert: true });
-      return;
+      return answerCb({ text: "❌ Keine Namenshistorie gefunden.", show_alert: true });
     }
+    await answerCb();
     const list = history.map(h => `• ${new Date(h.detected_at).toLocaleDateString("de-DE")}: ${h.first_name||""} ${h.last_name||""} ${h.username?"(@"+h.username+")":""}`).join("\n");
     await tg.call("sendMessage", { chat_id: qChatId, text: `📜 <b>Namenshistorie für <code>${targetId}</code></b>\n\n${list}`, parse_mode: "HTML" });
     return;
@@ -50,15 +56,15 @@ async function handle(tg, supabase_db, q, token, settings) {
     const targetChannelId = parts[2];
     const ownerId = parts[3] ? parseInt(parts[3]) : null;
 
-    if (sendPriv && ownerId && qUserId !== ownerId) return;
-    if (!await isGroupAdmin(tg, targetChannelId, qUserId)) return;
+    if (sendPriv && ownerId && qUserId !== ownerId) return answerCb({ text: "❌ Nur für den Befehlsausführer.", show_alert: true });
+    if (!await isGroupAdmin(tg, targetChannelId, qUserId)) return answerCb({ text: "❌ Keine Berechtigung.", show_alert: true });
 
     const ch = await getChannel(targetChannelId);
     if (ch && ch.is_active === false) {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "⚠️ Dein Channel/Gruppe wurde deaktiviert, melde dich bei @autoacts", show_alert: true });
-      return;
+      return answerCb({ text: "⚠️ Dein Channel/Gruppe wurde deaktiviert, melde dich bei @autoacts", show_alert: true });
     }
 
+    await answerCb();
     await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
 
     const sendTarget = sendPriv ? String(qUserId) : targetChannelId;
@@ -67,30 +73,34 @@ async function handle(tg, supabase_db, q, token, settings) {
   }
 
   if (data.startsWith("fb_confirm_")) {
-    const parts3 = data.split("_");
-    const fbType = parts3[2];
-    
+    // Sicheres Parsen von hinten, damit Usernames mit "_" (z.B. @bester_seller_1) nicht den Code sprengen
+    const parts = data.split("_");
+    const chanId3 = parts.pop();
+    const submitterId = parts.pop();
+    const fbType = parts[2];
+    const targetUname = parts.slice(3).join("_");
+
+    // 🔒 TÜRSTEHER #1: Nur der Verfasser darf hier drücken!
+    if (String(qUserId) !== String(submitterId)) {
+      return answerCb({ text: "❌ Nur der Verfasser darf das auswählen.", show_alert: true });
+    }
+
+    // Wenn der Verfasser "Keins" wählt -> Sofortiges, spurloses Löschen
     if (fbType === "no") {
+      await answerCb();
       await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
       return;
     }
 
-    const targetUname = parts3[3];
-    const submitterId = parts3[4];
-    const chanId3 = parts3[parts3.length - 1];
-
+    // 🔒 TÜRSTEHER #2: Ist der Kanal überhaupt noch zugelassen?
     const ch = await getChannel(chanId3);
     if (!ch || !ch.is_approved || ch.is_active === false) {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
+      await answerCb({ text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
       await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
       return;
     }
 
-    if (String(qUserId) !== String(submitterId)) {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Nur die Person die das Feedback geschrieben hat kann es bestätigen.", show_alert: true });
-      return;
-    }
-
+    await answerCb();
     await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
 
     const feedbackType = fbType === "pos" ? "positive" : "negative";
@@ -134,7 +144,8 @@ async function handle(tg, supabase_db, q, token, settings) {
       if (subOpt === "pin") pendingInputs[key].pinAfterSend = !pendingInputs[key].pinAfterSend;
       if (subOpt === "delprev") pendingInputs[key].deletePrevious = !pendingInputs[key].deletePrevious;
     }
-    await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: subOpt === "pin" ? "📌 Anpinnen geändert" : "🔄 Löschen geändert" });
+    await answerCb({ text: subOpt === "pin" ? "📌 Anpinnen geändert" : "🔄 Löschen geändert" });
+    
     const p2 = pendingInputs[key] || {};
     const pinOpt2 = "📌 Anpinnen: " + (p2.pinAfterSend ? "✅" : "❌");
     const delPrevOpt2 = "🔄 Vorherige löschen: " + (p2.deletePrevious ? "✅" : "❌");
@@ -150,6 +161,7 @@ async function handle(tg, supabase_db, q, token, settings) {
   }
 
   if (data.startsWith("sched_save_final_")) {
+    await answerCb();
     const chanId2 = data.split("_")[3];
     const wizard = pendingInputs[String(qUserId)];
     
@@ -188,6 +200,7 @@ async function handle(tg, supabase_db, q, token, settings) {
   }
 
   if (data.startsWith("refill_chan_")) {
+    await answerCb();
     const refChanId = data.split("_")[2];
     const pend = pendingInputs[String(qUserId)] || {};
     let showRefills = pend.refills || [];
@@ -219,6 +232,7 @@ async function handle(tg, supabase_db, q, token, settings) {
   }
 
   if (data.startsWith("refill_opt_")) {
+    await answerCb();
     const roMatch = data.match(/^refill_opt_(\d+)_(-?\d+)$/);
     if (!roMatch) return;
     const refillId = parseInt(roMatch[1]);
@@ -243,6 +257,7 @@ async function handle(tg, supabase_db, q, token, settings) {
   }
 
   if (data.startsWith("buy_chan_")) {
+    await answerCb();
     const buyChanId = data.split("_")[2];
     const pend = pendingInputs[String(qUserId)] || {};
     let pkgs = pend.packages;
@@ -265,6 +280,7 @@ async function handle(tg, supabase_db, q, token, settings) {
   }
 
   if (data.startsWith("buy_pkg_")) {
+    await answerCb();
     const parts4 = data.match(/^buy_pkg_(\d+)_(-?\d+)$/);
     if (!parts4) return;
     const pkgId = parseInt(parts4[1]);
@@ -289,6 +305,7 @@ async function handle(tg, supabase_db, q, token, settings) {
   }
 
   if (data === "buy_cancel") {
+    await answerCb();
     await tg.call("deleteMessage", { chat_id: String(qUserId), message_id: q.message?.message_id }).catch(() => {});
     delete pendingInputs[String(qUserId)];
     return;
@@ -298,9 +315,9 @@ async function handle(tg, supabase_db, q, token, settings) {
     const selChanId = data.split("_")[2];
     const ch = await getChannel(selChanId);
     if (ch && ch.is_active === false) {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "⚠️ Dein Channel/Gruppe wurde deaktiviert, melde dich bei @autoacts", show_alert: true });
-      return;
+      return answerCb({ text: "⚠️ Dein Channel/Gruppe wurde deaktiviert, melde dich bei @autoacts", show_alert: true });
     }
+    await answerCb();
     await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     await settingsHandler.sendSettingsMenu(tg, String(qUserId), selChanId, ch, null);
     return;
@@ -311,28 +328,31 @@ async function handle(tg, supabase_db, q, token, settings) {
     const channelId = parts[parts.length - 1];
     const ch = await getChannel(channelId);
     if (ch && ch.is_active === false) {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "⚠️ Dein Channel/Gruppe wurde deaktiviert, melde dich bei @autoacts", show_alert: true });
-      return;
+      return answerCb({ text: "⚠️ Dein Channel/Gruppe wurde deaktiviert, melde dich bei @autoacts", show_alert: true });
     }
+    await answerCb();
     await settingsHandler.handleSettingsCallback(tg, supabase_db, data, q, qUserId);
     return;
   }
 
   if (data.startsWith("fb_want_proof_")) {
-    const pm = data.match(/^fb_want_proof_(-?\d+)_(-?\d+)_(-?\d+)$/);
-    if (!pm || String(qUserId) !== pm[2]) {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Nicht für dich.", show_alert: true });
-      return;
+    const parts = data.split("_");
+    const chanId4 = parts.pop();
+    const submitterId = parts.pop();
+    const fbId2 = parts.pop();
+
+    if (String(qUserId) !== String(submitterId)) {
+      return answerCb({ text: "❌ Nicht für dich.", show_alert: true });
     }
-    const [, fbId2, , chanId4] = pm;
     
     const ch4 = await getChannel(chanId4);
     if (!ch4 || !ch4.is_approved || ch4.is_active === false) {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
+      await answerCb({ text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
       await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
       return;
     }
 
+    await answerCb();
     await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     
     try {
@@ -351,20 +371,23 @@ async function handle(tg, supabase_db, q, token, settings) {
   }
 
   if (data.startsWith("fb_no_proof_")) {
-    const npm = data.match(/^fb_no_proof_(-?\d+)_(-?\d+)_(-?\d+)$/);
-    if (!npm || String(qUserId) !== npm[2]) {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Nicht für dich.", show_alert: true });
-      return;
+    const parts = data.split("_");
+    const chanId5 = parts.pop();
+    const submitterId = parts.pop();
+    const fbId3 = parts.pop();
+
+    if (String(qUserId) !== String(submitterId)) {
+      return answerCb({ text: "❌ Nicht für dich.", show_alert: true });
     }
-    const [, fbId3, , chanId5] = npm;
     
     const ch5 = await getChannel(chanId5);
     if (!ch5 || !ch5.is_approved || ch5.is_active === false) {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
+      await answerCb({ text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
       await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
       return;
     }
 
+    await answerCb();
     await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     
     try {
@@ -402,19 +425,20 @@ async function handle(tg, supabase_db, q, token, settings) {
   }
 
   if (data.startsWith("fb_manual_pos_") || data.startsWith("fb_manual_neg_")) {
-    const isMPos = data.startsWith("fb_manual_pos_");
-    const mm = data.match(/^fb_manual_(pos|neg)_([\w]+)_(-?\d+)_(-?\d+)$/);
-    if (!mm) return;
-    const [, , targetU, targetId, chanId6] = mm;
-    const fbType = isMPos ? "positive" : "negative";
+    const parts = data.split("_");
+    const chanId6 = parts.pop();
+    const targetId = parts.pop();
+    const fbType = parts[2];
+    const targetU = parts.slice(3).join("_");
     
     const ch6 = await getChannel(chanId6);
     if (!ch6 || !ch6.is_approved || ch6.is_active === false) {
-      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
+      await answerCb({ text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
       await tg.call("deleteMessage", { chat_id: q.message.chat.id, message_id: q.message.message_id }).catch(() => {});
       return;
     }
 
+    await answerCb();
     try {
       const fbR = await safelistService.submitFeedback({
         channelId: chanId6, submittedBy: qUserId, submittedByUsername: q.from?.username || null,
@@ -440,12 +464,13 @@ async function handle(tg, supabase_db, q, token, settings) {
     if (fbData) {
       const chFb = await getChannel(fbData.channel_id);
       if (!chFb || !chFb.is_approved || chFb.is_active === false) {
-        await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
+        await answerCb({ text: "❌ Kanal ist nicht verifiziert oder deaktiviert.", show_alert: true });
         await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
         return;
       }
     }
 
+    await answerCb();
     const ch2 = {}; 
     await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     if (data.startsWith("fb_approve_")) {
@@ -459,12 +484,11 @@ async function handle(tg, supabase_db, q, token, settings) {
   }
 
   const chData = await getChannel(qChatId);
-  // Wenn der Bot in einer Gruppe ist und Admin-Menü drückt, auch blockieren falls inaktiv
   if (q.message?.chat?.type !== "private" && chData && chData.is_active === false) {
-    await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Kanal ist deaktiviert.", show_alert: true });
-    return;
+    return answerCb({ text: "❌ Kanal ist deaktiviert.", show_alert: true });
   }
   
+  await answerCb(); // Fallback, falls bis hierhin noch kein Answer kam
   await tgAdminHelper.handleCallback(token, q, chData);
 }
 
