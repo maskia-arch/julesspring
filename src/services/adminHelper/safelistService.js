@@ -171,28 +171,42 @@ const safelistService = {
     } catch (_) { return false; }
   },
 
-  async sendSafelistMenu(token, chatId, msgId) {
-    const { data } = await supabase.from("user_feedbacks").select("target_username, target_user_id").eq("channel_id", String(chatId)).eq("feedback_type", "positive").eq("status", "approved");
+  async sendSafelistMenu(token, channelId, targetChatId, msgId) {
+    targetChatId = targetChatId || channelId;
+    const { data } = await supabase.from("user_feedbacks").select("target_username, target_user_id").eq("channel_id", String(channelId)).eq("feedback_type", "positive").eq("status", "approved");
     const uniqueUsers = [];
     const seen = new Set();
+    
     for (const row of (data || [])) {
       const id = row.target_username || row.target_user_id;
-      if (id && !seen.has(id)) { seen.add(id); uniqueUsers.push({ username: row.target_username, id: row.target_user_id }); }
+      if (id && !seen.has(id)) { 
+        seen.add(id); 
+        uniqueUsers.push({ username: row.target_username, id: row.target_user_id }); 
+      }
     }
+    
     let text = `✅ <b>Safelist (${uniqueUsers.length})</b>\n\n`;
     const keyboard = { inline_keyboard: [] };
-    if (uniqueUsers.length === 0) text += "Die Safelist ist aktuell leer.";
-    else {
+    
+    if (uniqueUsers.length === 0) {
+      text += "Die Safelist ist aktuell leer.";
+    } else {
       uniqueUsers.forEach((u, i) => {
         const display = u.username ? `@${u.username}` : String(u.id);
         const cbData = u.username ? u.username : String(u.id);
         text += `${i + 1}. ✅ ${display}\n`;
-        keyboard.inline_keyboard.push([{ text: `🗑 ${display}`, callback_data: `safelist_del_${cbData}` }]);
+        keyboard.inline_keyboard.push([{ text: `🗑 ${display}`, callback_data: `safelist_del_${cbData}_${channelId}` }]);
       });
     }
-    keyboard.inline_keyboard.push([{ text: "◀️ Zurück", callback_data: "admin_menu" }]);
+    
+    keyboard.inline_keyboard.push([{ text: "◀️ Zurück", callback_data: `admin_menu_${channelId}` }]);
     const base = `https://api.telegram.org/bot${token}`;
-    await axios.post(`${base}/editMessageText`, { chat_id: chatId, message_id: msgId, text: text, parse_mode: "HTML", reply_markup: keyboard }).catch(() => { });
+    
+    if (msgId) {
+      await axios.post(`${base}/editMessageText`, { chat_id: targetChatId, message_id: msgId, text: text, parse_mode: "HTML", reply_markup: keyboard }).catch(() => { });
+    } else {
+      await axios.post(`${base}/sendMessage`, { chat_id: targetChatId, text: text, parse_mode: "HTML", reply_markup: keyboard }).catch(() => { });
+    }
   },
 
   async removeFromSafelist(channelId, target) {

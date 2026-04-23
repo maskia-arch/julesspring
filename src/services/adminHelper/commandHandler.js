@@ -332,18 +332,55 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/feedbacks?(?:@\w+)?$/i.test(text) && safelistActive && ch?.is_approved) {
-      let top10 = null;
-      try {
-        const res = await supabase_db.rpc("get_top_sellers", { p_channel_id: chatId, p_limit: 10 });
-        top10 = res.data;
-      } catch (e) {}
+    const isFeedbacksCmd = /^\/feedbacks?(?:@\w+)?(?:\s+.*)?$/i.test(text);
+    if (isFeedbacksCmd && safelistActive && ch?.is_approved) {
+      let targetUser = text.replace(/^\/feedbacks?(?:@\w+)?\s*/i, "").trim().replace(/^@/, "");
       
-      const medals = ["🥇","🥈","🥉"];
-      let rankText = "🏆 <b>Top 10 Verkäufer</b>\n\n";
-      rankText += top10?.length ? top10.map((u,i) => `${medals[i]||`${i+1}.`} @${u.username||u.user_id} — <b>${u.score} Pkt</b> (✅ ${u.pos_count} | ⚠️ ${u.neg_count})`).join("\n") : "<i>Noch kein Ranking verfügbar.</i>";
-      const rkMsg = await tg.call("sendMessage", { chat_id: chatId, text: rankText, parse_mode: "HTML", reply_to_message_id: msg.message_id }).catch(() => null);
-      if (rkMsg?.message_id) void safelistService.trackBotMessage(chatId, rkMsg.message_id, "temp", 5*60*1000);
+      if (!targetUser && msg.reply_to_message?.from) {
+        targetUser = msg.reply_to_message.from.username || String(msg.reply_to_message.from.id);
+      }
+
+      if (!targetUser) {
+        let top10 = null;
+        try {
+          const res = await supabase_db.rpc("get_top_sellers", { p_channel_id: chatId, p_limit: 10 });
+          top10 = res.data;
+        } catch (e) {}
+        
+        const medals = ["🥇","🥈","🥉"];
+        let rankText = "🏆 <b>Top 10 Verkäufer</b>\n\n";
+        rankText += top10?.length ? top10.map((u,i) => `${medals[i]||`${i+1}.`} @${u.username||u.user_id} — <b>${u.score} Pkt</b> (✅ ${u.pos_count} | ⚠️ ${u.neg_count})`).join("\n") : "<i>Noch kein Ranking verfügbar.</i>";
+        const rkMsg = await tg.call("sendMessage", { chat_id: chatId, text: rankText, parse_mode: "HTML", reply_to_message_id: msg.message_id }).catch(() => null);
+        if (rkMsg?.message_id) void safelistService.trackBotMessage(chatId, rkMsg.message_id, "temp", 5*60*1000);
+      } else {
+        let score = 0, pos = 0, neg = 0;
+        const { data: rep } = await supabase_db.from("user_reputation").select("score, pos_count, neg_count").eq("channel_id", chatId).ilike("username", targetUser).maybeSingle();
+        if (rep) { score = rep.score; pos = rep.pos_count; neg = rep.neg_count; }
+
+        let detailText = `📊 <b>Feedback-Details für @${targetUser}</b>\n\n`;
+        detailText += `⭐️ <b>Score:</b> ${score} Pkt\n`;
+        detailText += `✅ ${pos} Positiv · ⚠️ ${neg} Negativ\n\n`;
+
+        try {
+          const feedbacks = await safelistService.getFeedbacks(chatId, targetUser, null);
+          if (feedbacks && feedbacks.length > 0) {
+            detailText += `💬 <b>Letzte Feedbacks:</b>\n`;
+            const recent = feedbacks.slice(0, 10);
+            recent.forEach(f => {
+              const emoji = f.feedback_type === "positive" ? "✅" : "⚠️";
+              const by = f.submitted_by_username ? `@${f.submitted_by_username}` : "anonym";
+              detailText += `${emoji} <i>"${(f.feedback_text || "").substring(0, 80)}"</i> — ${by}\n`;
+            });
+          } else {
+            detailText += `<i>Keine detaillierten Einträge gefunden.</i>`;
+          }
+        } catch (e) {
+          detailText += `<i>Keine detaillierten Einträge gefunden.</i>`;
+        }
+
+        const rkMsg = await tg.call("sendMessage", { chat_id: chatId, text: detailText, parse_mode: "HTML", reply_to_message_id: msg.message_id }).catch(() => null);
+        if (rkMsg?.message_id) void safelistService.trackBotMessage(chatId, rkMsg.message_id, "temp", 5*60*1000);
+      }
       return;
     }
 

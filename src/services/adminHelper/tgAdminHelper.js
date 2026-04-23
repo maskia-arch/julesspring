@@ -118,9 +118,11 @@ const tgAdminHelper = {
     const data = query.data;
     const chatId = query.message?.chat?.id;
     const userId = query.from?.id;
+    const targetChatId = query.extractedChannelId || chatId;
+    const baseData = query.extractedChannelId ? data.replace('_' + query.extractedChannelId, '') : data;
     const lang = channel?.bot_language || query.from?.language_code?.substring(0, 2) || "de";
 
-    const admins = await tg.getAdmins(chatId).catch(() => []);
+    const admins = await tg.getAdmins(targetChatId).catch(() => []);
     const isAdmin = admins.some(a => a.user?.id === userId);
     if (!isAdmin) {
       await tg.call("answerCallbackQuery", { callback_query_id: query.id, text: t("no_admin", lang) });
@@ -129,27 +131,31 @@ const tgAdminHelper = {
 
     await tg.call("answerCallbackQuery", { callback_query_id: query.id });
 
-    if (data.startsWith("safelist_del_") || data.startsWith("del_safelist_")) {
-      const idToDel = data.split("_").pop();
+    if (baseData.startsWith("safelist_del_") || baseData.startsWith("del_safelist_")) {
+      const idToDel = baseData.split("_").pop();
       if (safelistService && safelistService.removeFromSafelist) {
-        await safelistService.removeFromSafelist(String(chatId), idToDel);
-        await safelistService.sendSafelistMenu(token, chatId, query.message.message_id);
+        await safelistService.removeFromSafelist(String(targetChatId), idToDel);
+        await safelistService.sendSafelistMenu(token, targetChatId, chatId, query.message.message_id);
       }
       return;
     }
 
-    switch (data) {
+    switch (baseData) {
       case "admin_clean": {
-        const { removed, checked } = await this.cleanDeletedAccounts(token, String(chatId));
+        const { removed, checked } = await this.cleanDeletedAccounts(token, String(targetChatId));
         await tg.send(chatId, t("clean_res", lang).replace("{checked}", checked).replace("{removed}", removed));
         break;
       }
       case "admin_count": {
-        const count = await tg.call("getChatMembersCount", { chat_id: chatId }).catch(() => "?");
+        const count = await tg.call("getChatMembersCount", { chat_id: targetChatId }).catch(() => "?");
         await tg.send(chatId, t("count_res", lang).replace("{count}", count));
         break;
       }
       case "admin_pin_last": {
+        if (targetChatId !== chatId) {
+          await tg.send(chatId, "❌ Diese Funktion ist nur direkt im Channel/in der Gruppe als Reply auf eine Nachricht verfügbar.");
+          break;
+        }
         const msgToPin = query.message?.reply_to_message?.message_id;
         if (msgToPin) {
           await tg.pinMessage(chatId, msgToPin);
@@ -160,13 +166,17 @@ const tgAdminHelper = {
         break;
       }
       case "admin_del_last": {
+        if (targetChatId !== chatId) {
+          await tg.send(chatId, "❌ Diese Funktion ist nur direkt im Channel/in der Gruppe verfügbar.");
+          break;
+        }
         const delId = query.message?.message_id - 1;
         if (delId) await tg.deleteMessage(chatId, delId).catch(() => {});
         await tg.deleteMessage(chatId, query.message.message_id).catch(() => {});
         break;
       }
       case "admin_schedule": {
-        const { data: msgs } = await supabase.from("scheduled_messages").select("id, message, next_run_at, repeat").eq("channel_id", String(chatId)).eq("is_active", true);
+        const { data: msgs } = await supabase.from("scheduled_messages").select("id, message, next_run_at, repeat").eq("channel_id", String(targetChatId)).eq("is_active", true);
         if (!msgs?.length) {
           await tg.send(chatId, t("sched_none", lang));
         } else {
@@ -176,20 +186,23 @@ const tgAdminHelper = {
         break;
       }
       case "admin_safelist": {
-        if (safelistService && safelistService.sendSafelistMenu) { await safelistService.sendSafelistMenu(token, chatId, query.message.message_id); }
+        if (safelistService && safelistService.sendSafelistMenu) { 
+          await safelistService.sendSafelistMenu(token, targetChatId, chatId, query.message.message_id); 
+        }
         break;
       }
       case "admin_menu": {
+        const suffix = query.extractedChannelId ? `_${query.extractedChannelId}` : "";
         await tg.call("editMessageText", {
           chat_id: chatId, message_id: query.message.message_id, text: t("admin_menu", lang), parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
-              [{ text: t("clean", lang), callback_data: "admin_clean" }],
-              [{ text: t("pin", lang), callback_data: "admin_pin_last" }],
-              [{ text: t("count", lang), callback_data: "admin_count" }],
-              [{ text: t("del_last", lang), callback_data: "admin_del_last" }],
-              [{ text: t("sched", lang), callback_data: "admin_schedule" }],
-              [{ text: t("safe", lang), callback_data: "admin_safelist" }]
+              [{ text: t("clean", lang), callback_data: "admin_clean" + suffix }],
+              [{ text: t("pin", lang), callback_data: "admin_pin_last" + suffix }],
+              [{ text: t("count", lang), callback_data: "admin_count" + suffix }],
+              [{ text: t("del_last", lang), callback_data: "admin_del_last" + suffix }],
+              [{ text: t("sched", lang), callback_data: "admin_schedule" + suffix }],
+              [{ text: t("safe", lang), callback_data: "admin_safelist" + suffix }]
             ]
           }
         }).catch(() => {});

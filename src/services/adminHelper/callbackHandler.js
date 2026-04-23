@@ -358,7 +358,6 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
     pendingInputs[String(qUserId)] = { action: "collecting_proofs", feedbackId: fbId2, channelId: chanId4, proofCount: 0 };
     const botName = settings?.bot_name || "AdminHelper";
     
-    // FIX: "Dem Bot schreiben" Button wird jetzt HIER im Channel gesendet!
     await tg.call("sendMessage", { 
       chat_id: qChatId, 
       text: `📎 Bitte sende Proofs dem Bot privat.`, 
@@ -366,7 +365,6 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
       reply_markup: { inline_keyboard: [[{ text: "💬 Dem Bot schreiben", url: `https://t.me/${botName}?start=proofs_${fbId2}` }]] }
     });
 
-    // FIX: Die Privatnachricht enthält nun KEINEN Button mehr.
     await tg.call("sendMessage", { 
       chat_id: String(qUserId),
       text: `📎 <b>Proofs einreichen</b>\n\nSchreibe dem Bot <b>hier direkt</b> und sende deine Beweise (Fotos, Videos, Screenshots, Text).\n\nWenn du fertig bist: /done\nAbbrechen: /cancel`,
@@ -375,10 +373,8 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
     return;
   }
 
-  // FIX: Abfangen des "Fertig (/done)" Buttons im Privat-Chat
   if (data === "proof_done_btn") {
     await answerCb();
-    // Wenn der User klickt, gaukeln wir dem System vor, er hätte "/done" getippt
     const inputWizardHandler = require("./inputWizardHandler");
     await inputWizardHandler.handle(tg, supabase_db, qUserId, "/done", settings, q.message);
     return;
@@ -492,6 +488,15 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
   const chData = await getChannel(qChatId);
   if (q.message?.chat?.type !== "private" && chData && chData.is_active === false) {
     return answerCb({ text: "❌ Kanal ist deaktiviert.", show_alert: true });
+  }
+
+  // Add the channel data directly into the query object for the tgAdminHelper to use if needed
+  if (q.data && (q.data.startsWith("admin_") || q.data.startsWith("del_safelist_") || q.data.startsWith("safelist_del_"))) {
+     const parts = q.data.split("_");
+     const extractedChannelId = parts[parts.length - 1];
+     if (extractedChannelId && extractedChannelId.startsWith("-")) {
+         q.extractedChannelId = extractedChannelId;
+     }
   }
   
   await answerCb();
