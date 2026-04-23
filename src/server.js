@@ -121,8 +121,7 @@ async function setAutoCommands() {
         { command: "feedbacks", description: "Zeigt das Ranking der Top-Verkäufer" },
         { command: "safeliste", description: "Zeigt die verifizierten Mitglieder" },
         { command: "userinfo", description: "Analysiert einen User (5x/Tag kostenlos)" },
-        { command: "ai", description: "KI-Assistent befragen (/ai Frage)" },
-        { command: "help", description: "Zeigt alle verfügbaren Befehle" }
+        { command: "ai", description: "KI-Assistent befragen (/ai Frage)" }
       ]
     });
     logger.info('[Telegram] Autocomplete Befehle registriert');

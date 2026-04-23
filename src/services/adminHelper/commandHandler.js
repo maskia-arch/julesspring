@@ -180,7 +180,40 @@ const commandHandler = {
 
     if (!text) return;
 
-    const adminCmds = ["/admin", "/menu", "/help"];
+    if (/^\/help(?:@\w+)?$/i.test(text)) {
+      const isAdm = await isGroupAdmin(tg, chatId, from.id);
+      if (isAdm) {
+        const botName = settings?.bot_name || "AdminHelper_Bot";
+        const msg = await tg.send(chatId, "⚙️ Ich habe dir das Admin-Schnellverwaltungsmenü als Privatnachricht gesendet.", { reply_markup: { inline_keyboard: [[{ text: "Zum Menü", url: `https://t.me/${botName}?start=menu` }]]}});
+        if (msg?.message_id) void safelistService.trackBotMessage(chatId, msg.message_id, "temp", 15000);
+        
+        await tg.call("sendMessage", {
+          chat_id: String(from.id),
+          text: `⚙️ <b>Admin-Menü für ${ch?.title || "Gruppe"}</b>\nWähle eine Funktion:`,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "🧹 Gelöschte Accounts entfernen", callback_data: `admin_clean_${chatId}` }],
+              [{ text: "📌 Letzte Nachricht pinnen", callback_data: `admin_pin_last_${chatId}` }],
+              [{ text: "📋 Mitglieder-Anzahl", callback_data: `admin_count_${chatId}` }],
+              [{ text: "🗑 Letzte Nachricht löschen", callback_data: `admin_del_last_${chatId}` }],
+              [{ text: "⏰ Geplante Nachrichten", callback_data: `admin_schedule_${chatId}` }],
+              [{ text: "🛡 Safelist verwalten", callback_data: `admin_safelist_${chatId}` }]
+            ]
+          }
+        });
+      } else {
+        const helpText = `📋 <b>Verfügbare Befehle</b>\n\n` + 
+          (ch?.ai_enabled ? `<b>/ai [Frage]</b> – KI-Assistent befragen\n` : "") + 
+          (ch?.safelist_enabled ? `<b>/feedbacks @user</b> – Top 10 Verkäufer einsehen\n<b>/check @user</b> – Status & Feedbacks prüfen\n<b>/scamliste</b> – Scamliste ansehen\n<b>/safeliste</b> – Safelist ansehen\n` : "") + 
+          `<b>/userinfo [ID|@user]</b> – User-Info (5x/Tag kostenlos)`;
+        const helpMsg = await tg.send(chatId, helpText);
+        if (helpMsg?.message_id) void safelistService.trackBotMessage(chatId, helpMsg.message_id, "temp", 5 * 60 * 1000);
+      }
+      return;
+    }
+
+    const adminCmds = ["/admin", "/menu"];
     if (adminCmds.some(cmd => text.startsWith(cmd) || new RegExp(`^${cmd}(?:@\\w+)?`, "i").test(text))) {
       if (await isGroupAdmin(tg, chatId, from.id)) {
         await tg.call("sendMessage", {
@@ -423,19 +456,6 @@ const commandHandler = {
         await userInfoService.runUserInfo(tg, supabase_db, from.id, lookupId, chatId, null, chatId);
         await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
       }
-      return;
-    }
-
-    if (/^\/help(?:@\w+)?$/i.test(text)) {
-      const isAdm = await isGroupAdmin(tg, chatId, from.id);
-      let helpText;
-      if (isAdm) {
-        helpText = `📋 <b>Admin-Befehle</b>\n\n<b>/ai [Frage]</b> – KI-Antwort anfordern\n<b>/ban [Grund]</b> (Reply) – User dauerhaft bannen\n<b>/unban [ID]</b> – User entbannen\n<b>/mute [Dauer] [Grund]</b> (Reply) – User stummschalten\n  Dauer: 1h / 12h / 24h / 7d / 30d / permanent\n<b>/del</b> (Reply) – Nachricht löschen\n<b>/pin</b> (Reply) – Nachricht pinnen\n<b>/userinfo [ID|@user]</b> – User-Informationen abrufen\n<b>/safelist @user</b> – User verifizieren\n<b>/scamlist @user</b> – Scam melden\n<b>/feedbacks @user</b> – Feedbacks einsehen\n<b>/clean</b> – Gelöschte Accounts entfernen\n<b>/settings</b> – Bot-Einstellungen (privat)`;
-      } else {
-        helpText = `📋 <b>Verfügbare Befehle</b>\n\n` + (ch?.ai_enabled ? `<b>/ai [Frage]</b> – KI-Assistent befragen\n` : "") + (ch?.safelist_enabled ? `<b>/feedbacks @user</b> – Feedbacks zu einem User\n<b>/check @user</b> – Status prüfen\n<b>/scamlist @user [Grund]</b> – Scammer melden\n` : "") + `<b>/userinfo [ID|@user]</b> – User-Info (5x/Tag kostenlos)\n<b>/help</b> – Diese Hilfe`;
-      }
-      const helpMsg = await tg.send(chatId, helpText);
-      if (helpMsg?.message_id) void safelistService.trackBotMessage(chatId, helpMsg.message_id, "temp", 5 * 60 * 1000);
       return;
     }
 
