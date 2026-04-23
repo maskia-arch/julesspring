@@ -300,7 +300,12 @@ const commandHandler = {
     }
 
     if (/^\/feedbacks?(?:@\w+)?$/i.test(text) && safelistActive && ch?.is_approved) {
-      const { data: top10 } = await supabase_db.rpc("get_top_sellers", { p_channel_id: chatId, p_limit: 10 }).catch(() => ({ data: null }));
+      let top10 = null;
+      try {
+        const res = await supabase_db.rpc("get_top_sellers", { p_channel_id: chatId, p_limit: 10 });
+        top10 = res.data;
+      } catch (e) {}
+      
       const medals = ["🥇","🥈","🥉"];
       let rankText = "🏆 <b>Top 10 Verkäufer</b>\n\n";
       rankText += top10?.length ? top10.map((u,i) => `${medals[i]||`${i+1}.`} @${u.username||u.user_id} — <b>${u.score} Pkt</b> (✅ ${u.pos_count} | ⚠️ ${u.neg_count})`).join("\n") : "<i>Noch kein Ranking verfügbar.</i>";
@@ -498,12 +503,20 @@ const commandHandler = {
       return;
     }
 
-    const isReplyToBot = msg.reply_to_message && from?.id ? await safelistService.isBotMessage(chatId, msg.reply_to_message.message_id) : false;
-    const aiMatch = text.match(/^\/ai(?:@\w+)?\s+(.*)/i);
-    const aiQuestion = aiMatch ? aiMatch[1].trim() : (isReplyToBot && !text.startsWith("/") ? text : null);
     const blockedThreads = Array.isArray(ch?.blocked_thread_ids) ? ch.blocked_thread_ids : [];
     const currentThread = msg.message_thread_id || 0;
     const threadBlocked = currentThread && blockedThreads.includes(currentThread);
+
+    const isAiEmptyCmd = /^\/ai(?:@\w+)?$/i.test(text);
+    if (isAiEmptyCmd && ch?.is_approved && ch?.ai_enabled && !threadBlocked) {
+      const sentAiPrompt = await tg.send(chatId, "🤖 <b>KI-Assistent</b>\n\nBitte antworte direkt auf <b>diese Nachricht</b> mit deiner Frage, um mit der AI zu sprechen.", { parse_mode: "HTML", reply_to_message_id: msg.message_id });
+      if (sentAiPrompt?.message_id) void safelistService.trackBotMessage(chatId, sentAiPrompt.message_id, "temp", 60000);
+      return;
+    }
+
+    const isReplyToBot = msg.reply_to_message && from?.id ? await safelistService.isBotMessage(chatId, msg.reply_to_message.message_id) : false;
+    const aiMatch = text.match(/^\/ai(?:@\w+)?\s+(.*)/i);
+    const aiQuestion = aiMatch ? aiMatch[1].trim() : (isReplyToBot && !text.startsWith("/") ? text : null);
 
     if (aiQuestion && ch?.is_approved && ch?.ai_enabled && !threadBlocked) {
       const history = from?.id ? await safelistService.getConversationHistory(chatId, from.id, 5) : [];
