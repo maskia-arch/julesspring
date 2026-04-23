@@ -111,6 +111,7 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
       fbId = fbResult?.id;
     } catch (_) {}
 
+    const botName = settings?.bot_name || "AdminHelper";
     const proofKb = [[
       { text: "📎 Ja, Proofs senden", callback_data: `fb_want_proof_${fbId}_${submitterId}_${chanId3}` },
       { text: "✌️ Nein, reicht mir", callback_data: `fb_no_proof_${fbId}_${submitterId}_${chanId3}` }
@@ -357,11 +358,29 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
     pendingInputs[String(qUserId)] = { action: "collecting_proofs", feedbackId: fbId2, channelId: chanId4, proofCount: 0 };
     const botName = settings?.bot_name || "AdminHelper";
     
-    await tg.call("sendMessage", { chat_id: qChatId, text: `📎 Bitte sende Proofs dem Bot privat.`, parse_mode: "HTML" });
-    await tg.call("sendMessage", { chat_id: String(qUserId),
-      text: `📎 <b>Proofs einreichen</b>\n\nSchreibe dem Bot <b>direkt privat</b> und sende deine Beweise (Fotos, Videos, Screenshots, Text).\n\nWenn du fertig bist: /done\nAbbrechen: /cancel`,
-      parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "💬 Dem Bot schreiben", url: `https://t.me/${botName}?start=proofs_${fbId2}` }]] }
+    // FIX: "Dem Bot schreiben" Button wird jetzt HIER im Channel gesendet!
+    await tg.call("sendMessage", { 
+      chat_id: qChatId, 
+      text: `📎 Bitte sende Proofs dem Bot privat.`, 
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: [[{ text: "💬 Dem Bot schreiben", url: `https://t.me/${botName}?start=proofs_${fbId2}` }]] }
+    });
+
+    // FIX: Die Privatnachricht enthält nun KEINEN Button mehr.
+    await tg.call("sendMessage", { 
+      chat_id: String(qUserId),
+      text: `📎 <b>Proofs einreichen</b>\n\nSchreibe dem Bot <b>hier direkt</b> und sende deine Beweise (Fotos, Videos, Screenshots, Text).\n\nWenn du fertig bist: /done\nAbbrechen: /cancel`,
+      parse_mode: "HTML"
     }).catch(() => {});
+    return;
+  }
+
+  // FIX: Abfangen des "Fertig (/done)" Buttons im Privat-Chat
+  if (data === "proof_done_btn") {
+    await answerCb();
+    // Wenn der User klickt, gaukeln wir dem System vor, er hätte "/done" getippt
+    const inputWizardHandler = require("./inputWizardHandler");
+    await inputWizardHandler.handle(tg, supabase_db, qUserId, "/done", settings, q.message);
     return;
   }
 
@@ -404,7 +423,7 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
           if (chAdmin?.added_by_user_id) {
             const emoji = isPos ? "✅" : "⚠️";
             await tg.call("sendMessage", { chat_id: String(chAdmin.added_by_user_id),
-              text: `📋 <b>Neues Feedback (Ohne Proofs)</b>\n\nChannel: ${chAdmin.title || chanId5}\nZiel: @${fbRow.target_username}\nVon: @${q.from?.username || qUserId}\nTyp: ${emoji} ${isPos ? "Positiv" : "Negativ"}\n\n<i>${(fbRow.feedback_text||"").substring(0,150)}</i>`,
+              text: `📋 <b>Neues Feedback (Ohne Proofs)</b>\n\nChannel: ${chAdmin.title || chanId5}\nID: <code>${fbId3}</code>\nZiel: @${fbRow.target_username}\nVon: @${q.from?.username || qUserId}\nTyp: ${emoji} ${isPos ? "Positiv" : "Negativ"}\n\n<i>${(fbRow.feedback_text||"").substring(0,150)}</i>`,
               parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "✅ Bestätigen", callback_data: `fb_approve_${fbId3}` }, { text: "❌ Ablehnen", callback_data: `fb_reject_${fbId3}` }]]}
             }).catch(() => {});
           }
@@ -462,10 +481,10 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
     await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
     if (data.startsWith("fb_approve_")) {
       await safelistService.approveFeedback(feedbackId, qUserId, ch2);
-      await tg.call("sendMessage", { chat_id: String(qUserId), text: "✅ Meldung bestätigt. User wurde aktualisiert." });
+      await tg.call("sendMessage", { chat_id: String(qUserId), text: `✅ Meldung (ID: ${feedbackId}) bestätigt. User wurde aktualisiert.` });
     } else {
       await safelistService.rejectFeedback(feedbackId, qUserId);
-      await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Meldung abgelehnt." });
+      await tg.call("sendMessage", { chat_id: String(qUserId), text: `❌ Meldung (ID: ${feedbackId}) abgelehnt.` });
     }
     return;
   }

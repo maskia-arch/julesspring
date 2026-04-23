@@ -36,7 +36,6 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
   const pending = global.pendingInputs[String(userId)];
   if (!pending) return false;
 
-  // UX Fix: Lösche die Benutzereingabe sofort, damit der Chat sauber bleibt
   if (msg?.message_id) {
     await tg.call("deleteMessage", { chat_id: String(userId), message_id: msg.message_id }).catch(() => {});
   }
@@ -147,7 +146,7 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
 
   if (action === "collecting_proofs") {
     const { feedbackId, channelId: fbChanId } = pending;
-    if (text === "/done" || text === "/fertig") {
+    if (text === "/done" || text === "/fertig" || text === "proof_done_btn") {
       delete global.pendingInputs[String(userId)];
       const count = pending.proofCount || 0;
       try {
@@ -155,12 +154,22 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
         const { data: fb7 } = await supabase_db.from("user_feedbacks").select("feedback_type, target_user_id, target_username, feedback_text").eq("id", feedbackId).maybeSingle();
         if (fb7) {
           let autoApprove = false;
-          if (fb7.feedback_type === "positive") autoApprove = await safelistService.hasHighReputation(fbChanId, fb7.target_username, fb7.target_user_id);
+          let repCheck = null;
+          
+          if (fb7.feedback_type === "positive") {
+            repCheck = await supabase_db.from("user_reputation").select("score").eq("channel_id", fbChanId).ilike("username", fb7.target_username).maybeSingle();
+            if (repCheck?.data && repCheck.data.score >= 3) autoApprove = true;
+          }
+          
+          if (fb7.feedback_type === "negative") {
+             const scamCheck = await safelistService.checkScamlist(fbChanId, fb7.target_username, fb7.target_user_id);
+             if (scamCheck) autoApprove = true;
+          }
+
           if (autoApprove) {
              const ch7 = await getChannel(fbChanId);
              await safelistService.approveFeedback(parseInt(feedbackId), userId, ch7);
-             if (fb7.target_user_id) await supabase_db.rpc("update_user_reputation", { p_channel_id: fbChanId, p_user_id: fb7.target_user_id, p_username: fb7.target_username, p_delta: 1 }).catch(() => {});
-             await nextStep(tg, userId, pending, `✅ ${count} Proof(s) eingereicht! Feedback wurde direkt bestätigt (Trusted User).`, [[{ text: "◀️ Zurück", callback_data: `cfg_back_${fbChanId}` }]]);
+             await nextStep(tg, userId, pending, `✅ ${count} Proof(s) eingereicht! Feedback wurde direkt bestätigt (Auto-Approve Regel erfüllt).`, []);
              return true;
           } else {
              const { data: admSet } = await supabase_db.from("bot_channels").select("added_by_user_id, title").eq("id", String(fbChanId)).maybeSingle();
@@ -170,7 +179,7 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
                })();
                const emoji = fb7.feedback_type === "positive" ? "✅" : "⚠️";
                await tg.call("sendMessage", { chat_id: String(admSet.added_by_user_id),
-                 text: `📎 <b>Neues Feedback mit ${count} Proof(s)</b>\n\nChannel: ${admSet.title || fbChanId}\nFeedback-ID: ${feedbackId}\nZiel: @${fb7.target_username}\nTyp: ${emoji} ${fb7.feedback_type}\n\n<i>${(fb7.feedback_text||"").substring(0,150)}</i>\n\nBitte überprüfe die Beweise unten.`,
+                 text: `📎 <b>Neues Feedback (ID: <code>${feedbackId}</code>) mit ${count} Proof(s)</b>\n\nChannel: ${admSet.title || fbChanId}\nZiel: @${fb7.target_username}\nTyp: ${emoji} ${fb7.feedback_type}\n\n<i>${(fb7.feedback_text||"").substring(0,150)}</i>\n\nBitte überprüfe die Beweise unten.`,
                  parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "✅ Bestätigen", callback_data: `fb_approve_${feedbackId}` }, { text: "❌ Ablehnen", callback_data: `fb_reject_${feedbackId}` }]] }
                });
                for (const p of proofs.slice(0, 5)) {
@@ -182,26 +191,28 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
                  } catch (_) {}
                }
              }
-             await nextStep(tg, userId, pending, `✅ ${count} Proof(s) eingereicht! Der Admin wird benachrichtigt.`, [[{ text: "◀️ Zurück", callback_data: `cfg_back_${fbChanId}` }]]);
+             await nextStep(tg, userId, pending, `✅ ${count} Proof(s) eingereicht! Der Admin wird benachrichtigt.`, []);
              return true;
           }
         }
       } catch (_) {}
     }
-    const proofType = msg?.photo ? "photo" : msg?.video ? "video" : msg?.document ? "document" : "text";
-    const fileId = msg?.photo ? msg.photo[msg.photo.length-1]?.file_id : msg?.video ? msg.video.file_id : msg?.document ? msg.document.file_id : null;
-    try {
-      await supabase_db.from("feedback_proofs").insert([{ feedback_id: parseInt(feedbackId), proof_type: proofType, fileId: fileId || null, content: proofType === "text" ? (text||"").substring(0,1000) : null, caption: msg?.caption || null, submitted_by: parseInt(userId) }]);
-      global.pendingInputs[String(userId)] = { ...pending, proofCount: (pending.proofCount||0) + 1 };
-      await nextStep(tg, userId, pending, `✅ Proof ${(pending.proofCount||0)+1} gespeichert.\nWeitere senden oder /done zum Abschließen.`, [[{text:"✅ Fertig (/done)", callback_data:`cfg_noop`}]]);
-    } catch (e) { await nextStep(tg, userId, pending, "❌ Fehler: " + e.message); }
+    
+    if (text !== "proof_done_btn") {
+      const proofType = msg?.photo ? "photo" : msg?.video ? "video" : msg?.document ? "document" : "text";
+      const fileId = msg?.photo ? msg.photo[msg.photo.length-1]?.file_id : msg?.video ? msg.video.file_id : msg?.document ? msg.document.file_id : null;
+      try {
+        await supabase_db.from("feedback_proofs").insert([{ feedback_id: parseInt(feedbackId), proof_type: proofType, fileId: fileId || null, content: proofType === "text" ? (text||"").substring(0,1000) : null, caption: msg?.caption || null, submitted_by: parseInt(userId) }]);
+        global.pendingInputs[String(userId)] = { ...pending, proofCount: (pending.proofCount||0) + 1 };
+        await nextStep(tg, userId, pending, `✅ Proof ${(pending.proofCount||0)+1} gespeichert.\nWeitere senden oder "Fertig" tippen.`, [[{text:"✅ Fertig (/done)", callback_data:`proof_done_btn`}]]);
+      } catch (e) { await nextStep(tg, userId, pending, "❌ Fehler: " + e.message); }
+    }
     return true;
   }
 
   if (action === "safelist_add_user") {
     delete global.pendingInputs[String(userId)];
     
-    // Check if the channel is approved before proceeding
     const ch = await getChannel(channelId);
     if (!ch || !ch.is_approved) {
       await nextStep(tg, userId, pending, "❌ <b>Kanal nicht verifiziert</b>\n\nDieser Kanal ist noch nicht verifiziert. Du kannst erst Benutzer zur Safelist hinzufügen, wenn dein Kanal freigegeben wurde.", [[{ text: "◀️ Zurück", callback_data: `cfg_menu_channel_${channelId}` }]]);
@@ -232,7 +243,6 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
   if (action === "scamlist_add_user") {
     delete global.pendingInputs[String(userId)];
     
-    // Check if the channel is approved before proceeding
     const ch = await getChannel(channelId);
     if (!ch || !ch.is_approved) {
       await nextStep(tg, userId, pending, "❌ <b>Kanal nicht verifiziert</b>\n\nDieser Kanal ist noch nicht verifiziert. Du kannst erst Scammer melden, wenn dein Kanal freigegeben wurde.", [[{ text: "◀️ Zurück", callback_data: `cfg_menu_channel_${channelId}` }]]);
@@ -349,11 +359,8 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
     }
     delete global.pendingInputs[String(userId)];
     
-    // Anstelle des Menüs schicken wir den Info-Report, deshalb die Box kurz updaten
     await nextStep(tg, userId, pending, "🔍 Analysiere User...", []);
     await userInfoService.runUserInfo(tg, supabase_db, userId, targetId, channelId, null, null);
-    // UserInfo sendet aktuell eine eigene neue Box. Wir könnten das im userInfoService.js umschreiben, 
-    // aber das reicht fürs Erste, um die Eingaben aufzuräumen.
     return true;
   }
 

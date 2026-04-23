@@ -44,7 +44,6 @@ const safelistService = {
     const feedbacks = await this.getFeedbacks(channelId, username, userId);
     if (!feedbacks.length) return null;
 
-    // 1. Cache aus der Datenbank laden
     let q = supabase.from("user_reputation").select("ai_summary, ai_summary_updated_at").eq("channel_id", String(channelId));
     if (userId) q = q.eq("user_id", userId);
     else if (username) q = q.ilike("username", username);
@@ -53,12 +52,10 @@ const safelistService = {
     const newestFeedbackTime = new Date(feedbacks[0].created_at).getTime();
     const cacheTime = rep?.ai_summary_updated_at ? new Date(rep.ai_summary_updated_at).getTime() : 0;
 
-    // 2. Kosten sparen: Ist der Cache aktuell? Dann sofort zurückgeben!
     if (rep && rep.ai_summary && cacheTime >= newestFeedbackTime) {
       return rep.ai_summary;
     }
 
-    // 3. Neu generieren, da neues Feedback vorliegt
     const allText = feedbacks.map(f => `[${f.feedback_type === "positive" ? "+" : "-"}] ${f.feedback_text || ""}`).join("\n");
     try {
       const resp = await axios.post("https://api.openai.com/v1/chat/completions",
@@ -73,7 +70,6 @@ const safelistService = {
       
       const summary = resp.data.choices[0].message.content.trim();
 
-      // 4. Neuen Cache in der Datenbank speichern
       if (rep) {
         let updateQ = supabase.from("user_reputation").update({
             ai_summary: summary, ai_summary_updated_at: new Date().toISOString()
@@ -116,10 +112,8 @@ const safelistService = {
     try { const r2 = await supabase.from("user_feedbacks").select("*").eq("id", feedbackId).single(); fb = r2.data; } catch (_) { }
     if (!fb) return null;
 
-    // 1. Status updaten
     await supabase.from("user_feedbacks").update({ status: "approved", reviewed_by: adminUserId, updated_at: new Date() }).eq("id", feedbackId);
 
-    // 2. Reputation updaten (+1 Positiv / -10 Negativ)
     const isPos = fb.feedback_type === "positive";
     const delta = isPos ? 1 : -10;
 
@@ -129,12 +123,10 @@ const safelistService = {
          p_channel_id: String(fb.channel_id), p_user_id: fb.target_user_id || 0,
          p_username: fb.target_username, p_delta: delta
       });
-      // Score direkt abfragen für Autokick-Prüfung
       const repCheck = await supabase.from("user_reputation").select("score").eq("channel_id", String(fb.channel_id)).ilike("username", fb.target_username).maybeSingle();
       currentScore = repCheck.data?.score || 0;
     } catch (e) { logger.warn("Reputation Update Error: ", e.message); }
 
-    // 3. Autokick auf Scamliste ab Score -50
     if (currentScore <= -50) {
       await supabase.from("scam_entries").upsert([{
         channel_id: String(fb.channel_id), user_id: fb.target_user_id,
@@ -163,11 +155,19 @@ const safelistService = {
 
   async hasHighReputation(channelId, targetUsername, targetUserId) {
     try {
-      let q = supabase.from("user_reputation").select("pos_count").eq("channel_id", String(channelId));
+      let qSafe = supabase.from("channel_safelist").select("id").eq("channel_id", String(channelId));
+      if (targetUserId) qSafe = qSafe.eq("user_id", targetUserId);
+      else if (targetUsername) qSafe = qSafe.ilike("username", targetUsername);
+      const { data: safeData } = await qSafe.maybeSingle();
+      
+      if (safeData) return true;
+
+      let q = supabase.from("user_reputation").select("score").eq("channel_id", String(channelId));
       if (targetUserId) q = q.eq("user_id", targetUserId);
       else if (targetUsername) q = q.ilike("username", targetUsername);
       const { data } = await q.maybeSingle();
-      return (data && data.pos_count >= 3);
+      
+      return (data && data.score >= 3);
     } catch (_) { return false; }
   },
 

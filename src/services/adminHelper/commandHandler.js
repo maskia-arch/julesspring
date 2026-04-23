@@ -64,8 +64,8 @@ const commandHandler = {
         if (handled) return;
       }
 
-      if (/^\/safeliste?(?:\s+@?(.+))?$/i.test(text)) {
-        const slMatch = text.match(/^\/safeliste?\s+@?(.+)/i);
+      if (/^\/safeliste?(?:@\w+)?(?:\s+@?(.+))?$/i.test(text)) {
+        const slMatch = text.match(/^\/safeliste?(?:@\w+)?\s+@?(.+)/i);
         const slTarget = slMatch ? slMatch[1].trim() : null;
         const { data: myChForSl } = await supabase.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
         if (!myChForSl?.length) {
@@ -87,8 +87,8 @@ const commandHandler = {
         return;
       }
 
-      if (/^\/scamliste?(?:\s+@?(.+))?$/i.test(text)) {
-        const scMatch = text.match(/^\/scamliste?\s+@?(.+)/i);
+      if (/^\/scamliste?(?:@\w+)?(?:\s+@?(.+))?$/i.test(text)) {
+        const scMatch = text.match(/^\/scamliste?(?:@\w+)?\s+@?(.+)/i);
         const scTarget = scMatch ? scMatch[1].trim() : null;
         const { data: myChForSc } = await supabase.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
         if (!myChForSc?.length) {
@@ -110,13 +110,13 @@ const commandHandler = {
         return;
       }
 
-      if (text === "/cancel") {
+      if (/^\/cancel(?:@\w+)?$/i.test(text)) {
         delete pendingInputs[String(from.id)];
         await tg.send(chatId, "❌ Abgebrochen.");
         return;
       }
 
-      if (/^\/refill(@\w+)?/i.test(text) || text.toLowerCase() === "credits nachladen") {
+      if (/^\/refill(?:@\w+)?/i.test(text) || text.toLowerCase() === "credits nachladen") {
         const { data: myChans } = await supabase_db.from("bot_channels").select("id, title, type, token_used, token_limit, credits_expire_at").eq("added_by_user_id", String(from.id)).eq("is_active", true);
         if (!myChans?.length) {
           await tg.send(chatId, "❌ Kein aktiver registrierter Channel gefunden.");
@@ -132,7 +132,7 @@ const commandHandler = {
         return;
       }
 
-      if (/^\/buy(@\w+)?/i.test(text) || text.toLowerCase() === "credits kaufen") {
+      if (/^\/buy(?:@\w+)?/i.test(text) || text.toLowerCase() === "credits kaufen") {
         const { data: myChans } = await supabase_db.from("bot_channels").select("id, title, type").eq("added_by_user_id", String(from.id)).eq("is_active", true);
         if (!myChans?.length) {
           await tg.send(chatId, "❌ Du hast noch keinen aktiven registrierten Channel.");
@@ -143,7 +143,7 @@ const commandHandler = {
         return;
       }
 
-      if (/^\/(?:start|menu|settings|dashboard|help)(@\w+)?/i.test(text)) {
+      if (/^\/(?:start|menu|settings|dashboard|help)(?:@\w+)?/i.test(text)) {
         const { data: allMyChannels } = await supabase_db.from("bot_channels").select("id, title, type, is_approved, ai_enabled, bot_language, is_active").eq("added_by_user_id", String(from.id));
 
         if (!allMyChannels?.length) {
@@ -181,7 +181,7 @@ const commandHandler = {
     if (!text) return;
 
     const adminCmds = ["/admin", "/menu", "/help"];
-    if (adminCmds.some(cmd => text.startsWith(cmd))) {
+    if (adminCmds.some(cmd => text.startsWith(cmd) || new RegExp(`^${cmd}(?:@\\w+)?`, "i").test(text))) {
       if (await isGroupAdmin(tg, chatId, from.id)) {
         await tg.call("sendMessage", {
           chat_id: chatId,
@@ -205,7 +205,7 @@ const commandHandler = {
       return;
     }
 
-    if (text === "/settings" || text.startsWith("/settings@")) {
+    if (/^\/settings(?:@\w+)?$/i.test(text)) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       await tg.call("sendMessage", {
         chat_id: chatId,
@@ -218,7 +218,7 @@ const commandHandler = {
       return;
     }
 
-    if (text === "/clean" || text.startsWith("/clean@")) {
+    if (/^\/clean(?:@\w+)?$/i.test(text)) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       await tg.send(chatId, "🔍 Prüfe Mitgliederliste...");
 
@@ -245,14 +245,14 @@ const commandHandler = {
       return;
     }
 
-    if ((text === "/pin" || text.startsWith("/pin@")) && msg.reply_to_message) {
+    if (/^\/pin(?:@\w+)?$/i.test(text) && msg.reply_to_message) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       await tg.call("pinChatMessage", { chat_id: chatId, message_id: msg.reply_to_message.message_id, disable_notification: false });
       await tg.send(chatId, "📌 Gepinnt!");
       return;
     }
 
-    if ((text === "/del" || text.startsWith("/del@")) && msg.reply_to_message) {
+    if (/^\/del(?:@\w+)?$/i.test(text) && msg.reply_to_message) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.reply_to_message.message_id }).catch(() => {});
       await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
@@ -281,7 +281,7 @@ const commandHandler = {
 
     const safelistActive = ch?.safelist_enabled || false;
 
-    if (/^\/safeliste?$/i.test(text) && safelistActive && ch?.is_approved) {
+    if (/^\/safeliste?(?:@\w+)?$/i.test(text) && safelistActive && ch?.is_approved) {
       const { data: sl2 } = await supabase_db.from("channel_safelist").select("username, user_id, score, created_at").eq("channel_id", chatId).order("created_at", { ascending: false }).limit(20);
       let slText = "🛡 <b>Safelist</b>\n\n";
       slText += sl2?.length ? sl2.map((e,i) => `${i+1}. ✅ @${e.username||e.user_id}` + (e.score ? ` (${e.score} Pkt)` : "")).join("\n") : "<i>Noch keine Einträge.</i>";
@@ -290,7 +290,7 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/scamliste?$/i.test(text) && safelistActive && ch?.is_approved) {
+    if (/^\/scamliste?(?:@\w+)?$/i.test(text) && safelistActive && ch?.is_approved) {
       const { data: sc2 } = await supabase_db.from("scam_entries").select("username, user_id, reason, created_at").eq("channel_id", chatId).order("created_at", { ascending: false }).limit(20);
       let scText = "⛔ <b>Scamliste</b>\n\n";
       scText += sc2?.length ? sc2.map((e,i) => `${i+1}. ⛔ @${e.username||e.user_id}` + (e.reason ? ` — <i>${e.reason.substring(0,60)}</i>` : "")).join("\n") : "<i>Noch keine Einträge.</i>";
@@ -299,7 +299,7 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/feedbacks?$/i.test(text) && safelistActive && ch?.is_approved) {
+    if (/^\/feedbacks?(?:@\w+)?$/i.test(text) && safelistActive && ch?.is_approved) {
       const { data: top10 } = await supabase_db.rpc("get_top_sellers", { p_channel_id: chatId, p_limit: 10 }).catch(() => ({ data: null }));
       const medals = ["🥇","🥈","🥉"];
       let rankText = "🏆 <b>Top 10 Verkäufer</b>\n\n";
@@ -309,7 +309,7 @@ const commandHandler = {
       return;
     }
 
-    const feedbackCmds = /^\/(?:check)\s+@?(\w+)/i;
+    const feedbackCmds = /^\/(?:check)(?:@\w+)?\s+@?(\w+)/i;
     const feedbackMatch = text.match(feedbackCmds);
     if (feedbackMatch && safelistActive && ch?.is_approved && ch?.is_active !== false) {
       const targetUsername = feedbackMatch[1];
@@ -344,7 +344,7 @@ const commandHandler = {
       return;
     }
 
-    const safelistAdminMatch = text.match(/^\/safe?list[e]?\s+@?(\w+)\s*(.*)/i);
+    const safelistAdminMatch = text.match(/^\/safe?list[e]?(?:@\w+)?\s+@?(\w+)\s*(.*)/i);
     if (safelistAdminMatch && safelistActive && ch?.is_approved) {
       if (!await isGroupAdmin(tg, chatId, from.id)) {
         const sent = await tg.send(chatId, "🔒 Nur Channel-Admins können Mitglieder verifizieren.");
@@ -366,7 +366,7 @@ const commandHandler = {
       return;
     }
 
-    const scamMatch = text.match(/^\/scam?list[e]?\s+@?(\w+)\s*(.*)/i);
+    const scamMatch = text.match(/^\/scam?list[e]?(?:@\w+)?\s+@?(\w+)\s*(.*)/i);
     if (scamMatch && safelistActive && ch?.is_approved) {
       const [, username, reason] = scamMatch;
       const fb = await safelistService.submitFeedback({
@@ -401,10 +401,10 @@ const commandHandler = {
       return;
     }
 
-    const isUserinfoCmd = /^\/userinfo(@\w+)?/i.test(text);
+    const isUserinfoCmd = /^\/userinfo(?:@\w+)?/i.test(text);
     if (isUserinfoCmd) {
       let lookupId = null;
-      const uiArg = text.replace(/^\/userinfo(@\w+)?\s*/i, "").trim();
+      const uiArg = text.replace(/^\/userinfo(?:@\w+)?\s*/i, "").trim();
       if (uiArg) {
         lookupId = uiArg;
       } else if (msg.reply_to_message?.from) {
@@ -421,7 +421,7 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/help(@\w+)?$/i.test(text)) {
+    if (/^\/help(?:@\w+)?$/i.test(text)) {
       const isAdm = await isGroupAdmin(tg, chatId, from.id);
       let helpText;
       if (isAdm) {
@@ -434,11 +434,11 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/ban(@\w+)?/i.test(text) && msg.reply_to_message && ch?.is_approved) {
+    if (/^\/ban(?:@\w+)?/i.test(text) && msg.reply_to_message && ch?.is_approved) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       const banTarget = msg.reply_to_message.from;
       if (!banTarget?.id) return;
-      const banReason = text.replace(/^\/ban(@\w+)?\s*/i, "").trim() || "Kein Grund angegeben";
+      const banReason = text.replace(/^\/ban(?:@\w+)?\s*/i, "").trim() || "Kein Grund angegeben";
       try {
         await tg.call("banChatMember", { chat_id: chatId, user_id: banTarget.id, until_date: 0, revoke_messages: false });
         const target = banTarget.username ? "@" + banTarget.username : (banTarget.first_name || String(banTarget.id));
@@ -449,9 +449,9 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/unban(@\w+)?\s+(\S+)/i.test(text) && ch?.is_approved) {
+    if (/^\/unban(?:@\w+)?\s+(\S+)/i.test(text) && ch?.is_approved) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
-      const unbanId = text.match(/^\/unban(@\w+)?\s+(\S+)/i)?.[2];
+      const unbanId = text.match(/^\/unban(?:@\w+)?\s+(\S+)/i)?.[1];
       if (!unbanId) return;
       try {
         await tg.call("unbanChatMember", { chat_id: chatId, user_id: unbanId, only_if_banned: false });
@@ -465,24 +465,24 @@ const commandHandler = {
       return;
     }
 
-    const muteMatch = text.match(/^\/mute(@\w+)?(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?/i);
+    const muteMatch = text.match(/^\/mute(?:@\w+)?(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?/i);
     const muteTarget = msg.reply_to_message?.from || null;
-    const muteByIdMatch = !msg.reply_to_message && text.match(/^\/mute(@\w+)?\s+(\d+)(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?/i);
+    const muteByIdMatch = !msg.reply_to_message && text.match(/^\/mute(?:@\w+)?\s+(\d+)(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?/i);
 
     if (((muteMatch && muteTarget) || muteByIdMatch) && ch?.is_approved) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       let targetId, targetName, durationStr, muteReason;
 
       if (muteByIdMatch) {
-        targetId = muteByIdMatch[2];
-        durationStr = muteByIdMatch[3] || "24h";
-        muteReason = muteByIdMatch[4] || "";
+        targetId = muteByIdMatch[1];
+        durationStr = muteByIdMatch[2] || "24h";
+        muteReason = muteByIdMatch[3] || "";
         targetName = `<code>${targetId}</code>`;
       } else {
         targetId = muteTarget.id;
         targetName = muteTarget.username ? "@" + muteTarget.username : (muteTarget.first_name || String(muteTarget.id));
-        durationStr = muteMatch[2] || "24h";
-        muteReason = muteMatch[3] || "";
+        durationStr = muteMatch[1] || "24h";
+        muteReason = muteMatch[2] || "";
       }
 
       const durationSeconds = blacklistService.parseDuration ? blacklistService.parseDuration(durationStr) : 86400;
@@ -499,7 +499,7 @@ const commandHandler = {
     }
 
     const isReplyToBot = msg.reply_to_message && from?.id ? await safelistService.isBotMessage(chatId, msg.reply_to_message.message_id) : false;
-    const aiMatch = text.match(/^\/ai\s+(.*)/i);
+    const aiMatch = text.match(/^\/ai(?:@\w+)?\s+(.*)/i);
     const aiQuestion = aiMatch ? aiMatch[1].trim() : (isReplyToBot && !text.startsWith("/") ? text : null);
     const blockedThreads = Array.isArray(ch?.blocked_thread_ids) ? ch.blocked_thread_ids : [];
     const currentThread = msg.message_thread_id || 0;
