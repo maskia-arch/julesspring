@@ -203,12 +203,16 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
     const isRepeat = !!wizard.intervalMinutes;
 
     try {
-      await supabase_db.from("scheduled_messages").insert([{
+      const { error: insertError } = await supabase_db.from("scheduled_messages").insert([{
         channel_id: chanId2, message: wizard.msgText || "", photo_file_id: wizard.fileId || null, file_type: wizard.fileType || null,
         cron_expr: null, interval_minutes: wizard.intervalMinutes || null, end_at: wizard.endAt || null, 
         next_run_at: wizard.nextRunAt || new Date().toISOString(), repeat: isRepeat,
         is_active: true, pin_after_send: wizard.pinAfterSend || false, delete_previous: wizard.deletePrevious || false
       }]);
+      
+      if (insertError) {
+        throw insertError;
+      }
       
       const dt = wizard.nextRunAt ? new Date(wizard.nextRunAt).toLocaleString("de-DE") : "sofort";
       let repeatLabel = "einmalig";
@@ -226,7 +230,8 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
         await tg.call("sendMessage", { chat_id: String(qUserId), text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück zu Wiederholungen", callback_data: `cfg_repeat_${chanId2}` }]] } });
       });
     } catch (e2) {
-      await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Fehler beim Speichern: " + e2.message });
+      await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Fehler beim Speichern der geplanten Nachricht:\n" + e2.message });
+      logger.error("[Schedule Save Error]", e2.message);
     }
     return;
   }
