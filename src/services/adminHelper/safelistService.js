@@ -107,6 +107,102 @@ const safelistService = {
     return data || [];
   },
 
+  async _recalculateUserReputation(channelId, targetUsername, targetUserId) {
+    try {
+      let q = supabase.from("user_feedbacks").select("feedback_type").eq("channel_id", String(channelId)).eq("status", "approved");
+      
+      if (targetUserId) {
+        q = q.eq("target_user_id", targetUserId);
+      } else if (targetUsername) {
+        q = q.ilike("target_username", targetUsername);
+      } else {
+        return;
+      }
+
+      const { data: feedbacks } = await q;
+      
+      if (!feedbacks || feedbacks.length === 0) {
+        let delQ = supabase.from("user_reputation").delete().eq("channel_id", String(channelId));
+        if (targetUserId) delQ = delQ.eq("user_id", targetUserId);
+        else delQ = delQ.ilike("username", targetUsername);
+        await delQ;
+        return;
+      }
+
+      const posCount = feedbacks.filter(f => f.feedback_type === "positive").length;
+      const negCount = feedbacks.filter(f => f.feedback_type === "negative").length;
+      const newScore = posCount - (negCount * 10);
+
+      let updateQ = supabase.from("user_reputation").update({
+        score: newScore,
+        pos_count: posCount,
+        neg_count: negCount,
+        updated_at: new Date().toISOString()
+      }).eq("channel_id", String(channelId));
+
+      if (targetUserId) updateQ = updateQ.eq("user_id", targetUserId);
+      else updateQ = updateQ.ilike("username", targetUsername);
+      
+      const { data: updateRes } = await updateQ.select();
+      
+      if (!updateRes || updateRes.length === 0) {
+        await supabase.from("user_reputation").insert([{
+          channel_id: String(channelId),
+          user_id: targetUserId || null,
+          username: targetUsername || null,
+          score: newScore,
+          pos_count: posCount,
+          neg_count: negCount
+        }]);
+      }
+      
+    } catch (e) {
+      logger.warn(`Fehler bei Neuberechnung der Reputation: ${e.message}`);
+    }
+  },
+
+  async deleteFeedback(channelId, feedbackId) {
+    try {
+      const { data: fb } = await supabase.from("user_feedbacks").select("target_user_id, target_username").eq("id", feedbackId).eq("channel_id", String(channelId)).single();
+      
+      if (fb) {
+        await supabase.from("user_feedbacks").delete().eq("id", feedbackId).eq("channel_id", String(channelId));
+        await this._recalculateUserReputation(channelId, fb.target_username, fb.target_user_id);
+      }
+    } catch (e) {
+      logger.warn(`Fehler beim Löschen des Feedbacks ${feedbackId}: ${e.message}`);
+    }
+  },
+
+  async resetUserReputation(channelId, targetIdentifier) {
+    try {
+      let isId = /^\d+$/.test(targetIdentifier);
+      
+      let delFbQ = supabase.from("user_feedbacks").delete().eq("channel_id", String(channelId));
+      if (isId) delFbQ = delFbQ.eq("target_user_id", targetIdentifier);
+      else delFbQ = delFbQ.ilike("target_username", targetIdentifier);
+      await delFbQ;
+
+      let delRepQ = supabase.from("user_reputation").delete().eq("channel_id", String(channelId));
+      if (isId) delRepQ = delRepQ.eq("user_id", targetIdentifier);
+      else delRepQ = delRepQ.ilike("username", targetIdentifier);
+      await delRepQ;
+
+      let delSafeQ = supabase.from("channel_safelist").delete().eq("channel_id", String(channelId));
+      if (isId) delSafeQ = delSafeQ.eq("user_id", targetIdentifier);
+      else delSafeQ = delSafeQ.ilike("username", targetIdentifier);
+      await delSafeQ;
+
+      let delScamQ = supabase.from("scam_entries").delete().eq("channel_id", String(channelId));
+      if (isId) delScamQ = delScamQ.eq("user_id", targetIdentifier);
+      else delScamQ = delScamQ.ilike("username", targetIdentifier);
+      await delScamQ;
+
+    } catch (e) {
+      logger.warn(`Fehler beim Resetten des Users ${targetIdentifier}: ${e.message}`);
+    }
+  },
+
   async approveFeedback(feedbackId, adminUserId, channel) {
     let fb = null;
     try { const r2 = await supabase.from("user_feedbacks").select("*").eq("id", feedbackId).single(); fb = r2.data; } catch (_) { }

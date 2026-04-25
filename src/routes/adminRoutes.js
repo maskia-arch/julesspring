@@ -122,7 +122,37 @@ router.post('/channels/:id/reset-usage',         channelCtrl.resetChannelUsage.b
 router.get('/channels/:id/kb',                   channelCtrl.getChannelKB.bind(channelCtrl));
 router.post('/channels/:id/kb',                  channelCtrl.addChannelKBEntry.bind(channelCtrl));
 router.delete('/channels/:id/kb/:entryId',       channelCtrl.deleteChannelKBEntry.bind(channelCtrl));
-router.delete('/channels/:id',           channelCtrl.deleteChannel.bind(channelCtrl));
+
+// Hier fangen wir den Lösch-Befehl für den Channel ab und hängen die "Scorched Earth" Logik dazwischen
+router.delete('/channels/:id', async (req, res, next) => {
+  try {
+    const channelId = req.params.id;
+    const supabase = require('../config/supabase');
+    
+    // Lösche alles, was an dieser Channel-ID hängt
+    const tablesToClean = [
+      'user_feedbacks',
+      'channel_safelist',
+      'scam_entries',
+      'user_reputation',
+      'channel_blacklist',
+      'channel_members',
+      'channel_knowledge',
+      'scheduled_messages',
+      'channel_purchases',
+      'bot_messages',
+      'channel_chat_history'
+    ];
+    
+    for (const table of tablesToClean) {
+      await supabase.from(table).delete().eq('channel_id', channelId).catch(() => {});
+    }
+    
+    next();
+  } catch (e) {
+    next();
+  }
+}, channelCtrl.deleteChannel.bind(channelCtrl));
 
 router.get('/smalltalk/status',   ctrl.testSmallTalkBot);
 router.post('/smalltalk/connect',  ctrl.testSmallTalkBot);

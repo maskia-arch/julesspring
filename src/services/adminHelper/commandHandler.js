@@ -109,6 +109,21 @@ const commandHandler = {
         }
         return;
       }
+      
+      if (/^\/feedbacks?(?:@\w+)?$/i.test(text)) {
+        const { data: myChans } = await supabase.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
+        if (!myChans?.length) {
+          await tg.send(chatId, "❌ Du hast keine aktiven/freigeschalteten Channels.");
+          return;
+        }
+        if (myChans.length === 1) {
+          await settingsHandler.handleSettingsCallback(tg, supabase_db, `cfg_feedback_${myChans[0].id}`, { from: { id: chatId, language_code: from.language_code } }, chatId);
+        } else {
+          const kb = myChans.map(ch2 => [{ text: `📢 ${ch2.title||ch2.id}`, callback_data: `cfg_feedback_${ch2.id}` }]);
+          await tg.call("sendMessage", { chat_id: chatId, text: "Für welchen Channel möchtest du das Feedback-Menü öffnen?", reply_markup: { inline_keyboard: kb } });
+        }
+        return;
+      }
 
       if (/^\/cancel(?:@\w+)?$/i.test(text)) {
         delete pendingInputs[String(from.id)];

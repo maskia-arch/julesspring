@@ -48,6 +48,8 @@ function tgApi(token) {
     async call(method, params = {}) { const r = await axios.post(`${base}/${method}`, params, { timeout: 10000 }); return r.data?.result; },
     async send(chatId, text, extra = {}) { return this.call("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", ...extra }); },
     async sendPhoto(chatId, photo, caption, extra = {}) { return this.call("sendPhoto", { chat_id: chatId, photo, caption, parse_mode: "HTML", ...extra }); },
+    async sendVideo(chatId, video, caption, extra = {}) { return this.call("sendVideo", { chat_id: chatId, video, caption, parse_mode: "HTML", ...extra }); },
+    async sendAnimation(chatId, animation, caption, extra = {}) { return this.call("sendAnimation", { chat_id: chatId, animation, caption, parse_mode: "HTML", ...extra }); },
     async kick(chatId, userId) { return this.call("banChatMember", { chat_id: chatId, user_id: userId, revoke_messages: false }); },
     async unban(chatId, userId) { return this.call("unbanChatMember", { chat_id: chatId, user_id: userId, only_if_banned: true }); },
     async getMember(chatId, userId) { return this.call("getChatMember", { chat_id: chatId, user_id: userId }); },
@@ -236,16 +238,33 @@ const tgAdminHelper = {
         const tg = tgApi(token);
         try {
           if (msg.delete_previous && msg.last_sent_msg_id) { await tg.call("deleteMessage", { chat_id: msg.channel_id, message_id: msg.last_sent_msg_id }).catch(() => {}); }
+          
           let sentMsg = null;
-          if (msg.photo_file_id || msg.photo_url) { sentMsg = await tg.sendPhoto(msg.channel_id, msg.photo_file_id || msg.photo_url, msg.message); } else { sentMsg = await tg.send(msg.channel_id, msg.message); }
+          
+          if (msg.photo_file_id || msg.photo_url) { 
+             const mediaId = msg.photo_file_id || msg.photo_url;
+             if (msg.file_type === "video") {
+                sentMsg = await tg.sendVideo(msg.channel_id, mediaId, msg.message);
+             } else if (msg.file_type === "animation") {
+                sentMsg = await tg.sendAnimation(msg.channel_id, mediaId, msg.message);
+             } else {
+                sentMsg = await tg.sendPhoto(msg.channel_id, mediaId, msg.message); 
+             }
+          } else { 
+             sentMsg = await tg.send(msg.channel_id, msg.message); 
+          }
+          
           if (msg.pin_after_send && sentMsg?.message_id) { await tg.pinMessage(msg.channel_id, sentMsg.message_id).catch(() => {}); }
+          
           const updatePatch = { run_count: (msg.run_count || 0) + 1, last_sent_msg_id: sentMsg?.message_id || null };
           if (msg.repeat && msg.interval_minutes) {
              const nextRun = new Date(now.getTime() + (msg.interval_minutes * 60000));
              if (msg.end_at && nextRun > new Date(msg.end_at)) { updatePatch.is_active = false; } else { updatePatch.next_run_at = nextRun.toISOString(); }
           } else { updatePatch.is_active = false; }
           await supabase.from("scheduled_messages").update(updatePatch).eq("id", msg.id);
-        } catch (e) {}
+        } catch (e) {
+          logger.warn(`Fehler beim Senden der geplanten Nachricht (ID: ${msg.id}): ${e.message}`);
+        }
       }
     } catch (e) {}
   }

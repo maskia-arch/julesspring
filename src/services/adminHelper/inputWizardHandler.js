@@ -210,6 +210,47 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
     return true;
   }
 
+  if (action === "fb_mgr_await_user") {
+    delete global.pendingInputs[String(userId)];
+    let target = text.replace(/^@/, "").trim();
+    if (!target) {
+      await nextStep(tg, userId, pending, "❌ Bitte @username oder Telegram-ID eingeben.");
+      return true;
+    }
+
+    try {
+      let q = supabase_db.from("user_feedbacks").select("id, feedback_type, feedback_text, status, created_at").eq("channel_id", channelId);
+      if (/^\d+$/.test(target)) q = q.eq("target_user_id", target);
+      else q = q.ilike("target_username", target);
+      
+      const { data: feedbacks } = await q.order("created_at", { ascending: false }).limit(10);
+      
+      if (!feedbacks || feedbacks.length === 0) {
+        await nextStep(tg, userId, pending, `ℹ️ Keine Feedbacks für <b>@${target}</b> gefunden.`, [[{ text: "◀️ Zurück zum Menü", callback_data: `cfg_menu_channel_${channelId}` }]]);
+        return true;
+      }
+
+      let msgText = `📋 <b>Letzte Feedbacks für @${target}</b>\n\n`;
+      const kb = [];
+
+      feedbacks.forEach((fb, index) => {
+        const emoji = fb.feedback_type === "positive" ? "✅" : "⚠️";
+        const status = fb.status === "approved" ? "🟢" : fb.status === "pending" ? "🟡" : "🔴";
+        const shortText = (fb.feedback_text || "").substring(0, 40) + "...";
+        msgText += `${index + 1}. ${status} ${emoji} ID: <code>${fb.id}</code> - <i>${shortText}</i>\n`;
+        kb.push([{ text: `🗑 Lösche ID ${fb.id}`, callback_data: `fb_mgr_del_${fb.id}_${channelId}` }]);
+      });
+
+      kb.push([{ text: `⚠️ User komplett zurücksetzen`, callback_data: `fb_mgr_reset_${target}_${channelId}` }]);
+      kb.push([{ text: "◀️ Zurück", callback_data: `cfg_menu_channel_${channelId}` }]);
+
+      await nextStep(tg, userId, pending, msgText, kb);
+    } catch (e) {
+      await nextStep(tg, userId, pending, `❌ Fehler: ${e.message}`, [[{ text: "◀️ Zurück", callback_data: `cfg_menu_channel_${channelId}` }]]);
+    }
+    return true;
+  }
+
   if (action === "safelist_add_user") {
     delete global.pendingInputs[String(userId)];
     

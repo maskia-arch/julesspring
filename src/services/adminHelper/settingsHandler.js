@@ -10,7 +10,7 @@ const DICT = {
     ch_settings: "📋 Channel-Einstellungen", mod: "🔒 Moderation", ai_feat: "🤖 AI Features",
     welcome: "👋 Willkommen", goodbye: "👋 Abschied", sched: "📅 Zeitplan", rep: "🔁 Wiederholungen",
     lang: "🌐 Sprache", clean: "🧹 Bereinigen", stats: "📊 Statistik",
-    sl_btn: "🛡 Safelist {sl}", fb_btn: "💬 Feedback {fb}", bl: "🚫 Blacklist", ui: "🔍 UserInfo",
+    sl_btn: "🛡 Safelist {sl}", fb_btn: "💬 Feedback {fb}", bl: "🚫 Blacklist", ui: "🔍 UserInfo", fb_mgr: "👤 User-Feedbacks verwalten",
     ai_locked: "🤖 <b>AI Features</b> — Gesperrt\n\nNutze <b>/buy</b> um ein Paket zu kaufen.",
     mod_locked: "🔒 <b>Moderation</b> — Gesperrt\n\nDein Kanal ist noch nicht verifiziert.\nBitte melde dich bei @autoacts für die Freischaltung.",
     daily: "📰 Tagesbericht", st: "💬 Smalltalk AI", kb: "📚 Wissensdatenbank", aw: "✍️ WerbeTexter", bl_ai: "🤖 Blacklist Enhancer 🔒",
@@ -21,7 +21,7 @@ const DICT = {
     ch_settings: "📋 Channel Settings", mod: "🔒 Moderation", ai_feat: "🤖 AI Features",
     welcome: "👋 Welcome", goodbye: "👋 Goodbye", sched: "📅 Schedule", rep: "🔁 Repeats",
     lang: "🌐 Language", clean: "🧹 Cleanup", stats: "📊 Stats",
-    sl_btn: "🛡 Safelist {sl}", fb_btn: "💬 Feedback {fb}", bl: "🚫 Blacklist", ui: "🔍 UserInfo",
+    sl_btn: "🛡 Safelist {sl}", fb_btn: "💬 Feedback {fb}", bl: "🚫 Blacklist", ui: "🔍 UserInfo", fb_mgr: "👤 Manage User Feedbacks",
     ai_locked: "🤖 <b>AI Features</b> — Locked\n\nUse <b>/buy</b> to get a package.",
     mod_locked: "🔒 <b>Moderation</b> — Locked\n\nYour channel is not yet verified.\nPlease contact @autoacts for approval.",
     daily: "📰 Daily Report", st: "💬 Smalltalk AI", kb: "📚 Knowledge Base", aw: "✍️ AdWriter", bl_ai: "🤖 Blacklist Enhancer 🔒",
@@ -235,6 +235,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     case "feedback": {
       await editOrSend(tg, String(userId), msgId, `💬 <b>Feedback-System</b>\n\nManuell: /safelist @user · /scamlist @user`, [
         [{ text: ch?.feedback_enabled ? "🔴 Deaktivieren" : "🟢 Aktivieren", callback_data: `cfg_fb_toggle_${channelId}` }],
+        [{ text: t("fb_mgr", lang), callback_data: `fb_mgr_user_${channelId}` }],
         [{ text: "📋 Offene Reviews", callback_data: `cfg_sl_reviews_${channelId}` }, { text: "🏆 Top 10", callback_data: `cfg_fb_ranking_${channelId}` }],
         [backBtn(channelId, lang)[0]]
       ]);

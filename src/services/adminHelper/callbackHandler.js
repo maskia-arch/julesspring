@@ -71,6 +71,42 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
     return;
   }
 
+  if (data.startsWith("fb_mgr_user_")) {
+    const channelId = data.split("_").pop();
+    await answerCb();
+    pendingInputs[String(qUserId)] = { action: "fb_mgr_await_user", channelId: channelId };
+    await tg.call("sendMessage", { 
+      chat_id: String(qUserId), 
+      text: "👤 <b>User-Feedbacks verwalten</b>\n\nSende mir den <b>@username</b> oder die <b>Telegram-ID</b> des Users, dessen Feedbacks du verwalten oder löschen möchtest.\n\n/cancel zum Abbrechen", 
+      parse_mode: "HTML" 
+    });
+    return;
+  }
+
+  if (data.startsWith("fb_mgr_del_")) {
+    const parts = data.split("_");
+    const channelId = parts.pop();
+    const feedbackId = parts.pop();
+    await answerCb();
+    if (safelistService.deleteFeedback) {
+      await safelistService.deleteFeedback(channelId, feedbackId);
+      await tg.call("sendMessage", { chat_id: String(qUserId), text: `✅ Feedback mit der ID ${feedbackId} wurde gelöscht. Der Trust Score wurde neu berechnet.` });
+    }
+    return;
+  }
+
+  if (data.startsWith("fb_mgr_reset_")) {
+    const parts = data.split("_");
+    const channelId = parts.pop();
+    const targetUser = parts.slice(3).join("_");
+    await answerCb();
+    if (safelistService.resetUserReputation) {
+      await safelistService.resetUserReputation(channelId, targetUser);
+      await tg.call("sendMessage", { chat_id: String(qUserId), text: `✅ <b>Erfolg:</b> Alle Feedbacks, Safelist- und Scamlist-Einträge für ${targetUser} wurden restlos gelöscht.\nDer Score wurde auf 0 zurückgesetzt.`, parse_mode: "HTML" });
+    }
+    return;
+  }
+
   if (data.startsWith("fb_confirm_")) {
     const parts = data.split("_");
     const chanId3 = parts.pop();
@@ -168,7 +204,7 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
 
     try {
       await supabase_db.from("scheduled_messages").insert([{
-        channel_id: chanId2, message: wizard.msgText || "", photo_file_id: wizard.fileId || null,
+        channel_id: chanId2, message: wizard.msgText || "", photo_file_id: wizard.fileId || null, file_type: wizard.fileType || null,
         cron_expr: null, interval_minutes: wizard.intervalMinutes || null, end_at: wizard.endAt || null, 
         next_run_at: wizard.nextRunAt || new Date().toISOString(), repeat: isRepeat,
         is_active: true, pin_after_send: wizard.pinAfterSend || false, delete_previous: wizard.deletePrevious || false
@@ -490,7 +526,6 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
     return answerCb({ text: "❌ Kanal ist deaktiviert.", show_alert: true });
   }
 
-  // Add the channel data directly into the query object for the tgAdminHelper to use if needed
   if (q.data && (q.data.startsWith("admin_") || q.data.startsWith("del_safelist_") || q.data.startsWith("safelist_del_"))) {
      const parts = q.data.split("_");
      const extractedChannelId = parts[parts.length - 1];
