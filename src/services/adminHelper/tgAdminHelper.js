@@ -229,6 +229,44 @@ const tgAdminHelper = {
     await tg.send(chatId, msg).catch(() => {});
   },
 
+  async runAutoClean(token) {
+    const now = new Date();
+    try {
+      const { data: channels } = await supabase.from("bot_channels")
+        .select("id, auto_clean_interval, last_clean_at")
+        .in("auto_clean_interval", ["daily", "weekly"])
+        .eq("is_active", true);
+
+      if (!channels || channels.length === 0) return;
+
+      for (const ch of channels) {
+        let shouldClean = false;
+        
+        if (!ch.last_clean_at) {
+          shouldClean = true;
+        } else {
+          const lastClean = new Date(ch.last_clean_at);
+          const hoursDiff = (now - lastClean) / (1000 * 60 * 60);
+
+          if (ch.auto_clean_interval === "daily" && hoursDiff >= 24) shouldClean = true;
+          if (ch.auto_clean_interval === "weekly" && hoursDiff >= 168) shouldClean = true;
+        }
+
+        if (shouldClean) {
+          const { removed } = await this.cleanDeletedAccounts(token, ch.id);
+          await supabase.from("bot_channels").update({ last_clean_at: now.toISOString() }).eq("id", ch.id);
+          
+          if (removed > 0) {
+            const tg = tgApi(token);
+            await tg.send(ch.id, `🧹 <b>Auto-Bereinigung:</b>\nEs wurden ${removed} gelöschte Accounts automatisch aus dem Kanal entfernt.`).catch(() => {});
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[AutoClean Error]", e.message);
+    }
+  },
+
   async fireScheduled(token) {
     const now = new Date();
     try {
@@ -263,7 +301,7 @@ const tgAdminHelper = {
           } else { updatePatch.is_active = false; }
           await supabase.from("scheduled_messages").update(updatePatch).eq("id", msg.id);
         } catch (e) {
-          logger.warn(`Fehler beim Senden der geplanten Nachricht (ID: ${msg.id}): ${e.message}`);
+          console.error(`Fehler beim Senden der geplanten Nachricht (ID: ${msg.id}): ${e.message}`);
         }
       }
     } catch (e) {}

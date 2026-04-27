@@ -115,7 +115,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
   const channelId = parts[parts.length - 1];
   let action = parts[1];
   
-  const compositePrefixes = ["menu", "sl", "fb", "rep", "bl", "st", "aw", "kb", "daily"];
+  const compositePrefixes = ["menu", "sl", "fb", "rep", "bl", "st", "aw", "kb", "daily", "clean"];
   if (compositePrefixes.includes(parts[1]) && parts.length >= 4) {
     action = parts[1] + "_" + parts[2];
   }
@@ -160,10 +160,35 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "clean": {
+      const interval = ch?.auto_clean_interval || "off";
+      let statusText = "Deaktiviert";
+      if (interval === "daily") statusText = "Täglich";
+      if (interval === "weekly") statusText = "Wöchentlich";
+
+      await editOrSend(tg, String(userId), msgId, `🧹 <b>Bereinigen</b>\n\nEntfernt gelöschte Accounts aus dem Channel.\n\nAktueller Auto-Modus: <b>${statusText}</b>`, [
+        [{ text: "▶️ Jetzt bereinigen", callback_data: `cfg_clean_now_${channelId}` }],
+        [{ text: interval === "daily" ? "✅ Auto: Täglich" : "⏱ Auto: Täglich", callback_data: `cfg_clean_daily_${channelId}` }],
+        [{ text: interval === "weekly" ? "✅ Auto: Wöchentlich" : "⏱ Auto: Wöchentlich", callback_data: `cfg_clean_weekly_${channelId}` }],
+        [{ text: interval === "off" || !interval ? "✅ Auto: Aus" : "❌ Auto: Aus", callback_data: `cfg_clean_off_${channelId}` }],
+        [backBtn(channelId, lang)[0]]
+      ]);
+      break;
+    }
+    case "clean_now": {
       await editOrSend(tg, String(userId), msgId, "🔍 Bereinigung läuft...", []);
       const settings = await getSettings();
       const res = await tgAdminHelper.cleanDeletedAccounts(settings?.smalltalk_bot_token, channelId);
       await editOrSend(tg, String(userId), msgId, `🧹 Fertig! ${res.removed} Accounts entfernt.`, [[backBtn(channelId, lang)[0]]]);
+      break;
+    }
+    case "clean_daily":
+    case "clean_weekly":
+    case "clean_off": {
+      const intervalMap = { clean_daily: "daily", clean_weekly: "weekly", clean_off: "off" };
+      const newInterval = intervalMap[action];
+      await supabase_db.from("bot_channels").update({ auto_clean_interval: newInterval }).eq("id", channelId);
+      await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "✅ Gespeichert" }).catch(()=>{});
+      handleSettingsCallback(tg, supabase_db, `cfg_clean_${channelId}`, q, userId);
       break;
     }
     case "stats": {

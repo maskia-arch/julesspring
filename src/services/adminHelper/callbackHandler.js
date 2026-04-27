@@ -37,6 +37,22 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
     return answerCb();
   }
 
+  if (data.startsWith("uinfo_sangmata_")) {
+    const targetId = data.split("_")[2];
+    await answerCb();
+    
+    const botName = "SangMata_BOT";
+    const cmdText = `<code>/allhistory ${targetId}</code>`;
+    
+    await tg.call("sendMessage", { 
+      chat_id: qChatId, 
+      text: `🔍 <b>SangMata Namenshistorie</b>\n\nKopiere diesen Befehl (durch Antippen) und sende ihn direkt an den SangMata Bot:\n\n${cmdText}`, 
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: [[{ text: "💬 Zu @SangMata_BOT wechseln", url: `https://t.me/${botName}` }]] }
+    });
+    return;
+  }
+
   if (data.startsWith("uinfo_names_")) {
     const targetId = data.split("_")[2];
     const { data: history } = await supabase_db.from("user_name_history").select("*").eq("user_id", targetId).order("detected_at", { ascending: false }).limit(10);

@@ -58,7 +58,7 @@ async function runUserInfo(tg, supabase_db, callerUserId, targetInput, channelId
     text += `Name: ${p.first_name||""} ${p.last_name||""}\nUsername: ${p.username?"@"+p.username:"-"}\nID: <code>${p.id}</code>\n`;
     if (p.bio) text += `Bio: <i>${p.bio}</i>\n`;
   } else {
-    text += `Ziel: ${tUname?"@"+tUname:tId}\n<i>(Erweiterte Telegram-Profildaten nicht abrufbar)</i>\n`;
+    text += `Ziel: ${tUname?"@"+tUname:"-"}\nID: <code>${tId || "Unbekannt"}</code>\n`;
   }
 
   if (cMem) {
@@ -70,7 +70,10 @@ async function runUserInfo(tg, supabase_db, callerUserId, targetInput, channelId
   text += `⛔ Auf <b>${scamC}</b> Scamlisten\n`;
   text += `💬 <b>Feedbacks:</b> ${fbPos} Positiv | ${fbNeg} Negativ\n`;
 
-  const kb = tId ? [[{ text: "📜 Namenshistorie", callback_data: `uinfo_names_${tId}` }]] : [];
+  const kb = tId ? [
+    [{ text: "📜 Namenshistorie", callback_data: `uinfo_names_${tId}` }],
+    [{ text: "🔍 SangMata Historie", callback_data: `uinfo_sangmata_${tId}` }]
+  ] : [];
 
   if (waitMsg?.message_id) {
     await tg.call("editMessageText", { chat_id: String(sendTo), message_id: waitMsg.message_id, text, parse_mode: "HTML", reply_markup: { inline_keyboard: kb } }).catch(async () => {

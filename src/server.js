@@ -44,6 +44,7 @@ const server = app.listen(port, () => {
     try {
       const { tgAdminHelper } = require('./services/adminHelper/tgAdminHelper');
       const supabase = require('./config/supabase');
+      
       setInterval(async () => {
         try {
           const { data: s } = await supabase.from('settings').select('smalltalk_bot_token').single();
@@ -52,7 +53,17 @@ const server = app.listen(port, () => {
           }
         } catch (_) {}
       }, 60000);
-      logger.info('[Server] Smalltalk scheduled messages: aktiv');
+
+      setInterval(async () => {
+        try {
+          const { data: s } = await supabase.from('settings').select('smalltalk_bot_token').single();
+          if (s?.smalltalk_bot_token) {
+            await tgAdminHelper.runAutoClean(s.smalltalk_bot_token);
+          }
+        } catch (_) {}
+      }, 30 * 60 * 1000);
+
+      logger.info('[Server] Scheduled messages & AutoClean: aktiv');
     } catch(e) { logger.warn(e.message); }
 
     try {
