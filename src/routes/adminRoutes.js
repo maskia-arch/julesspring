@@ -18,7 +18,7 @@ router.post('/webhooks/sellauth-packages', async (req, res) => {
       const cfChannel = customFields.find(f => f.name === "channel_id");
       const channelId = cfChannel?.value;
       const { data: purch } = await require("../config/supabase").from("channel_purchases")
-        .select("credits_added").eq("sellauth_invoice_id", invoiceId).maybeSingle().catch(() => ({ data: null }));
+        .select("credits_added").eq("sellauth_invoice_id", invoiceId).maybeSingle().then(r=>r, ()=>({data:null}));
       const credits = purch?.credits_added || 0;
       result = await packageService.handleRefillWebhook(invoiceId, channelId, credits);
     } else {
@@ -27,7 +27,7 @@ router.post('/webhooks/sellauth-packages', async (req, res) => {
     if (result.handled && result.adminId) {
       const supabase = require("../config/supabase");
       const axios    = require("axios");
-      const { data: settings } = await supabase.from("settings").select("smalltalk_bot_token").single().catch(() => ({ data: null }));
+      const { data: settings } = await supabase.from("settings").select("smalltalk_bot_token").single().then(r=>r, ()=>({data:null}));
       const token = settings?.smalltalk_bot_token || process.env.TELEGRAM_BOT_TOKEN;
       if (token) {
         const exp = result.expiresAt ? new Date(result.expiresAt).toLocaleDateString("de-DE") : "?";
@@ -145,7 +145,7 @@ router.delete('/channels/:id', async (req, res, next) => {
     ];
     
     for (const table of tablesToClean) {
-      await supabase.from(table).delete().eq('channel_id', channelId).catch(() => {});
+      await supabase.from(table).delete().eq('channel_id', channelId).then(r=>r, ()=>{});
     }
     
     next();

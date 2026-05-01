@@ -617,7 +617,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
           const axios = require("axios");
           const r = await axios.post("https://api.openai.com/v1/chat/completions", { model: "gpt-4o-mini", max_tokens: 1200, messages: [{ role: "system", content: "Du bist ein professioneller WerbeTexter. Erstelle 3 verschiedene Variationen des folgenden Werbetextes. Trenne die Variationen mit ---." }, { role: "user", content: s.message }] }, { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" } });
           const variations = r.data.choices[0].message.content.split("---").map(v => v.trim()).filter(v => v.length > 10);
-          await supabase_db.rpc("consume_channel_credits", { p_channel_id: channelId, p_tokens: 30 }).catch(() => {});
+          await supabase_db.rpc("consume_channel_credits", { p_channel_id: channelId, p_tokens: 30 }).then(r=>r, ()=>{});
           
           await tg.call("deleteMessage", { chat_id: String(userId), message_id: msgId }).catch(() => {});
           for (let i = 0; i < Math.min(variations.length, 3); i++) {

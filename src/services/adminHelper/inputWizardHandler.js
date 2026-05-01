@@ -267,9 +267,9 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
     const isId = /^\d+$/.test(target);
     const uid = isId ? parseInt(target) : null;
     const uname = isId ? null : target.toLowerCase();
-    const { data: existing } = await supabase_db.from("channel_safelist").select("id").eq("channel_id", channelId).or(uid ? `user_id.eq.${uid}` : `username.eq.${uname}`).maybeSingle().catch(() => ({ data: null }));
+    const { data: existing } = await supabase_db.from("channel_safelist").select("id").eq("channel_id", channelId).or(uid ? `user_id.eq.${uid}` : `username.eq.${uname}`).maybeSingle().then(r=>r, ()=>({data:null}));
     if (existing) { await nextStep(tg, userId, pending, `⚠️ <b>@${target}</b> steht bereits auf der Safelist!`, [[{ text: "◀️ Zurück", callback_data: `cfg_safelist_${channelId}` }]]); return true; }
-    const { data: scamConflict } = await supabase_db.from("scam_entries").select("id").eq("channel_id", channelId).or(uid ? `user_id.eq.${uid}` : `username.eq.${uname}`).maybeSingle().catch(() => ({ data: null }));
+    const { data: scamConflict } = await supabase_db.from("scam_entries").select("id").eq("channel_id", channelId).or(uid ? `user_id.eq.${uid}` : `username.eq.${uname}`).maybeSingle().then(r=>r, ()=>({data:null}));
     if (scamConflict) {
       await nextStep(tg, userId, pending, `⛔ <b>@${target}</b> steht bereits auf der <b>Scamliste</b>!\nBitte zuerst dort entfernen.`, [[{ text: "⛔ Von Scamliste entfernen", callback_data: `cfg_sl_scamview_${channelId}` }, { text: "◀️ Abbrechen", callback_data: `cfg_safelist_${channelId}` }]]);
       return true;
@@ -297,9 +297,9 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
     const isId2 = /^\d+$/.test(target2);
     const uid2 = isId2 ? parseInt(target2) : null;
     const uname2 = isId2 ? null : target2.toLowerCase();
-    const { data: existing2 } = await supabase_db.from("scam_entries").select("id").eq("channel_id", channelId).or(uid2 ? `user_id.eq.${uid2}` : `username.eq.${uname2}`).maybeSingle().catch(() => ({ data: null }));
+    const { data: existing2 } = await supabase_db.from("scam_entries").select("id").eq("channel_id", channelId).or(uid2 ? `user_id.eq.${uid2}` : `username.eq.${uname2}`).maybeSingle().then(r=>r, ()=>({data:null}));
     if (existing2) { await nextStep(tg, userId, pending, `⚠️ <b>@${target2}</b> steht bereits auf der Scamliste!`, [[{ text: "◀️ Zurück", callback_data: `cfg_safelist_${channelId}` }]]); return true; }
-    const { data: safeConflict } = await supabase_db.from("channel_safelist").select("id").eq("channel_id", channelId).or(uid2 ? `user_id.eq.${uid2}` : `username.eq.${uname2}`).maybeSingle().catch(() => ({ data: null }));
+    const { data: safeConflict } = await supabase_db.from("channel_safelist").select("id").eq("channel_id", channelId).or(uid2 ? `user_id.eq.${uid2}` : `username.eq.${uname2}`).maybeSingle().then(r=>r, ()=>({data:null}));
     if (safeConflict) {
       await nextStep(tg, userId, pending, `✅ <b>@${target2}</b> steht bereits auf der <b>Safelist</b>!\nBitte zuerst dort entfernen.`, [[{ text: "✅ Von Safelist entfernen", callback_data: `cfg_sl_safeview_${channelId}` }, { text: "◀️ Abbrechen", callback_data: `cfg_safelist_${channelId}` }]]);
       return true;
@@ -329,7 +329,7 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
     try {
       const r = await axios.post("https://api.openai.com/v1/chat/completions", { model: "gpt-4o-mini", max_tokens: 1200, messages: [{ role: "system", content: "Du bist ein professioneller WerbeTexter. Erstelle 3 verschiedene Variationen des folgenden Werbetextes. Der Inhalt muss identisch bleiben, aber Formulierungen, Satzstruktur und Stil sollen variieren. Trenne jede Variation mit ---." }, { role: "user", content: origText }] }, { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" }, timeout: 30000 });
       const variations = r.data.choices[0].message.content.split("---").map(v => v.trim()).filter(v => v.length > 10);
-      await supabase_db.rpc("consume_channel_credits", { p_channel_id: channelId, p_tokens: 30 }).catch(() => {});
+      await supabase_db.rpc("consume_channel_credits", { p_channel_id: channelId, p_tokens: 30 }).then(r=>r, ()=>{});
       
       await nextStep(tg, userId, pending, `✅ 3 Variationen generiert.`, [[{ text: "◀️ Zurück zum Menü", callback_data: `cfg_adwriter_${channelId}` }]]);
       for (let i = 0; i < Math.min(variations.length, 3); i++) {
