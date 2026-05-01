@@ -1,5 +1,5 @@
 /**
- * channelController.js  v1.4.0-2
+ * channelController.js  v1.4.0-3
  */
 const supabase = require("../config/supabase");
 const logger   = require("../utils/logger");
@@ -63,13 +63,33 @@ const channelController = {
     if (!["administrator","creator"].includes(botStatus)) return;
     if (!["channel","supergroup","group"].includes(chat.type)) return;
     try {
-      await supabase.from("bot_channels").upsert([{
-        id: chat.id, title: chat.title || String(chat.id),
-        username: chat.username || null, type: chat.type,
-        bot_type: "berater", is_active: false, is_approved: false,
-        updated_at: new Date()
-      }], { onConflict: "id" });
-      logger.info(`[Channel] Registriert (Berater-Bot): ${chat.title}`);
+      // SICHERHEITS-CHECK: Existiert der Kanal schon?
+      const { data: existing } = await supabase.from("bot_channels").select("id").eq("id", String(chat.id)).maybeSingle();
+
+      if (existing) {
+        // Wenn er existiert, NUR Update von Namen/Typ + Aktivierung (NIEMALS is_approved antasten!)
+        await supabase.from("bot_channels").update({
+          title: chat.title || String(chat.id),
+          username: chat.username || null, 
+          type: chat.type,
+          is_active: true,
+          updated_at: new Date()
+        }).eq("id", String(chat.id));
+        logger.info(`[Channel] Aktualisiert: ${chat.title}`);
+      } else {
+        // Wenn er komplett neu ist, dann frisch eintragen (is_approved = false)
+        await supabase.from("bot_channels").insert([{
+          id: chat.id, 
+          title: chat.title || String(chat.id),
+          username: chat.username || null, 
+          type: chat.type,
+          bot_type: "berater", 
+          is_active: true, 
+          is_approved: false,
+          updated_at: new Date()
+        }]);
+        logger.info(`[Channel] Neu Registriert: ${chat.title}`);
+      }
     } catch (e) { logger.warn("[Channel] Register:", e.message); }
   },
 
@@ -112,16 +132,12 @@ const channelController = {
       const axios = require("axios");
       const base  = `https://api.telegram.org/bot${token}`;
 
-      // WICHTIG: getUpdates ist im Webhook-Modus nicht verfügbar!
-      // Stattdessen: Für alle bekannten Channels getChatAdministrators aufrufen
-      // und Bot-Mitgliedschaft verifizieren
       const meResp = await axios.get(`${base}/getMe`, { timeout: 8000 });
       const botId  = meResp.data?.result?.id;
 
       const { data: existingChannels } = await supabase_local.from("bot_channels").select("id, title");
       let registered = 0;
 
-      // Für jeden gespeicherten Channel: aktuellen Status prüfen
       for (const existing of (existingChannels || [])) {
         try {
           const memberResp = await axios.get(`${base}/getChatMember`, {
@@ -131,18 +147,15 @@ const channelController = {
           const status = memberResp.data?.result?.status;
           const isAdmin = ["administrator","creator"].includes(status);
 
-          // Update is_active based on current admin status
           await supabase_local.from("bot_channels")
             .update({ is_active: isAdmin, updated_at: new Date() }).eq("id", existing.id);
           if (isAdmin) registered++;
         } catch (_) {
-          // Channel nicht mehr erreichbar → als inaktiv markieren
           await supabase_local.from("bot_channels")
             .update({ is_active: false }).eq("id", existing.id).catch(() => {});
         }
       }
 
-      // Dann alle gespeicherten Channels neu laden
       const { data: channels } = await supabase_local.from("bot_channels").select("*")
         .order("added_at", { ascending: false });
 
@@ -164,7 +177,6 @@ const channelController = {
       const axios = require("axios");
       const base  = `https://api.telegram.org/bot${token}`;
 
-      // Chat-Info direkt von Telegram holen
       const chatResp = await axios.get(`${base}/getChat`, {
         params: { chat_id }, timeout: 8000
       });
@@ -175,21 +187,26 @@ const channelController = {
       const { data: existing } = await supabase_local.from("bot_channels")
         .select("id").eq("id", String(chat.id)).maybeSingle();
 
-      const payload = {
+      const updatePayload = {
         title:      chat.title || String(chat.id),
         username:   chat.username || null,
         type:       chat.type,
-        bot_type:   "smalltalk",
-        is_active:  false,
-        is_approved:false,
         updated_at: new Date()
       };
 
       let result;
       if (existing) {
-        result = await supabase_local.from("bot_channels").update(payload).eq("id", String(chat.id)).select().single();
+        // NUR Update, überschreibe niemals Abos oder Status!
+        result = await supabase_local.from("bot_channels").update(updatePayload).eq("id", String(chat.id)).select().single();
       } else {
-        result = await supabase_local.from("bot_channels").insert([{ id: chat.id, ...payload }]).select().single();
+        // Neuer Channel
+        result = await supabase_local.from("bot_channels").insert([{ 
+          id: String(chat.id),
+          ...updatePayload,
+          bot_type: "smalltalk",
+          is_active: true,
+          is_approved: false
+        }]).select().single();
       }
 
       if (result.error) return res.status(500).json({ error: result.error.message });

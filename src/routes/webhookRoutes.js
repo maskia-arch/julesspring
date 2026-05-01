@@ -27,12 +27,46 @@ router.post('/telegram', (req, res) => {
       }
       if (update_id) _rememberUpdate(update_id);
       
-      const { chat_join_request } = req.body;
+      const { chat_join_request, my_chat_member } = req.body;
       const msg = req.body.message || req.body.channel_post;
       
       const supabase = require('../config/supabase');
       const { tgApi } = require('../services/adminHelper/tgAdminHelper');
       
+      // SICHERHEITS-UPDATE: Wenn der Bot neue Berechtigungen bekommt, 
+      // soll er NIEMALS die Datenbank überschreiben und das Abo löschen.
+      // Wir aktualisieren nur, oder legen ihn neu an, FALLS er noch nicht existiert.
+      if (my_chat_member) {
+        const chatId = my_chat_member.chat.id.toString();
+        const userId = my_chat_member.from.id.toString();
+        const newStatus = my_chat_member.new_chat_member.status;
+        const chatTitle = my_chat_member.chat.title || 'Channel';
+
+        if (['administrator', 'member', 'creator'].includes(newStatus)) {
+           // Wir prüfen, ob der Kanal schon in der DB existiert
+           const { data: existingChannel } = await supabase.from('bot_channels').select('id, is_approved').eq('id', chatId).maybeSingle();
+           
+           if (!existingChannel) {
+             // Nur wenn der Kanal GÄNZLICH NEU ist, wird er angelegt
+             await supabase.from('bot_channels').insert([{
+               id: chatId,
+               title: chatTitle,
+               added_by_user_id: userId,
+               is_approved: false, // Bei neuen Kanälen immer false (muss gekauft werden)
+               ai_enabled: false,
+               is_active: true
+             }]);
+           } else {
+             // Falls er existiert, aktualisieren wir NUR den is_active Status (falls er z.B. reaktiviert wurde)
+             await supabase.from('bot_channels').update({ is_active: true, title: chatTitle }).eq('id', chatId);
+           }
+        } else if (['left', 'kicked'].includes(newStatus)) {
+           // Wenn der Bot entfernt wird, setzen wir ihn auf inaktiv
+           await supabase.from('bot_channels').update({ is_active: false }).eq('id', chatId);
+        }
+        return; // Nach Berechtigungs-Updates ist hier Schluss, kein Message-Processing.
+      }
+
       if (chat_join_request) {
         const chatId = chat_join_request.chat.id.toString();
         const userId = chat_join_request.from.id.toString();
@@ -58,7 +92,7 @@ router.post('/telegram', (req, res) => {
       if (!msg) return;
       
       const chatId = msg.chat?.id?.toString();
-      const text = msg.text?.trim();
+      const text = msg.text?.trim() || msg.caption?.trim(); // FIX: Caption (Bilder/Videos) auch für Blacklist prüfen
       const from = msg.from || { id: msg.sender_chat?.id || 0, first_name: msg.sender_chat?.title || 'Channel' };
       
       if (!chatId || !text) return;
@@ -114,7 +148,8 @@ router.post('/telegram', (req, res) => {
       
       const { data: channelData } = await supabase.from('bot_channels').select('id, added_by_user_id').eq('id', chatId).maybeSingle();
       
-      if (channelData && !from.is_bot) {
+      // BLACKLIST LOGIK
+      if (channelData && !from.is_bot && (from.id !== 0 && from.id !== 777000)) { // 777000 ist die offizielle Telegram "Anonymous Channel Post" ID
         const blacklistService = require('../services/adminHelper/blacklistService');
         const { data: settings } = await supabase.from('settings').select('smalltalk_bot_token').single().catch(() => ({ data: null }));
         const tg = tgApi(settings?.smalltalk_bot_token || process.env.TELEGRAM_BOT_TOKEN);
@@ -132,7 +167,7 @@ router.post('/telegram', (req, res) => {
         
         if (blacklistResult) {
           if (blacklistResult.action !== "tolerated" && blacklistResult.action.includes("delete")) {
-            return;
+            return; // Wenn die Nachricht gelöscht wurde, stoppen wir die weitere Verarbeitung
           }
         }
       }
