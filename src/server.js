@@ -42,7 +42,7 @@ const server = app.listen(port, () => {
     } catch(e) { logger.warn(e.message); }
 
     try {
-      const { tgAdminHelper } = require('./services/adminHelper/tgAdminHelper');
+      const { tgAdminHelper, tgApi } = require('./services/adminHelper/tgAdminHelper');
       const supabase = require('./config/supabase');
       
       setInterval(async () => {
@@ -63,7 +63,24 @@ const server = app.listen(port, () => {
         } catch (_) {}
       }, 30 * 60 * 1000);
 
-      logger.info('[Server] Scheduled messages & AutoClean: aktiv');
+      setInterval(async () => {
+        try {
+          const { data: s } = await supabase.from('settings').select('smalltalk_bot_token').single();
+          if (s?.smalltalk_bot_token) {
+            const now = new Date().toISOString();
+            const { data: msgs } = await supabase.from('bot_messages').select('*').lte('delete_after', now);
+            if (msgs && msgs.length > 0) {
+              const tg = tgApi(s.smalltalk_bot_token);
+              for (const m of msgs) {
+                await tg.call('deleteMessage', { chat_id: m.channel_id, message_id: m.message_id }).catch(() => {});
+                await supabase.from('bot_messages').delete().eq('id', m.id);
+              }
+            }
+          }
+        } catch (_) {}
+      }, 60000);
+
+      logger.info('[Server] Scheduled messages, AutoClean & MsgAutoDelete: aktiv');
     } catch(e) { logger.warn(e.message); }
 
     try {

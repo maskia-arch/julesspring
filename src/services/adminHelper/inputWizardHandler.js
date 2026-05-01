@@ -313,13 +313,11 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
 
   if (action === "bl_add_soft") {
     delete global.pendingInputs[String(userId)];
-    const parts = text.split("|").map(s => s.trim());
-    const word = parts[0];
-    const hours = parseInt(parts[1]) || 24;
+    const word = text.split("|")[0].trim();
     if (!word) { await nextStep(tg, userId, pending, "❌ Kein Wort angegeben."); return true; }
     try {
-      await supabase_db.from("channel_blacklist").upsert([{ channel_id: String(channelId), word: word.toLowerCase(), severity: "tolerated", delete_after_hours: hours, category: "toleriert", created_by: userId }], { onConflict: "channel_id,word" });
-      await nextStep(tg, userId, pending, `🟡 <b>${word}</b> hinzugefügt — wird nach ${hours}h gelöscht.`, [[{ text: "◀️ Zurück", callback_data: `cfg_blacklist_${channelId}` }]]);
+      await supabase_db.from("channel_blacklist").upsert([{ channel_id: String(channelId), word: word.toLowerCase(), severity: "tolerated", category: "toleriert", created_by: userId }], { onConflict: "channel_id,word" });
+      await nextStep(tg, userId, pending, `🟡 <b>${word}</b> zur Toleriert-Liste hinzugefügt.`, [[{ text: "◀️ Zurück zur Liste", callback_data: `cfg_bl_listsoft_${channelId}` }]]);
     } catch (e) { await nextStep(tg, userId, pending, "❌ " + e.message); }
     return true;
   }
@@ -407,14 +405,11 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
 
   if (action === "bl_add_word") {
     delete global.pendingInputs[String(userId)];
-    const parts = text.split("|").map(s => s.trim());
-    const word = parts[0];
-    const severity = ["warn","mute","ban","tolerated"].includes(parts[1]) ? parts[1] : "mute";
-    const category = parts[2] || "allgemein";
+    const word = text.split("|")[0].trim();
     if (!word) { await nextStep(tg, userId, pending, "❌ Kein Wort angegeben."); return true; }
     try {
-      await supabase_db.from("channel_blacklist").upsert([{ channel_id: String(channelId), word: word.toLowerCase(), category, severity, created_by: userId }], { onConflict: "channel_id,word" });
-      await nextStep(tg, userId, pending, `✅ <b>${word}</b> hinzugefügt (${severity}, ${category}).`, [[{ text: "◀️ Zurück", callback_data: `cfg_blacklist_${channelId}` }]]);
+      await supabase_db.from("channel_blacklist").upsert([{ channel_id: String(channelId), word: word.toLowerCase(), severity: "mute", category: "allgemein", created_by: userId }], { onConflict: "channel_id,word" });
+      await nextStep(tg, userId, pending, `🔴 <b>${word}</b> zur Harten Liste hinzugefügt.`, [[{ text: "◀️ Zurück zur Liste", callback_data: `cfg_bl_list_${channelId}` }]]);
     } catch (e) {
       await nextStep(tg, userId, pending, "❌ Fehler: " + e.message, [[{ text: "◀️ Zurück", callback_data: `cfg_blacklist_${channelId}` }]]);
     }
