@@ -77,8 +77,7 @@ async function sendChannelMenu(tg, sendTo, channelId, ch, msgId = null, userLang
   const kb = [
     [{ text: t("welcome", l), callback_data: `cfg_welcome_${channelId}` }, { text: t("goodbye", l), callback_data: `cfg_goodbye_${channelId}` }],
     [{ text: t("sched", l), callback_data: `cfg_schedule_${channelId}` }, { text: t("rep", l), callback_data: `cfg_repeat_${channelId}` }],
-    [{ text: t("lang", l), callback_data: `cfg_lang_${channelId}` }],
-    [{ text: t("clean", l), callback_data: `cfg_clean_${channelId}` }, { text: t("stats", l), callback_data: `cfg_stats_${channelId}` }],
+    [{ text: t("lang", l), callback_data: `cfg_lang_${channelId}` }, { text: t("stats", l), callback_data: `cfg_stats_${channelId}` }],
     [_menuBackBtn(channelId, l)]
   ];
   return editOrSend(tg, sendTo, msgId, text, kb);
@@ -92,6 +91,7 @@ async function sendModerationMenu(tg, sendTo, channelId, ch, msgId = null, userL
   const kb = [
     [{ text: t("sl_btn", l).replace("{sl}", ch?.safelist_enabled ? "✅" : "❌"), callback_data: `cfg_safelist_${channelId}` }, { text: t("fb_btn", l).replace("{fb}", ch?.feedback_enabled ? "✅" : "❌"), callback_data: `cfg_feedback_${channelId}` }],
     [{ text: t("bl", l), callback_data: `cfg_blacklist_${channelId}` }, { text: t("ui", l), callback_data: `cfg_userinfo_${channelId}` }],
+    [{ text: t("clean", l), callback_data: `cfg_clean_${channelId}` }],
     [_menuBackBtn(channelId, l)]
   ];
   return editOrSend(tg, sendTo, msgId, text, kb);
