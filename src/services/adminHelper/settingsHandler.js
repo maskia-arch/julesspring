@@ -351,15 +351,20 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     case "bl_list": case "bl_listsoft": {
       const isSoft = action === "bl_listsoft";
       const { data: bList } = await supabase_db.from("channel_blacklist").select("id, word, severity, delete_after_hours").eq("channel_id", channelId).eq("severity", isSoft ? "tolerated" : "mute").limit(25);
-      if (!bList?.length) { await editOrSend(tg, String(userId), msgId, "Liste ist leer.", [[backBtn(channelId, lang)[0]]]); break; }
-      const kb = bList.map(e => [{ text: `🗑 ${e.word}`, callback_data: `cfg_bl_del_${e.id}_${channelId}` }]);
-      kb.push([backBtn(channelId, lang)[0]]);
+      if (!bList?.length) { await editOrSend(tg, String(userId), msgId, "Liste ist leer.", [[{ text: "◀️ Zurück", callback_data: `cfg_blacklist_${channelId}` }]]); break; }
+      const kb = bList.map(e => [{ text: `🗑 ${e.word}`, callback_data: `cfg_bl_${isSoft ? 'delsoft' : 'del'}_${e.id}_${channelId}` }]);
+      kb.push([{ text: "◀️ Zurück", callback_data: `cfg_blacklist_${channelId}` }]);
       await editOrSend(tg, String(userId), msgId, `${isSoft?"🟡":"🔴"} <b>Blacklist</b>\n\n` + bList.map(e=>`• <code>${e.word}</code>`).join("\n"), kb);
       break;
     }
-    case "bl_del": {
-      const m = data.match(/^cfg_bl_del_([a-zA-Z0-9-]+)_(-?\d+)$/);
-      if (m) { await supabase_db.from("channel_blacklist").delete().eq("id", m[1]); handleSettingsCallback(tg, supabase_db, `cfg_blacklist_${channelId}`, q, userId); }
+    case "bl_del": case "bl_delsoft": {
+      const isSoft = action === "bl_delsoft";
+      const regex = isSoft ? /^cfg_bl_delsoft_([a-zA-Z0-9-]+)_(-?\d+)$/ : /^cfg_bl_del_([a-zA-Z0-9-]+)_(-?\d+)$/;
+      const m = data.match(regex);
+      if (m) {
+        await supabase_db.from("channel_blacklist").delete().eq("id", m[1]);
+        handleSettingsCallback(tg, supabase_db, `cfg_bl_${isSoft ? 'listsoft' : 'list'}_${channelId}`, q, userId);
+      }
       break;
     }
     case "knowledge": {
