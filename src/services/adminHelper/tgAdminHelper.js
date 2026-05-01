@@ -56,7 +56,15 @@ function tgApi(token) {
     async getAdmins(chatId) { return this.call("getChatAdministrators", { chat_id: chatId }) || []; },
     async deleteMessage(chatId, msgId) { return this.call("deleteMessage", { chat_id: chatId, message_id: msgId }); },
     async pinMessage(chatId, msgId, disableNotif = false) { return this.call("pinChatMessage", { chat_id: chatId, message_id: msgId, disable_notification: disableNotif }); },
-    async restrictMember(chatId, userId, permissions, until = 0) { return this.call("restrictChatMember", { chat_id: chatId, user_id: userId, permissions, until_date: until }); }
+    async restrictMember(chatId, userId, permissions, until = 0) { return this.call("restrictChatMember", { chat_id: chatId, user_id: userId, permissions, until_date: until }); },
+    async isUserAdmin(chatId, userId) {
+      try {
+        const admins = await this.getAdmins(chatId);
+        return admins.some(a => String(a.user?.id) === String(userId));
+      } catch (e) {
+        return false;
+      }
+    }
   };
 }
 
@@ -124,8 +132,7 @@ const tgAdminHelper = {
     const baseData = query.extractedChannelId ? data.replace('_' + query.extractedChannelId, '') : data;
     const lang = channel?.bot_language || query.from?.language_code?.substring(0, 2) || "de";
 
-    const admins = await tg.getAdmins(targetChatId).catch(() => []);
-    const isAdmin = admins.some(a => a.user?.id === userId);
+    const isAdmin = await tg.isUserAdmin(targetChatId, userId);
     if (!isAdmin) {
       await tg.call("answerCallbackQuery", { callback_query_id: query.id, text: t("no_admin", lang) });
       return;

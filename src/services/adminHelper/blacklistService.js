@@ -87,7 +87,7 @@ async function checkBlacklist(supabase_db, channelId, messageText, from, chatId,
     actionsTaken.push("Nachricht gelöscht");
   }
 
-  if (consequences.includes("mute")) {
+  if (consequences.includes("mute") && from.id > 0) {
     try {
       await tg.call("restrictChatMember", {
         chat_id: chatId, user_id: from.id,
@@ -98,7 +98,7 @@ async function checkBlacklist(supabase_db, channelId, messageText, from, chatId,
     } catch (_) {}
   }
 
-  if (consequences.includes("ban")) {
+  if (consequences.includes("ban") && from.id > 0) {
     try {
       await tg.call("banChatMember", { chat_id: chatId, user_id: from.id, until_date: 0 });
       await supabase_db.from("channel_banned_users").upsert([{

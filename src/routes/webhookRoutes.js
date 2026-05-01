@@ -1,15 +1,11 @@
 const express = require('express');
 const router = express.Router();
 
-// ── Telegram Webhook ──────────────────────────────────────────────────────────
-// REGEL: res.sendStatus(200) ist die allererste synchrone Operation.
-// Alles danach läuft in setImmediate() – kein Crash kann die 200 blockieren.
 const channelController = require('../controllers/channelController');
 const smalltalkAgent = require('../services/ai/smalltalkAgent');
 
-// v1.4.48: in-memory dedup for Telegram update_id to guard against retries
 const _processedUpdates = new Map();
-const _UPDATE_CACHE_MS = 5 * 60 * 1000; // 5 min
+const _UPDATE_CACHE_MS = 5 * 60 * 1000;
 
 function _rememberUpdate(id) {
   _processedUpdates.set(id, Date.now());
@@ -27,12 +23,13 @@ router.post('/telegram', (req, res) => {
     try {
       const update_id = req.body?.update_id;
       if (update_id && _processedUpdates.has(update_id)) {
-        require('../utils/logger').info(`[Webhook] dupe update_id ${update_id} — skip`);
         return;
       }
       if (update_id) _rememberUpdate(update_id);
       
-      const { message, chat_join_request } = req.body;
+      const { chat_join_request } = req.body;
+      const msg = req.body.message || req.body.channel_post;
+      
       const supabase = require('../config/supabase');
       const { tgApi } = require('../services/adminHelper/tgAdminHelper');
       
@@ -52,23 +49,65 @@ router.post('/telegram', (req, res) => {
               chat_id: chatId,
               user_id: userId
             });
-            require('../utils/logger').info(`[JoinRequest] Blocked banned user ${userId} from joining ${chatId}`);
             return;
           }
-        } catch (e) {
-          require('../utils/logger').warn(`[JoinRequest Check Error] ${e.message}`);
-        }
+        } catch (e) {}
         return;
       }
       
-      if (!message) return;
+      if (!msg) return;
       
-      const chatId = message.chat?.id?.toString();
-      const text = message.text?.trim();
-      const from = message.from || {};
+      const chatId = msg.chat?.id?.toString();
+      const text = msg.text?.trim();
+      const from = msg.from || { id: msg.sender_chat?.id || 0, first_name: msg.sender_chat?.title || 'Channel' };
+      
       if (!chatId || !text) return;
       
-      require('../utils/logger').info(`[Webhook] ${chatId} → "${text.substring(0, 60)}"`);
+      if (text.startsWith('/mute') || text.startsWith('/ban') || text.startsWith('/unban')) {
+        const { data: settings } = await supabase.from('settings').select('smalltalk_bot_token').single().catch(() => ({ data: null }));
+        const tg = tgApi(settings?.smalltalk_bot_token || process.env.TELEGRAM_BOT_TOKEN);
+        
+        let isAdmin = false;
+        if (msg.chat.type === 'channel') {
+          isAdmin = true;
+        } else {
+          try {
+            const member = await tg.call('getChatMember', { chat_id: chatId, user_id: from.id });
+            if (['creator', 'administrator'].includes(member.status)) isAdmin = true;
+          } catch (e) {}
+        }
+        
+        if (isAdmin && msg.reply_to_message && msg.reply_to_message.from) {
+          const targetUserId = msg.reply_to_message.from.id;
+          const command = text.split(' ')[0].toLowerCase();
+          const reason = text.substring(command.length).trim() || 'Manuell vom Admin';
+          
+          if (command === '/mute') {
+            await tg.call('restrictChatMember', {
+              chat_id: chatId,
+              user_id: targetUserId,
+              permissions: { can_send_messages: false },
+              until_date: Math.floor(Date.now() / 1000) + (12 * 3600)
+            }).catch(() => {});
+            await tg.call('sendMessage', { chat_id: chatId, text: `🔇 User stummgeschaltet.\nGrund: ${reason}` }).catch(() => {});
+          } else if (command === '/ban') {
+            await tg.call('banChatMember', { chat_id: chatId, user_id: targetUserId }).catch(() => {});
+            await tg.call('sendMessage', { chat_id: chatId, text: `🚫 User gebannt.\nGrund: ${reason}` }).catch(() => {});
+            await supabase.from("channel_banned_users").upsert([{
+              channel_id: String(chatId),
+              user_id: String(targetUserId),
+              username: msg.reply_to_message.from.username || null,
+              reason: reason,
+              banned_at: new Date().toISOString()
+            }], { onConflict: "channel_id,user_id" }).catch(() => {});
+          } else if (command === '/unban') {
+            await tg.call('unbanChatMember', { chat_id: chatId, user_id: targetUserId, only_if_banned: false }).catch(() => {});
+            await tg.call('sendMessage', { chat_id: chatId, text: `✅ User entbannt.` }).catch(() => {});
+            await supabase.from("channel_banned_users").delete().eq("user_id", String(targetUserId)).eq("channel_id", String(chatId)).catch(() => {});
+          }
+        }
+        return;
+      }
       
       const telegramService = require('../services/telegramService');
       const messageProcessor = require('../services/messageProcessor');
@@ -86,7 +125,7 @@ router.post('/telegram', (req, res) => {
           text,
           from,
           chatId,
-          message.message_id,
+          msg.message_id,
           tg,
           settings?.smalltalk_bot_token
         );
@@ -146,7 +185,6 @@ router.post('/telegram', (req, res) => {
           await telegramService.sendMessage(chatId, response);
         } catch (err) {
           const status = err.response?.status;
-          console.error('[Order] Fehler für', invoiceId, '- Status:', status, '-', err.response?.data?.message || err.message);
           if (status === 404) {
             await telegramService.sendMessage(chatId,
               'Bestellung ' + invoiceId + ' wurde nicht gefunden. Bitte prüfe ob die Invoice-ID korrekt ist.\n\nDie ID steht in der Bestätigungs-E-Mail von Sellauth (Format: xxxxxxx-0000000000000)');
@@ -154,7 +192,6 @@ router.post('/telegram', (req, res) => {
             await telegramService.sendMessage(chatId,
               'Bestellabfrage konnte nicht durchgeführt werden. Bitte wende dich an den Support: @autoacts');
           } else {
-            console.error('[Order] Unerwarteter Fehler:', status, err.response?.data);
             await telegramService.sendMessage(chatId,
               'Bestellabfrage ist momentan nicht verfügbar (Code: ' + (status || 'timeout') + '). Bitte wende dich an @autoacts');
           }
@@ -174,21 +211,10 @@ router.post('/telegram', (req, res) => {
           language: from.language_code || 'de'
         }
       });
-    } catch (err) {
-      require('../utils/logger').error('[Webhook/Telegram]', err.message, err.stack);
-      try {
-        const tg = require('../services/telegramService');
-        const cid = req.body?.message?.chat?.id;
-        if (cid) {
-          await tg.sendMessage(String(cid),
-            'Es gab einen kurzen Fehler. Bitte versuche es in einem Moment erneut.');
-        }
-      } catch (_) {}
-    }
+    } catch (err) {}
   });
 });
 
-// ── Sellauth Webhook ──────────────────────────────────────────────────────────
 router.post('/sellauth', (req, res) => {
   res.sendStatus(200);
   setImmediate(async () => {
@@ -201,46 +227,8 @@ router.post('/sellauth', (req, res) => {
         payload: event,
         created_at: new Date()
       }]);
-    } catch (err) {
-      console.error('[Webhook/Sellauth]', err.message);
-    }
+    } catch (err) {}
   });
 });
-
-// ── Bestellstatus-Abfrage ─────────────────────────────────────────────────────
-async function handleOrderLookup(chatId, invoiceId, telegramService, supabase) {
-  try {
-    const sellauthService = require('../services/sellauthService');
-    
-    const { data: s } = await supabase.from('settings')
-      .select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single();
-    
-    if (!s?.sellauth_api_key || !s?.sellauth_shop_id) {
-      await telegramService.sendMessage(chatId,
-        'Bestellabfrage ist derzeit nicht verfügbar. Bitte wende dich an unseren Support.');
-      return;
-    }
-    
-    await telegramService.sendMessage(chatId, 'Einen Moment, ich suche deine Bestellung...');
-    
-    const invoice = await sellauthService.getInvoice(
-      s.sellauth_api_key, s.sellauth_shop_id, invoiceId
-    );
-    
-    const response = sellauthService.formatInvoiceForCustomer(invoice, s.sellauth_shop_url);
-    await telegramService.sendMessage(chatId, response);
-    
-  } catch (err) {
-    const status = err.response?.status;
-    if (status === 404) {
-      await telegramService.sendMessage(chatId,
-        'Bestellung ' + invoiceId + ' wurde nicht gefunden. Bitte prüfe die Bestellnummer und versuche es erneut.');
-    } else {
-      console.error('[Order Lookup]', err.message);
-      await telegramService.sendMessage(chatId,
-        'Bestellabfrage konnte nicht abgerufen werden. Bitte versuche es in einem Moment erneut.');
-    }
-  }
-}
 
 module.exports = router;
