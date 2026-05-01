@@ -1,13 +1,3 @@
-/**
- * messageProcessor.js v1.3.5
- *
- * Token-Strategie:
- * - Letzte N Nachrichten senden (default: 4, konfigurierbar)
- * - Alle 5 Nachrichten: Chat-Zusammenfassung async aktualisieren
- * - Summary wird mitgesendet → ersetzt ältere History
- * - Ergebnis: ~60-70% weniger Input-Tokens
- */
-
 const supabase            = require('../config/supabase');
 const deepseekService     = require('./deepseekService');
 const telegramService     = require('./telegramService');
@@ -26,54 +16,36 @@ const messageProcessor = {
 
   async handle({ platform, chatId, text, metadata = {} }) {
     const t0 = Date.now();
+    const threadId = metadata?.message_thread_id || null;
 
-    // 1. Abuse-Check
     const abuse = await abuseDetector.check(chatId, text);
     if (abuse.blocked) {
       if (abuse.reason === 'rate_limit' && platform === 'telegram') {
-        await telegramService.sendMessage(chatId, 'Bitte nicht so viele Nachrichten auf einmal. Kurz warten.').catch(() => {});
+        await telegramService.sendMessage(chatId, 'Bitte kurz warten.', { message_thread_id: threadId }).catch(() => {});
       }
       return null;
     }
 
-    // 2. Chat + Settings parallel
     const [chat, settings] = await Promise.all([
       this._getOrCreateChat(chatId, platform, metadata),
       this._loadSettings()
     ]);
-    if (!chat) throw new Error('Chat konnte nicht angelegt werden');
+    if (!chat) return null;
 
     const isFirstMessage = !chat._existed;
 
-    // 3. Nutzer-Nachricht speichern (fire & forget)
     void (async () => {
       try {
         await supabase.from('messages').insert([{ chat_id: chat.id, role: 'user', content: text }]);
-      } catch (e) { logger.warn('[MP] msg insert:', e.message); }
+      } catch (e) {}
     })();
 
     this._updateChatPreview(chat.id, text, 'user');
 
-    // 4. Push-Benachrichtigung
-    void (async () => {
-      try {
-        await notificationService.sendNewMessageNotification({
-          chatId: chat.id, text, firstName: metadata?.first_name || null,
-          platform, isFirstMessage
-        });
-      } catch (_) {}
-    })();
+    if (chat.is_manual_mode) return null;
 
-    // 5. Human Handover: KI aus
-    if (chat.is_manual_mode) {
-      logger.info(`[MP] Manuell-Modus: ${chatId}`);
-      return null;
-    }
+    if (platform === 'telegram') telegramService.sendTypingAction(chatId, { message_thread_id: threadId }).catch(() => {});
 
-    // 6. Typing
-    if (platform === 'telegram') telegramService.sendTypingAction(chatId).catch(() => {});
-
-    // 7. Token-optimierte History (last N + summary)
     const maxHistory     = parseInt(settings.max_history_msgs)  || 4;
     const summaryInterval = parseInt(settings.summary_interval) || 5;
 
@@ -83,315 +55,108 @@ const messageProcessor = {
         .eq('chat_id', chat.id)
         .neq('role', 'system')
         .order('created_at', { ascending: false })
-        .limit(Math.max(maxHistory + summaryInterval, 20))
+        .limit(20)
         .then(r => (r.data || []).reverse()),
-      supabase.from('chats')
-        .select('chat_summary, summary_msg_count')
-        .eq('id', chat.id)
-        .single()
-        .then(r => r.data || {})
+      supabase.from('chats').select('chat_summary').eq('id', chat.id).maybeSingle().then(r => r.data || {})
     ]);
 
-    // Letzten N Nachrichten für den API-Call
     const recentHistory = allHistory.slice(-maxHistory);
     const chatSummary   = chatData.chat_summary || null;
 
-    logger.info(`[MP] ${Date.now()-t0}ms – RAG:${context.length} hist:${recentHistory.length}/${allHistory.length} summary:${chatSummary ? 'ja' : 'nein'}`);
-
-    // 8. KI-Antwort
-    // Coupon-Kontext: bei coupon-bezogenen Fragen IMMER frisch aus DB laden
-    const COUPON_KEYWORDS = /rabatt|coupon|gutschein|\bcode\b|aktions?|angebot|deal|discount|promo|spare|sparen|reduz|abgelaufen|noch aktiv|gültig|g\u00fcltig/i;
+    const COUPON_KEYWORDS = /rabatt|coupon|gutschein|code|angebot|deal/i;
     let couponContext = null;
     let recentHistoryForAI = recentHistory;
 
-    // Also trigger fresh fetch when the user sends a terse follow-up ("?", "ok?", etc.)
-    // and the recent history was about coupons — otherwise the AI parrots its stale prior answer.
-    const historyMentionsCoupon = recentHistory.some(m => COUPON_KEYWORDS.test(m.content || ''));
-    const triggerCouponFetch    = COUPON_KEYWORDS.test(text) || (historyMentionsCoupon && text.length < 30);
-
-    if (triggerCouponFetch) {
+    if (COUPON_KEYWORDS.test(text)) {
       try {
-        // Explicit fresh fetch (no cache, auto-deactivates expired rows)
         const activeCoupon = await couponService.getActiveCouponFresh();
-        const todayStr = new Date().toLocaleDateString('de-DE');
         if (activeCoupon) {
-          const exp = new Date(activeCoupon.expires_at).toLocaleDateString('de-DE');
-          couponContext =
-            `AKTUELLER COUPON (authoritative, live aus Datenbank am ${todayStr}): ` +
-            `Code "${activeCoupon.code}" - ${activeCoupon.description} (gültig bis ${exp}). ` +
-            `WICHTIG: Ignoriere jeden anderen Coupon-Code der evtl. im Chatverlauf erwähnt wurde — ` +
-            `nur dieser Code ist aktuell gültig.`;
-        } else {
-          couponContext =
-            `AKTUELLER COUPON (authoritative, live aus Datenbank am ${todayStr}): ` +
-            `Es gibt HEUTE KEINEN aktiven Coupon. Alle früheren Codes aus dem Chatverlauf sind abgelaufen. ` +
-            `Sage dem Nutzer klar: "Aktuell kein Coupon aktiv".`;
+          couponContext = `AKTUELLER COUPON: Code "${activeCoupon.code}" - ${activeCoupon.description}.`;
         }
-
-        // Strip stale coupon references from the history sent to the AI.
-        // The AI would otherwise parrot the old code from its own prior responses.
-        const STALE_CODE_RE = /SAVE\w*-\w+|COUPON[:\s]*\w+/gi;
-        recentHistoryForAI = recentHistory.map(m => {
-          if (m.role === 'assistant' && STALE_CODE_RE.test(m.content)) {
-            return { ...m, content: '[frühere Coupon-Antwort – bitte aktuelle DB-Info unten verwenden]' };
-          }
-          return m;
-        });
-      } catch (e) {
-        logger.warn('[MP] Coupon context fehlgeschlagen:', e.message);
-      }
+      } catch (e) {}
     }
 
-    // Always include today's date so the AI can reason about "is this still valid?"
     const dateContext = `HEUTIGES DATUM: ${new Date().toLocaleDateString('de-DE')}`;
     const fullSummary = [chatSummary, dateContext, couponContext].filter(Boolean).join('\n\n') || null;
 
-    // v1.4.48: Wrap AI call with graceful fallback — timeouts or API errors now
-    // still deliver *something* to the user (instead of silence).
     let aiResult;
     try {
-      aiResult = await Promise.race([
-        deepseekService.generateResponse(text, recentHistoryForAI, context, chat.id, settings, fullSummary),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('KI-Timeout')), 60000))
-      ]);
+      aiResult = await deepseekService.generateResponse(text, recentHistoryForAI, context, chat.id, settings, fullSummary);
     } catch (aiErr) {
-      logger.error('[MP] AI generation failed:', aiErr.message);
-      aiResult = {
-        text: 'Entschuldige, die Antwort hat gerade zu lange gedauert. Stell mir die Frage bitte noch einmal.',
-        promptTokens: 0, completionTokens: 0, cachedTokens: 0
-      };
-    }
-    if (!aiResult?.text || !aiResult.text.trim()) {
-      logger.warn('[MP] AI returned empty text — sending fallback');
-      aiResult = {
-        text: 'Ich habe gerade keine Antwort parat — kannst du mir deine Frage noch einmal stellen?',
-        promptTokens: 0, completionTokens: 0, cachedTokens: 0
-      };
+      aiResult = { text: 'Dienst kurzzeitig überlastet. Bitte gleich nochmal versuchen.', promptTokens: 0, completionTokens: 0 };
     }
 
-    // 9. Antwort zuverlässig zustellen (mit Retry + Cache)
-    if (platform === 'telegram') {
-      await this._sendReliable(chatId, aiResult.text);
+    if (platform === 'telegram' && aiResult?.text) {
+      await this._sendReliable(chatId, aiResult.text, 3, threadId);
     }
 
-    logger.info(`[MP] Gesamt: ${Date.now()-t0}ms | in:${aiResult.promptTokens} out:${aiResult.completionTokens} cached:${aiResult.cachedTokens||0}`);
-
-    // 10. DB fire & forget
     void (async () => {
       try {
         await supabase.from('messages').insert([{
           chat_id: chat.id, role: 'assistant', content: aiResult.text,
-          prompt_tokens:     aiResult.promptTokens     || 0,
-          completion_tokens: aiResult.completionTokens || 0,
-          embedding_tokens:  this._lastEmbeddingTokens || 0
+          prompt_tokens: aiResult.promptTokens || 0,
+          completion_tokens: aiResult.completionTokens || 0
         }]);
-        this._lastEmbeddingTokens = 0;
-      } catch (e) { logger.warn('[MP] ai insert:', e.message); }
+      } catch (e) {}
     })();
 
     this._updateChatPreview(chat.id, aiResult.text, 'assistant');
 
-    // 11. Learning Queue bei [UNKLAR]
-    if (aiResult.text.includes('[UNKLAR]')) {
-      void (async () => {
-        try {
-          await supabase.from('learning_queue').insert([{
-            original_chat_id: chat.id, unanswered_question: text, status: 'pending'
-          }]);
-        } catch (_) {}
-      })();
-    }
-
-    // 12. Asynchrone Zusammenfassung alle N Nachrichten
-    const totalMsgs = allHistory.length + 1; // +1 für aktuelle Nachricht
-    if (totalMsgs % summaryInterval === 0 && totalMsgs > 0) {
-      void (async () => {
-        try {
-          const msgsForSummary = allHistory.slice(0, -maxHistory); // Ältere Nachrichten
-          if (msgsForSummary.length < 2) return;
-
-          logger.info(`[MP] Starte Zusammenfassung für Chat ${chat.id} (${msgsForSummary.length} ältere Nachrichten)`);
-          const newSummary = await deepseekService.summarizeChat(msgsForSummary, chatData.chat_summary);
-
-          if (newSummary) {
-            await supabase.from('chats').update({
-              chat_summary:      newSummary,
-              summary_msg_count: totalMsgs,
-              last_summarized_at: new Date()
-            }).eq('id', chat.id);
-            logger.info(`[MP] Zusammenfassung aktualisiert für ${chat.id}`);
-          }
-        } catch (e) { logger.warn('[MP] Summary fehlgeschlagen:', e.message); }
-      })();
-    }
-
     return aiResult.text;
   },
 
-  // ── RAG ────────────────────────────────────────────────────────────────────
   async _searchKnowledge(query, settings) {
     try {
       const embResult = await embeddingService.createEmbedding(query);
-      const vector    = embResult.embedding || embResult;
-      if (embResult.tokens) this._lastEmbeddingTokens = embResult.tokens;
+      if (!embResult) return [];
+      
+      const vector = embResult.embedding;
+      const threshold = parseFloat(settings.rag_threshold) || 0.45;
+      const maxCount = parseInt(settings.rag_match_count) || 6;
 
-      const threshold = parseFloat(settings.rag_threshold)  || 0.45;
-      const maxCount  = parseInt(settings.rag_match_count)  || 8;
-
-      // ── Adaptiver RAG ──────────────────────────────────────────────────────
-      // Stufe 1: Probe mit 3 Einträgen + Score-Rückgabe
-      // Wenn Top-Treffer sehr gut (>=0.85) → 1-2 Einträge reichen
-      // Wenn Top-Treffer gut (>=0.70)      → 3-4 Einträge
-      // Wenn Top-Treffer schwach (<0.70)   → volles Kontingent
-
-      const { data: probe } = await supabase.rpc('match_knowledge', {
-        query_embedding:  vector,
-        match_threshold:  threshold,
-        match_count:      3
+      const { data } = await supabase.rpc('match_knowledge', {
+        query_embedding: vector,
+        match_threshold: threshold,
+        match_count: maxCount
       });
 
-      const topScore = probe?.[0]?.similarity || 0;
-
-      // Sehr guter Treffer: Top-Ergebnis hat hohe Ähnlichkeit → maximal 2 Dokumente
-      if (topScore >= 0.82) {
-        const exact = probe.filter(r => r.similarity >= 0.75);
-        logger.info(`[RAG] Hohe Konfidenz (${topScore.toFixed(3)}) → ${exact.length} Dok.`);
-        return exact.slice(0, 2);
-      }
-
-      // Guter Treffer: 3-4 Dokumente reichen
-      if (topScore >= 0.65 && probe?.length >= 2) {
-        logger.info(`[RAG] Mittlere Konfidenz (${topScore.toFixed(3)}) → ${probe.length} Dok.`);
-        return probe;
-      }
-
-      // Schwacher Treffer: volles Kontingent mit niedrigerem Threshold
-      const { data: full } = await supabase.rpc('match_knowledge', {
-        query_embedding:  vector,
-        match_threshold:  Math.max(threshold - 0.15, 0.20),
-        match_count:      maxCount
-      });
-
-      const result = full?.length ? full : (probe || []);
-      logger.info(`[RAG] Niedrige Konfidenz (${topScore.toFixed(3)}) → ${result.length} Dok.`);
-      return result;
-
+      return data || [];
     } catch (err) {
-      logger.warn(`[MP] Embedding: ${err.message}`);
       return [];
     }
   },
 
-  // ── Settings-Cache ─────────────────────────────────────────────────────────
   async _loadSettings() {
     const now = Date.now();
     if (_settingsCache && (now - _settingsCacheTime) < CACHE_TTL) return _settingsCache;
     try {
       const { data } = await supabase.from('settings').select('*').single();
       _settingsCache = {
-        system_prompt:   data?.system_prompt    || 'Du bist ein hilfreicher Assistent.',
-        negative_prompt: data?.negative_prompt  || '',
-        ai_model:        data?.ai_model         || 'deepseek-chat',
-        ai_max_tokens:   data?.ai_max_tokens    || 1024,
-        ai_temperature:  data?.ai_temperature   || 0.5,
-        rag_threshold:   data?.rag_threshold    || 0.45,
-        rag_match_count: data?.rag_match_count  || 8,
-        max_history_msgs:  data?.max_history_msgs  || 4,
-        summary_interval:  data?.summary_interval  || 5,
+        system_prompt: data?.system_prompt || 'Du bist ein Assistent.',
+        ai_model: data?.ai_model || 'deepseek-chat',
+        ai_max_tokens: data?.ai_max_tokens || 1024,
+        ai_temperature: data?.ai_temperature || 0.5,
+        rag_threshold: data?.rag_threshold || 0.45,
+        rag_match_count: data?.rag_match_count || 8,
+        max_history_msgs: data?.max_history_msgs || 4,
+        summary_interval: data?.summary_interval || 5,
       };
       _settingsCacheTime = now;
       return _settingsCache;
     } catch {
-      return {
-        system_prompt: 'Du bist ein hilfreicher Assistent.', ai_model: 'deepseek-chat',
-        ai_max_tokens: 1024, ai_temperature: 0.5, rag_threshold: 0.45, rag_match_count: 8,
-        max_history_msgs: 4, summary_interval: 5
-      };
+      return { system_prompt: 'Assistent', ai_model: 'deepseek-chat', max_history_msgs: 4 };
     }
   },
 
-  async _isRephrasing(text, history) {
-    // Prüft ob die aktuelle Nachricht nur eine Wiederholung/Verbesserung der letzten ist
-    if (!history || history.length < 2) return false;
-    const lastUserMsg = [...history].reverse().find(m => m.role === 'user');
-    if (!lastUserMsg) return false;
+  _pendingDeliveries: new Map(),
 
-    const prev = (lastUserMsg.content || '').toLowerCase().trim();
-    const curr = text.toLowerCase().trim();
-
-    // Identisch oder sehr kurz → Verbesserung
-    if (curr === prev) return true;
-    if (curr.length < 8 && prev.length > 10) return false; // Zu kurz um zu urteilen
-
-    // Tippfehler-Korrektur-Patterns (z.B. "e sil" → "e sim", "esil" → "esim")
-    const normalizeMsg = s => s.replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
-    const normPrev = normalizeMsg(prev);
-    const normCurr = normalizeMsg(curr);
-
-    // Levenshtein-Distanz < 40% der Länge → Umformulierung
-    const maxLen = Math.max(normPrev.length, normCurr.length);
-    if (maxLen === 0) return false;
-    const dist = this._levenshtein(normPrev, normCurr);
-    if (dist / maxLen < 0.40 && dist > 0) return true;
-
-    // Gleiche Kernwörter (> 60% Überschneidung)
-    const words1 = new Set(normPrev.split(' ').filter(w => w.length > 2));
-    const words2 = new Set(normCurr.split(' ').filter(w => w.length > 2));
-    if (words1.size === 0 || words2.size === 0) return false;
-    const overlap = [...words1].filter(w => words2.has(w)).length;
-    const similarity = overlap / Math.max(words1.size, words2.size);
-    return similarity > 0.65;
-  },
-
-  _levenshtein(a, b) {
-    const m = a.length, n = b.length;
-    if (m === 0) return n; if (n === 0) return m;
-    const dp = Array.from({ length: m + 1 }, (_, i) => i === 0
-      ? Array.from({ length: n + 1 }, (_, j) => j)
-      : [i, ...new Array(n).fill(0)]
-    );
-    for (let i = 1; i <= m; i++)
-      for (let j = 1; j <= n; j++)
-        dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1]
-          : 1 + Math.min(dp[i-1][j], dp[i][j-1], dp[i-1][j-1]);
-    return dp[m][n];
-  },
-
-  // ── Zuverlässige Zustellung: Retry-Logik + Deduplizierung ──────────────
-  _pendingDeliveries: new Map(),  // chatId → { text, attempts, ts }
-
-  async _sendReliable(chatId, text, maxAttempts = 3) {
-    const key = chatId;
-
-    // Deduplizierung: gleiche Antwort nicht doppelt senden (< 5s)
-    const prev = this._pendingDeliveries.get(key);
-    if (prev && prev.text === text && Date.now() - prev.ts < 5000) {
-      logger.info(`[MP] Delivery dedup für ${chatId}`);
-      return;
-    }
-
-    this._pendingDeliveries.set(key, { text, attempts: 0, ts: Date.now() });
-
+  async _sendReliable(chatId, text, maxAttempts = 3, threadId = null) {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        await telegramService.sendMessage(chatId, text);
-        this._pendingDeliveries.delete(key);
-        return; // Erfolgreich
+        await telegramService.sendMessage(chatId, text, { message_thread_id: threadId });
+        return;
       } catch (e) {
-        const isRetryable = !e.message?.includes('blocked') &&
-                            !e.message?.includes('deactivated') &&
-                            !e.message?.includes('chat not found');
-
-        logger.warn(`[MP] Telegram-Zustellung Versuch ${attempt}/${maxAttempts} fehlgeschlagen (${chatId}): ${e.message}`);
-
-        if (!isRetryable || attempt === maxAttempts) {
-          // Nicht wiederholbar oder letzter Versuch → pending entry für Monitoring
-          this._pendingDeliveries.set(key, { text, attempts: attempt, ts: Date.now(), failed: true });
-          logger.error(`[MP] Zustellung endgültig fehlgeschlagen für ${chatId}`);
-          return;
-        }
-
-        // Exponentielles Backoff: 1s, 2s
+        if (attempt === maxAttempts) logger.error(`[MP] Zustellung fehlgeschlagen: ${chatId}`);
         await new Promise(r => setTimeout(r, attempt * 1000));
       }
     }
@@ -401,9 +166,9 @@ const messageProcessor = {
     void (async () => {
       try {
         await supabase.from('chats').update({
-          last_message:      (message || '').substring(0, 120),
+          last_message: (message || '').substring(0, 120),
           last_message_role: role,
-          updated_at:        new Date()
+          updated_at: new Date()
         }).eq('id', chatId);
       } catch (_) {}
     })();
@@ -411,28 +176,14 @@ const messageProcessor = {
 
   async _getOrCreateChat(chatId, platform, metadata) {
     try {
-      const { data: existing } = await supabase
-        .from('chats').select('id, is_manual_mode, platform, auto_muted, flag_count, chat_summary')
-        .eq('id', chatId).maybeSingle();
-
+      const { data: existing } = await supabase.from('chats').select('*').eq('id', chatId).maybeSingle();
       if (existing) return { ...existing, _existed: true };
 
-      const ins = { id: chatId, platform, metadata: metadata || {} };
-      if (metadata?.first_name) ins.first_name = metadata.first_name;
-      if (metadata?.username)   ins.username   = metadata.username;
-
-      const { data: created, error } = await supabase.from('chats')
-        .insert([ins]).select('id, is_manual_mode, platform, auto_muted, flag_count, chat_summary').single();
-
-      if (error?.code === '23505') {
-        const { data: retry } = await supabase.from('chats')
-          .select('id, is_manual_mode, platform, auto_muted, flag_count, chat_summary').eq('id', chatId).single();
-        return retry ? { ...retry, _existed: true } : { id: chatId, is_manual_mode: false, platform, _existed: false };
-      }
-      return { ...(created || { id: chatId, is_manual_mode: false, platform }), _existed: false };
+      const ins = { id: chatId, platform, first_name: metadata?.first_name || 'Nutzer', username: metadata?.username || null };
+      const { data: created } = await supabase.from('chats').insert([ins]).select().single();
+      return { ...(created || { id: chatId }), _existed: false };
     } catch (err) {
-      logger.error(`[MP] _getOrCreateChat: ${err.message}`);
-      return { id: chatId, is_manual_mode: false, platform, _existed: false };
+      return { id: chatId, _existed: false };
     }
   }
 };

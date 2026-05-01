@@ -2,6 +2,8 @@ const axios = require('axios');
 
 const embeddingService = {
   async createEmbedding(text) {
+    if (!text || typeof text !== 'string') return null;
+    
     try {
       const cleanText = text.replace(/\n/g, ' ').substring(0, 8000);
 
@@ -16,9 +18,11 @@ const embeddingService = {
             'Authorization': `Bearer ${process.env.OPENAI_API_KEY}`,
             'Content-Type': 'application/json'
           },
-          timeout: 15000
+          timeout: 20000
         }
       );
+
+      if (!response.data?.data?.[0]?.embedding) return null;
 
       return {
         embedding: response.data.data[0].embedding,
@@ -27,15 +31,15 @@ const embeddingService = {
     } catch (error) {
       const msg = error.response?.data?.error?.message || error.message;
       console.error('Embedding Error:', msg);
-      throw new Error(`Embedding-Generierung fehlgeschlagen: ${msg}`);
+      return null;
     }
   },
 
   async createEmbeddingsForChunks(chunks) {
     const results = [];
     for (const chunk of chunks) {
-      const embedding = await this.createEmbedding(chunk);
-      results.push({ content: chunk, embedding });
+      const res = await this.createEmbedding(chunk);
+      if (res) results.push({ content: chunk, embedding: res.embedding });
     }
     return results;
   }
