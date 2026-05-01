@@ -142,7 +142,42 @@ const packageService = {
     } catch (e) { logger.warn("[Packages] purchase log:", e.message); }
     return result;
   },
+/**
+   * Donation Flow — Credits stapeln ohne "aktives Paket"-Block
+   * kind="refill" → Credits werden auf bestehendes Guthaben addiert
+   * activated_at=null → 30-Tage-Counter wird NICHT zurückgesetzt
+   */
+  async generateDonationUrl(pkg, channelId, donorUserId) {
+    if (!pkg.sellauth_variant_id) throw new Error(`Paket "${pkg.name}": Variant-ID fehlt.`);
+    if (!pkg.sellauth_product_id) throw new Error(`Paket "${pkg.name}": Product-ID fehlt.`);
 
+    const creds = await _loadCreds();
+    const result = await _createCheckoutSession(
+      pkg.sellauth_product_id, pkg.sellauth_variant_id, channelId, creds
+    );
+
+    try {
+      await supabase.from("channel_purchases").insert([{
+        channel_id:          String(channelId),
+        package_id:          pkg.id,
+        sellauth_invoice_id: result.invoiceId,
+        credits_added:       pkg.credits,
+        duration_days:       30,
+        expires_at:          new Date(Date.now() + 365 * 86400000).toISOString(),
+        status:              "pending",
+        kind:                "refill",
+        meta: {
+          type:          "refill",
+          source:        "donation",
+          package_name:  pkg.name,
+          price_eur:     pkg.price_eur,
+          donor_user_id: donorUserId ? String(donorUserId) : null
+        }
+      }]);
+    } catch (e) { logger.warn("[Packages] donation log:", e.message); }
+
+    return result;
+  },
   async generateRefillUrl(refill, channelId) {
     if (!refill.sellauth_variant_id) throw new Error(`Refill "${refill.name}": Variant-ID fehlt.`);
     if (!refill.sellauth_product_id) throw new Error(`Refill "${refill.name}": Product-ID fehlt.`);

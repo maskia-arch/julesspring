@@ -116,7 +116,6 @@ async function sendChannelMenu(tg, sendTo, channelId, ch, msgId = null, userLang
 async function sendModerationMenu(tg, sendTo, channelId, ch, msgId = null, userLang = "de") {
   const l = ch?.bot_language || userLang;
   if (!ch?.is_approved) return editOrSend(tg, sendTo, msgId, t("mod_locked", l), [[_menuBackBtn(channelId, l)]]);
-  
   const text = `${t("mod", l).split(" ")[0]} <b>${t("mod", l).replace(/^[^\s]+\s/, "")}</b> — ${ch?.title || channelId}`;
   const kb = [
     [{ text: t("sl_btn", l).replace("{sl}", ch?.safelist_enabled ? "✅" : "❌"), callback_data: `cfg_safelist_${channelId}` }, { text: t("fb_btn", l).replace("{fb}", ch?.feedback_enabled ? "✅" : "❌"), callback_data: `cfg_feedback_${channelId}` }],
@@ -145,7 +144,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
   const parts = data.split("_");
   const channelId = parts[parts.length - 1];
   let action = parts[1];
-  
+
   if (parts[1] === "bl" && parts[2] === "tgl") {
     action = parts.slice(1, 5).join("_");
   } else if (parts[1] === "bl" && parts[2] === "cfg") {
@@ -157,7 +156,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
   const ch = await getChannel(channelId);
 
   if (ch && String(ch.added_by_user_id) !== String(userId)) {
-      return tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Keine Berechtigung für diesen Channel.", show_alert: true }).catch(()=>{});
+    return tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Keine Berechtigung für diesen Channel.", show_alert: true }).catch(()=>{});
   }
 
   const userLang = q.from?.language_code?.substring(0, 2) || "de";
@@ -169,7 +168,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     case "menu_channel": await sendChannelMenu(tg, String(userId), channelId, ch, msgId, userLang); break;
     case "menu_mod": await sendModerationMenu(tg, String(userId), channelId, ch, msgId, userLang); break;
     case "menu_ai": await sendAiMenu(tg, String(userId), channelId, ch, msgId, userLang); break;
-    
+
     case "lang": {
       const kb = [];
       const codes = Object.keys(SUPPORTED_LANGUAGES);
@@ -200,10 +199,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     }
     case "banned": {
       const { data: bList } = await supabase_db.from("channel_banned_users").select("user_id, username, reason").eq("channel_id", channelId).limit(25);
-      if (!bList?.length) { 
-        await editOrSend(tg, String(userId), msgId, "✅ Keine gebannten User gefunden.", [[backBtn(channelId, lang)[0]]]); 
-        break; 
-      }
+      if (!bList?.length) { await editOrSend(tg, String(userId), msgId, "✅ Keine gebannten User gefunden.", [[backBtn(channelId, lang)[0]]]); break; }
       const kb = bList.map(e => [{ text: `🟢 Entbannen: @${e.username || e.user_id}`, callback_data: `cfg_unban_${e.user_id}_${channelId}` }]);
       kb.push([backBtn(channelId, lang)[0]]);
       await editOrSend(tg, String(userId), msgId, `🚫 <b>Gebannte User</b>\n\nKlicke auf einen User, um ihn zu entbannen.`, kb);
@@ -224,7 +220,6 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       let statusText = "Deaktiviert";
       if (interval === "daily") statusText = "Täglich";
       if (interval === "weekly") statusText = "Wöchentlich";
-
       await editOrSend(tg, String(userId), msgId, `🧹 <b>Bereinigen</b>\n\nEntfernt gelöschte Accounts aus dem Channel.\n\nAktueller Auto-Modus: <b>${statusText}</b>`, [
         [{ text: "▶️ Jetzt bereinigen", callback_data: `cfg_clean_now_${channelId}` }],
         [{ text: interval === "daily" ? "✅ Auto: Täglich" : "⏱ Auto: Täglich", callback_data: `cfg_clean_daily_${channelId}` }],
@@ -352,7 +347,6 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         aw_new: "✍️ <b>WerbeTexter</b>\n\nSende Originaltext (Kosten: 30 Credits).",
         st_prompt: "✏️ <b>System-Prompt</b>\n\nSende neuen Prompt."
       };
-      
       const sent = await editOrSend(tg, String(userId), msgId, msgs[action] + "\n\n/cancel zum Abbrechen.", [[{ text: "❌ Abbrechen", callback_data: `cfg_back_${channelId}` }]]);
       const actionsMap = { sl_adduser: "safelist_add_user", sl_addscam: "scamlist_add_user", userinfo: "userinfo_awaiting", kb_add: "kb_add_entry", bl_add: "bl_add_word", bl_addsoft: "bl_add_soft", schedule: "sched_wizard_text", aw_new: "adwriter_new", st_prompt: "set_ai_prompt" };
       global.pendingInputs[String(userId)] = { action: actionsMap[action], channelId, aiOn: ch?.ai_enabled, freeMode: !ch?.ai_enabled, wizardMsgId: sent?.message_id || msgId };
@@ -423,8 +417,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       const hasDel = hardCons.includes("delete");
       const hasMute = hardCons.includes("mute");
       const hasBan = hardCons.includes("ban");
-      
-      await editOrSend(tg, String(userId), msgId, `🔴 <b>Konsequenzen: Harte Liste</b>\n\nWas soll passieren, wenn jemand ein Wort aus der Harten Liste postet? (Mehrfachauswahl möglich)`, [
+      await editOrSend(tg, String(userId), msgId, `🔴 <b>Konsequenzen: Harte Liste</b>\n\nWas soll passieren, wenn jemand ein Wort aus der Harten Liste postet?`, [
         [{ text: `🗑 Nachricht löschen: ${hasDel ? "✅" : "❌"}`, callback_data: `cfg_bl_tgl_hard_delete_${channelId}` }],
         [{ text: `🔇 User stummschalten (12h): ${hasMute ? "✅" : "❌"}`, callback_data: `cfg_bl_tgl_hard_mute_${channelId}` }],
         [{ text: `🚫 User bannen: ${hasBan ? "✅" : "❌"}`, callback_data: `cfg_bl_tgl_hard_ban_${channelId}` }],
@@ -434,7 +427,6 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     }
     case "bl_cfg_soft": {
       const softHours = ch?.bl_soft_delete_hours || 0;
-      
       await editOrSend(tg, String(userId), msgId, `🟡 <b>Konsequenzen: Toleriert-Liste</b>\n\nNachrichten mit diesen Wörtern bleiben zunächst stehen.\n\nSollen sie automatisch gelöscht werden?`, [
         [{ text: softHours === 1 ? "✅ Nach 1 Stunde löschen" : "⏱ Nach 1 Stunde löschen", callback_data: `cfg_bl_tgl_soft_1_${channelId}` }],
         [{ text: softHours === 24 ? "✅ Nach 24 Stunden löschen" : "⏱ Nach 24 Stunden löschen", callback_data: `cfg_bl_tgl_soft_24_${channelId}` }],
@@ -448,13 +440,11 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     case "bl_tgl_hard_ban": {
       const toggleAction = action.split("_").pop();
       let currentCons = ch?.bl_hard_consequences || [];
-      
       if (currentCons.includes(toggleAction)) {
         currentCons = currentCons.filter(c => c !== toggleAction);
       } else {
         currentCons.push(toggleAction);
       }
-      
       await supabase_db.from("bot_channels").update({ bl_hard_consequences: currentCons }).eq("id", channelId);
       await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "✅ Aktualisiert" }).catch(()=>{});
       handleSettingsCallback(tg, supabase_db, `cfg_bl_cfg_hard_${channelId}`, q, userId);
@@ -471,27 +461,17 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     }
     case "bl_globalapply": {
       await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "⏳ Wende auf alle Kanäle an..." }).catch(()=>{});
-      
       try {
         const { data: myChannels } = await supabase_db.from("bot_channels").select("id").eq("added_by_user_id", String(userId));
         if (myChannels && myChannels.length > 1) {
           const { data: currentWords } = await supabase_db.from("channel_blacklist").select("word, severity, delete_after_hours, category").eq("channel_id", channelId);
           const currentHardCons = ch?.bl_hard_consequences || [];
           const currentSoftHours = ch?.bl_soft_delete_hours || 0;
-          
           for (const myCh of myChannels) {
-            if (myCh.id === channelId) continue; 
+            if (myCh.id === channelId) continue;
             await supabase_db.from("bot_channels").update({ bl_hard_consequences: currentHardCons, bl_soft_delete_hours: currentSoftHours }).eq("id", myCh.id);
-            
             if (currentWords && currentWords.length > 0) {
-              const wordsToInsert = currentWords.map(w => ({
-                channel_id: myCh.id,
-                word: w.word,
-                severity: w.severity,
-                delete_after_hours: w.delete_after_hours,
-                category: w.category,
-                created_by: userId
-              }));
+              const wordsToInsert = currentWords.map(w => ({ channel_id: myCh.id, word: w.word, severity: w.severity, delete_after_hours: w.delete_after_hours, category: w.category, created_by: userId }));
               await supabase_db.from("channel_blacklist").upsert(wordsToInsert, { onConflict: "channel_id,word" });
             }
           }
@@ -507,20 +487,11 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     case "bl_list": case "bl_listsoft": {
       const isSoft = action === "bl_listsoft";
       const { data: bList } = await supabase_db.from("channel_blacklist").select("id, word, severity").eq("channel_id", channelId).eq("severity", isSoft ? "tolerated" : "mute").limit(25);
-      
       const kb = [];
       kb.push([{ text: isSoft ? "➕ Wort zu Toleriert hinzufügen" : "➕ Wort zu Hart hinzufügen", callback_data: `cfg_bl_${isSoft ? 'addsoft' : 'add'}_${channelId}` }]);
-      
-      if (bList?.length) { 
-        bList.forEach(e => kb.push([{ text: `🗑 ${e.word}`, callback_data: `cfg_bl_${isSoft ? 'delsoft' : 'del'}_${e.id}_${channelId}` }]));
-      }
-      
+      if (bList?.length) { bList.forEach(e => kb.push([{ text: `🗑 ${e.word}`, callback_data: `cfg_bl_${isSoft ? 'delsoft' : 'del'}_${e.id}_${channelId}` }])); }
       kb.push([{ text: "◀️ Zurück", callback_data: `cfg_blacklist_${channelId}` }]);
-      
-      const textIntro = bList?.length 
-        ? `${isSoft?"🟡":"🔴"} <b>Blacklist</b>\n\n` + bList.map(e=>`• <code>${e.word}</code>`).join("\n")
-        : `${isSoft?"🟡":"🔴"} Liste ist aktuell leer.`;
-        
+      const textIntro = bList?.length ? `${isSoft?"🟡":"🔴"} <b>Blacklist</b>\n\n` + bList.map(e=>`• <code>${e.word}</code>`).join("\n") : `${isSoft?"🟡":"🔴"} Liste ist aktuell leer.`;
       await editOrSend(tg, String(userId), msgId, textIntro, kb);
       break;
     }
@@ -528,10 +499,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       const isSoft = action === "bl_delsoft";
       const regex = isSoft ? /^cfg_bl_delsoft_([a-zA-Z0-9-]+)_(-?\d+)$/ : /^cfg_bl_del_([a-zA-Z0-9-]+)_(-?\d+)$/;
       const m = data.match(regex);
-      if (m) {
-        await supabase_db.from("channel_blacklist").delete().eq("id", m[1]);
-        handleSettingsCallback(tg, supabase_db, `cfg_bl_${isSoft ? 'listsoft' : 'list'}_${channelId}`, q, userId);
-      }
+      if (m) { await supabase_db.from("channel_blacklist").delete().eq("id", m[1]); handleSettingsCallback(tg, supabase_db, `cfg_bl_${isSoft ? 'listsoft' : 'list'}_${channelId}`, q, userId); }
       break;
     }
     case "knowledge": {
@@ -585,7 +553,12 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "groupgames": {
-      const gamesText = { de: "🎮 <b>Gruppenspiele<\/b>\n\n<i>Dieses Feature wird bald verfügbar!<\/i>\n\nGruppenspiele aktivieren deine Community:\n\n• 🎯 Quiz-Runden mit Auswertung\n• 🃏 Wortspiele \& Rätsel\n• 🏆 Ranglisten \& Punkte-System\n• 🎲 Mini-Games\n\nUpdates: @autoacts", en: "🎮 <b>Group Games<\/b>\n\n<i>Coming soon!<\/i>\n\nEngage your community with:\n\n• 🎯 Quiz rounds with auto-scoring\n• 🃏 Word games \& puzzles\n• 🏆 Leaderboards \& points\n• 🎲 Mini games\n\nFollow @autoacts!", ru: "🎮 <b>Групповые игры<\/b>\n\n<i>Скоро!<\/i>\n\n• 🎯 Викторины\n• 🏆 Таблицы лидеров\n• 🎲 Мини-игры\n\n@autoacts", tr: "🎮 <b>Grup Oyunları<\/b>\n\n<i>Yakında!<\/i>\n\n• 🎯 Quiz\n• 🏆 Liderlik tablosu\n• 🎲 Mini oyunlar\n\n@autoacts" };
+      const gamesText = {
+        de: "🎮 <b>Gruppenspiele</b>\n\n<i>Dieses Feature wird bald verfügbar!</i>\n\nGruppenspiele aktivieren deine Community:\n\n• 🎯 Quiz-Runden mit Auswertung\n• 🃏 Wortspiele & Rätsel\n• 🏆 Ranglisten & Punkte-System\n• 🎲 Mini-Games\n\nUpdates: @autoacts",
+        en: "🎮 <b>Group Games</b>\n\n<i>Coming soon!</i>\n\nEngage your community with:\n\n• 🎯 Quiz rounds with auto-scoring\n• 🃏 Word games & puzzles\n• 🏆 Leaderboards & points\n• 🎲 Mini games\n\nFollow @autoacts!",
+        ru: "🎮 <b>Групповые игры</b>\n\n<i>Скоро!</i>\n\n• 🎯 Викторины\n• 🏆 Таблицы лидеров\n• 🎲 Мини-игры\n\n@autoacts",
+        tr: "🎮 <b>Grup Oyunları</b>\n\n<i>Yakında!</i>\n\n• 🎯 Quiz\n• 🏆 Liderlik tablosu\n• 🎲 Mini oyunlar\n\n@autoacts"
+      };
       await editOrSend(tg, String(userId), msgId, gamesText[lang] || gamesText["de"], [[_menuBackBtn(channelId, lang)]]);
       break;
     }
@@ -618,7 +591,6 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
           const r = await axios.post("https://api.openai.com/v1/chat/completions", { model: "gpt-4o-mini", max_tokens: 1200, messages: [{ role: "system", content: "Du bist ein professioneller WerbeTexter. Erstelle 3 verschiedene Variationen des folgenden Werbetextes. Trenne die Variationen mit ---." }, { role: "user", content: s.message }] }, { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "Content-Type": "application/json" } });
           const variations = r.data.choices[0].message.content.split("---").map(v => v.trim()).filter(v => v.length > 10);
           await supabase_db.rpc("consume_channel_credits", { p_channel_id: channelId, p_tokens: 30 }).then(r=>r, ()=>{});
-          
           await tg.call("deleteMessage", { chat_id: String(userId), message_id: msgId }).catch(() => {});
           for (let i = 0; i < Math.min(variations.length, 3); i++) {
             await tg.call("sendMessage", { chat_id: String(userId), text: `✍️ <b>Variation ${i+1}</b>\n\n${variations[i].substring(0,1000)}`, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: `📅 Als Nachricht einplanen`, callback_data: `cfg_schedule_${channelId}` }]] } });

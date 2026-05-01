@@ -109,7 +109,7 @@ const commandHandler = {
         }
         return;
       }
-      
+
       if (/^\/feedbacks?(?:@\w+)?$/i.test(text)) {
         const { data: myChans } = await supabase.from("bot_channels").select("id, title").eq("added_by_user_id", chatId).eq("is_approved", true).eq("is_active", true).limit(5);
         if (!myChans?.length) {
@@ -158,6 +158,48 @@ const commandHandler = {
         return;
       }
 
+      // ─── Deep-Link: /start donate_<channelId> ──────────────────────
+      const donateStart = text.match(/^\/start(?:@\w+)?\s+donate_(-?\d+)$/i);
+      if (donateStart) {
+        const donateChanId = donateStart[1];
+        let donateChannel = null;
+        try {
+          const { data } = await supabase_db.from("bot_channels")
+            .select("id, title, is_active").eq("id", String(donateChanId)).maybeSingle();
+          donateChannel = data;
+        } catch (_) {}
+
+        if (!donateChannel || donateChannel.is_active === false) {
+          await tg.send(chatId, "❌ Channel nicht (mehr) verfügbar.");
+          return;
+        }
+
+        const { data: pkgs } = await supabase_db.from("channel_packages")
+          .select("id, name, credits, price_eur, duration_days, is_active")
+          .eq("is_active", true).order("price_eur", { ascending: true });
+        const activePkgs = (pkgs || []).filter(p => p.is_active !== false);
+
+        if (!activePkgs.length) {
+          await tg.send(chatId, "❌ Aktuell sind keine Pakete verfügbar.");
+          return;
+        }
+
+        const chTitle = donateChannel.title || `Channel ${donateChanId}`;
+        const pkgKb = activePkgs.map(p => [{
+          text: `📦 ${p.name} — ${p.credits.toLocaleString()} Credits · ${parseFloat(p.price_eur).toFixed(2)} €`,
+          callback_data: `donate_pkg_${p.id}_${donateChanId}_${from.id}`
+        }]);
+        pkgKb.push([{ text: "❌ Abbrechen", callback_data: `donate_cancel_${from.id}` }]);
+
+        await tg.call("sendMessage", {
+          chat_id: chatId,
+          text: `❤️ <b>Credit-Paket für „${chTitle}" spendieren</b>\n\nVielen Dank für deine Unterstützung! Wähle ein Paket:`,
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: pkgKb }
+        });
+        return;
+      }
+
       if (/^\/(?:start|menu|settings|dashboard|help)(?:@\w+)?/i.test(text)) {
         const { data: allMyChannels } = await supabase_db.from("bot_channels").select("id, title, type, is_approved, ai_enabled, bot_language, is_active").eq("added_by_user_id", String(from.id));
 
@@ -169,8 +211,8 @@ const commandHandler = {
 
         const deactivatedChannels = allMyChannels.filter(c => c.is_active === false);
         if (deactivatedChannels.length > 0 && allMyChannels.length === deactivatedChannels.length) {
-            await tg.send(chatId, "⚠️ <b>Dein Channel/Gruppe wurde deaktiviert.</b>\n\nBitte melde dich bei @autoacts für weitere Informationen oder eine erneute Freischaltung.", { parse_mode: "HTML" });
-            return;
+          await tg.send(chatId, "⚠️ <b>Dein Channel/Gruppe wurde deaktiviert.</b>\n\nBitte melde dich bei @autoacts für weitere Informationen oder eine erneute Freischaltung.", { parse_mode: "HTML" });
+          return;
         }
 
         const activeChannels = allMyChannels.filter(c => c.is_active !== false);
@@ -182,9 +224,9 @@ const commandHandler = {
         }
 
         if (activeChannels.length > 1) {
-            const keyboard = activeChannels.map(ch2 => [{ text: (ch2.type === "channel" ? "📢" : "👥") + " " + (ch2.title || ch2.id), callback_data: "sel_channel_" + ch2.id }]);
-            await tg.call("sendMessage", { chat_id: chatId, text: "⚙️ Wähle deinen Channel:", reply_markup: { inline_keyboard: keyboard } });
-            return;
+          const keyboard = activeChannels.map(ch2 => [{ text: (ch2.type === "channel" ? "📢" : "👥") + " " + (ch2.title || ch2.id), callback_data: "sel_channel_" + ch2.id }]);
+          await tg.call("sendMessage", { chat_id: chatId, text: "⚙️ Wähle deinen Channel:", reply_markup: { inline_keyboard: keyboard } });
+          return;
         }
       }
     }
@@ -195,13 +237,72 @@ const commandHandler = {
 
     if (!text) return;
 
+    // ─── /donate (NUR in Gruppen/Channels) ─────────────────────────────
+    if (/^\/donate(?:@\w+)?$/i.test(text) && chat.type !== "private") {
+      if (!ch) {
+        await tg.send(chatId, "❌ Dieser Channel ist noch nicht registriert. Ein Admin muss zuerst /menu im Privat-Chat mit mir nutzen.");
+        return;
+      }
+      if (ch.is_active === false) {
+        await tg.send(chatId, "⚠️ Dieser Channel ist deaktiviert. Spendieren ist nicht möglich.");
+        return;
+      }
+
+      const { data: pkgs } = await supabase_db.from("channel_packages")
+        .select("id, name, credits, price_eur, duration_days, is_active")
+        .eq("is_active", true).order("price_eur", { ascending: true });
+
+      const activePkgs = (pkgs || []).filter(p => p.is_active !== false);
+      if (!activePkgs.length) {
+        await tg.send(chatId, "❌ Aktuell sind keine Credit-Pakete verfügbar.");
+        return;
+      }
+
+      const chTitle = ch.title || chat.title || `Channel ${chatId}`;
+      const pkgKb = activePkgs.map(p => [{
+        text: `📦 ${p.name} — ${p.credits.toLocaleString()} Credits · ${parseFloat(p.price_eur).toFixed(2)} €`,
+        callback_data: `donate_pkg_${p.id}_${chatId}_${from.id}`
+      }]);
+      pkgKb.push([{ text: "❌ Abbrechen", callback_data: `donate_cancel_${from.id}` }]);
+
+      const donorMsg = `❤️ <b>Credit-Paket für „${chTitle}" spendieren</b>\n\nDu möchtest dem Channel ein Paket schenken — vielen Dank!\n\nWähle ein Paket:`;
+      try {
+        await tg.call("sendMessage", {
+          chat_id: String(from.id),
+          text: donorMsg,
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: pkgKb }
+        });
+        const groupMsg = await tg.send(chatId,
+          `❤️ ${from.first_name || "Spender:in"} möchte für diesen Channel spendieren — ich habe dir die Pakete privat geschickt.`,
+          { reply_to_message_id: msg.message_id }
+        );
+        if (groupMsg?.message_id) {
+          void safelistService.trackBotMessage(chatId, groupMsg.message_id, "temp", 60 * 1000);
+        }
+      } catch (e) {
+        const botName = settings?.bot_name || "AdminHelper_Bot";
+        await tg.call("sendMessage", {
+          chat_id: chatId,
+          text: `❤️ <b>Spendieren möglich!</b>\n\n${from.first_name || "Du"}, schreib mir bitte einmal kurz privat (Klick auf den Button), dann kann ich dir die Pakete zur Auswahl schicken:`,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [[
+              { text: "💬 Privat öffnen & spendieren", url: `https://t.me/${botName}?start=donate_${chatId}` }
+            ]]
+          },
+          reply_to_message_id: msg.message_id
+        });
+      }
+      return;
+    }
+
     if (/^\/help(?:@\w+)?$/i.test(text)) {
       const isAdm = await isGroupAdmin(tg, chatId, from.id);
       if (isAdm) {
         const botName = settings?.bot_name || "AdminHelper_Bot";
         const msg = await tg.send(chatId, "⚙️ Ich habe dir das Admin-Schnellverwaltungsmenü als Privatnachricht gesendet.", { reply_markup: { inline_keyboard: [[{ text: "Zum Menü", url: `https://t.me/${botName}?start=menu` }]]}});
         if (msg?.message_id) void safelistService.trackBotMessage(chatId, msg.message_id, "temp", 15000);
-        
         await tg.call("sendMessage", {
           chat_id: String(from.id),
           text: `⚙️ <b>Admin-Menü für ${ch?.title || "Gruppe"}</b>\nWähle eine Funktion:`,
@@ -209,18 +310,18 @@ const commandHandler = {
           reply_markup: {
             inline_keyboard: [
               [{ text: "🧹 Gelöschte Accounts entfernen", callback_data: `admin_clean_${chatId}` }],
-              [{ text: "📌 Letzte Nachricht pinnen", callback_data: `admin_pin_last_${chatId}` }],
-              [{ text: "📋 Mitglieder-Anzahl", callback_data: `admin_count_${chatId}` }],
-              [{ text: "🗑 Letzte Nachricht löschen", callback_data: `admin_del_last_${chatId}` }],
-              [{ text: "⏰ Geplante Nachrichten", callback_data: `admin_schedule_${chatId}` }],
-              [{ text: "🛡 Safelist verwalten", callback_data: `admin_safelist_${chatId}` }]
+              [{ text: "📌 Letzte Nachricht pinnen",       callback_data: `admin_pin_last_${chatId}` }],
+              [{ text: "📋 Mitglieder-Anzahl",             callback_data: `admin_count_${chatId}` }],
+              [{ text: "🗑 Letzte Nachricht löschen",      callback_data: `admin_del_last_${chatId}` }],
+              [{ text: "⏰ Geplante Nachrichten",          callback_data: `admin_schedule_${chatId}` }],
+              [{ text: "🛡 Safelist verwalten",            callback_data: `admin_safelist_${chatId}` }]
             ]
           }
         });
       } else {
-        const helpText = `📋 <b>Verfügbare Befehle</b>\n\n` + 
-          (ch?.ai_enabled ? `<b>/ai [Frage]</b> – KI-Assistent befragen\n` : "") + 
-          (ch?.safelist_enabled ? `<b>/feedbacks @user</b> – Top 10 Verkäufer einsehen\n<b>/check @user</b> – Status & Feedbacks prüfen\n<b>/scamliste</b> – Scamliste ansehen\n<b>/safeliste</b> – Safelist ansehen\n` : "") + 
+        const helpText = `📋 <b>Verfügbare Befehle</b>\n\n` +
+          (ch?.ai_enabled ? `<b>/ai [Frage]</b> – KI-Assistent befragen\n` : "") +
+          (ch?.safelist_enabled ? `<b>/feedbacks @user</b> – Top 10 Verkäufer einsehen\n<b>/check @user</b> – Status & Feedbacks prüfen\n<b>/scamliste</b> – Scamliste ansehen\n<b>/safeliste</b> – Safelist ansehen\n` : "") +
           `<b>/userinfo [ID|@user]</b> – User-Info (5x/Tag kostenlos)`;
         const helpMsg = await tg.send(chatId, helpText);
         if (helpMsg?.message_id) void safelistService.trackBotMessage(chatId, helpMsg.message_id, "temp", 5 * 60 * 1000);
@@ -238,11 +339,11 @@ const commandHandler = {
           reply_markup: {
             inline_keyboard: [
               [{ text: "🧹 Gelöschte Accounts entfernen", callback_data: "admin_clean" }],
-              [{ text: "📌 Nachricht pinnen", callback_data: "admin_pin_last" }],
-              [{ text: "📋 Mitglieder-Anzahl", callback_data: "admin_count" }],
-              [{ text: "🗑 Letzte Nachricht löschen", callback_data: "admin_del_last" }],
-              [{ text: "⏰ Geplante Nachrichten", callback_data: "admin_schedule" }],
-              [{ text: "🛡 Safelist verwalten", callback_data: "admin_safelist" }]
+              [{ text: "📌 Nachricht pinnen",              callback_data: "admin_pin_last" }],
+              [{ text: "📋 Mitglieder-Anzahl",             callback_data: "admin_count" }],
+              [{ text: "🗑 Letzte Nachricht löschen",      callback_data: "admin_del_last" }],
+              [{ text: "⏰ Geplante Nachrichten",          callback_data: "admin_schedule" }],
+              [{ text: "🛡 Safelist verwalten",            callback_data: "admin_safelist" }]
             ]
           },
           reply_to_message_id: msg.message_id
@@ -259,7 +360,7 @@ const commandHandler = {
         chat_id: chatId,
         text: "⚙️ Wo soll das Einstellungs-Menü geöffnet werden?",
         reply_markup: { inline_keyboard: [[
-          { text: "💬 Hier im Chat", callback_data: `settings_here_${chatId}` },
+          { text: "💬 Hier im Chat",        callback_data: `settings_here_${chatId}` },
           { text: "🔒 Privat (nur für mich)", callback_data: `settings_private_${chatId}_${from.id}` }
         ]]}
       });
@@ -269,10 +370,8 @@ const commandHandler = {
     if (/^\/clean(?:@\w+)?$/i.test(text)) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       await tg.send(chatId, "🔍 Prüfe Mitgliederliste...");
-
       const { data: members } = await supabase_db.from("channel_members")
         .select("user_id").eq("channel_id", chatId).eq("is_deleted", false).limit(200);
-
       let removed = 0, checked = 0;
       if (members?.length) {
         for (const m of members) {
@@ -350,18 +449,15 @@ const commandHandler = {
     const isFeedbacksCmd = /^\/feedbacks?(?:@\w+)?(?:\s+.*)?$/i.test(text);
     if (isFeedbacksCmd && safelistActive && ch?.is_approved) {
       let targetUser = text.replace(/^\/feedbacks?(?:@\w+)?\s*/i, "").trim().replace(/^@/, "");
-      
       if (!targetUser && msg.reply_to_message?.from) {
         targetUser = msg.reply_to_message.from.username || String(msg.reply_to_message.from.id);
       }
-
       if (!targetUser) {
         let top10 = null;
         try {
           const res = await supabase_db.rpc("get_top_sellers", { p_channel_id: chatId, p_limit: 10 });
           top10 = res.data;
         } catch (e) {}
-        
         const medals = ["🥇","🥈","🥉"];
         let rankText = "🏆 <b>Top 10 Verkäufer</b>\n\n";
         rankText += top10?.length ? top10.map((u,i) => `${medals[i]||`${i+1}.`} @${u.username||u.user_id} — <b>${u.score} Pkt</b> (✅ ${u.pos_count} | ⚠️ ${u.neg_count})`).join("\n") : "<i>Noch kein Ranking verfügbar.</i>";
@@ -371,17 +467,14 @@ const commandHandler = {
         let score = 0, pos = 0, neg = 0;
         const { data: rep } = await supabase_db.from("user_reputation").select("score, pos_count, neg_count").eq("channel_id", chatId).ilike("username", targetUser).maybeSingle();
         if (rep) { score = rep.score; pos = rep.pos_count; neg = rep.neg_count; }
-
         let detailText = `📊 <b>Feedback-Details für @${targetUser}</b>\n\n`;
         detailText += `⭐️ <b>Score:</b> ${score} Pkt\n`;
         detailText += `✅ ${pos} Positiv · ⚠️ ${neg} Negativ\n\n`;
-
         try {
           const feedbacks = await safelistService.getFeedbacks(chatId, targetUser, null);
           if (feedbacks && feedbacks.length > 0) {
             detailText += `💬 <b>Letzte Feedbacks:</b>\n`;
-            const recent = feedbacks.slice(0, 10);
-            recent.forEach(f => {
+            feedbacks.slice(0, 10).forEach(f => {
               const emoji = f.feedback_type === "positive" ? "✅" : "⚠️";
               const by = f.submitted_by_username ? `@${f.submitted_by_username}` : "anonym";
               detailText += `${emoji} <i>"${(f.feedback_text || "").substring(0, 80)}"</i> — ${by}\n`;
@@ -392,25 +485,20 @@ const commandHandler = {
         } catch (e) {
           detailText += `<i>Keine detaillierten Einträge gefunden.</i>`;
         }
-
         const rkMsg = await tg.call("sendMessage", { chat_id: chatId, text: detailText, parse_mode: "HTML", reply_to_message_id: msg.message_id }).catch(() => null);
         if (rkMsg?.message_id) void safelistService.trackBotMessage(chatId, rkMsg.message_id, "temp", 5*60*1000);
       }
       return;
     }
 
-    const feedbackCmds = /^\/(?:check)(?:@\w+)?\s+@?(\w+)/i;
-    const feedbackMatch = text.match(feedbackCmds);
+    const feedbackMatch = text.match(/^\/(?:check)(?:@\w+)?\s+@?(\w+)/i);
     if (feedbackMatch && safelistActive && ch?.is_approved && ch?.is_active !== false) {
       const targetUsername = feedbackMatch[1];
-
       let score = 0, pos = 0, neg = 0;
       const { data: rep } = await supabase_db.from("user_reputation").select("score, pos_count, neg_count").eq("channel_id", chatId).ilike("username", targetUsername).maybeSingle();
       if (rep) { score = rep.score; pos = rep.pos_count; neg = rep.neg_count; }
-
       const scamEntry = await safelistService.checkScamlist(chatId, targetUsername, null);
       let replyText = `📊 <b>@${targetUsername}</b>\n`;
-
       if (scamEntry) {
         replyText = `⛔ <b>ACHTUNG: @${targetUsername} steht auf der Scamliste!</b>\n\n`;
         replyText += `⭐️ <b>Score:</b> ${score} Pkt (✅ ${pos} | ⚠️ ${neg})\n`;
@@ -418,7 +506,6 @@ const commandHandler = {
       } else {
         replyText += `⭐️ <b>Score:</b> ${score} Pkt\n`;
         replyText += `✅ ${pos} Positiv · ⚠️ ${neg} Negativ\n\n`;
-
         if (ch?.ai_enabled) {
           const aiSummary = await safelistService.generateAiSummary(chatId, targetUsername, null);
           if (aiSummary) replyText += `🤖 <b>KI-Zusammenfassung:</b>\n${aiSummary}`;
@@ -427,7 +514,6 @@ const commandHandler = {
           replyText += `<i>KI-Zusammenfassung ist in diesem Channel nicht aktiviert.</i>`;
         }
       }
-
       const sentMsg = await tg.send(chatId, replyText);
       if (sentMsg?.message_id) void safelistService.trackBotMessage(chatId, sentMsg.message_id, "check_result", 5 * 60 * 1000);
       await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
@@ -549,7 +635,6 @@ const commandHandler = {
     if (((muteMatch && muteTarget) || muteByIdMatch) && ch?.is_approved) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       let targetId, targetName, durationStr, muteReason;
-
       if (muteByIdMatch) {
         targetId = muteByIdMatch[1];
         durationStr = muteByIdMatch[2] || "24h";
@@ -561,11 +646,9 @@ const commandHandler = {
         durationStr = muteMatch[1] || "24h";
         muteReason = muteMatch[2] || "";
       }
-
       const durationSeconds = blacklistService.parseDuration ? blacklistService.parseDuration(durationStr) : 86400;
       const untilDate = durationSeconds === -1 ? 0 : Math.floor(Date.now() / 1000) + durationSeconds;
       const displayDur = durationSeconds === -1 ? "permanent" : durationStr;
-
       try {
         await tg.call("restrictChatMember", { chat_id: chatId, user_id: targetId, permissions: { can_send_messages: false, can_send_other_messages: false, can_add_web_page_previews: false }, until_date: untilDate });
         const muteMsg = await tg.send(chatId, `🔇 ${targetName} wurde ${displayDur} stummgeschaltet.${muteReason ? "\nGrund: " + muteReason.substring(0,100) : ""}`);

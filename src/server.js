@@ -18,8 +18,8 @@ app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 
 app.use('/api/admin', adminRoutes);
-app.use('/api/webhooks', webhookRoutes);          // → Support AI (/telegram)
-app.use('/api/webhooks', smalltalkBotRoutes);     // → AdminHelper (/smalltalk)
+app.use('/api/webhooks', webhookRoutes);
+app.use('/api/webhooks', smalltalkBotRoutes);
 app.use('/api/widget', widgetRoutes);
 
 app.get('/admin', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
@@ -32,10 +32,10 @@ app.use(errorHandler);
 const server = app.listen(port, () => {
   logger.info(`Server läuft auf Port ${port}`);
   setTimeout(() => {
-    autoRegisterWebhooks();           // BEIDE Bots registrieren
-    setAutoCommands();                // BEIDE Bots Commands setzen
+    autoRegisterWebhooks();
+    setAutoCommands();
     startKeepAlive();
-    
+
     try {
       const couponService = require('./services/couponService');
       couponService.startDailyScheduler();
@@ -44,28 +44,21 @@ const server = app.listen(port, () => {
     try {
       const { tgAdminHelper, tgApi } = require('./services/adminHelper/tgAdminHelper');
       const supabase = require('./config/supabase');
-      
-      // AdminHelper: Scheduled messages alle 60s
+
       setInterval(async () => {
         try {
           const { data: s } = await supabase.from('settings').select('smalltalk_bot_token').single();
-          if (s?.smalltalk_bot_token) {
-            await tgAdminHelper.fireScheduled(s.smalltalk_bot_token);
-          }
+          if (s?.smalltalk_bot_token) await tgAdminHelper.fireScheduled(s.smalltalk_bot_token);
         } catch (_) {}
       }, 60000);
 
-      // AdminHelper: AutoClean alle 30 min
       setInterval(async () => {
         try {
           const { data: s } = await supabase.from('settings').select('smalltalk_bot_token').single();
-          if (s?.smalltalk_bot_token) {
-            await tgAdminHelper.runAutoClean(s.smalltalk_bot_token);
-          }
+          if (s?.smalltalk_bot_token) await tgAdminHelper.runAutoClean(s.smalltalk_bot_token);
         } catch (_) {}
       }, 30 * 60 * 1000);
 
-      // AdminHelper: AutoDelete von markierten Messages
       setInterval(async () => {
         try {
           const { data: s } = await supabase.from('settings').select('smalltalk_bot_token').single();
@@ -83,7 +76,7 @@ const server = app.listen(port, () => {
         } catch (_) {}
       }, 60000);
 
-      logger.info('[AdminHelper] Scheduled messages, AutoClean & MsgAutoDelete: aktiv');
+      logger.info('[Server] Scheduled messages, AutoClean & MsgAutoDelete: aktiv');
     } catch(e) { logger.warn(e.message); }
 
     try {
@@ -102,11 +95,6 @@ const server = app.listen(port, () => {
   }, 5000);
 });
 
-/**
- * Registriert beide Bot-Webhooks bei Telegram.
- * - Support AI Bot   → TELEGRAM_BOT_TOKEN  → /api/webhooks/telegram
- * - AdminHelper Bot  → smalltalk_bot_token → /api/webhooks/smalltalk
- */
 async function autoRegisterWebhooks() {
   const supabase = require('./config/supabase');
   const axios = require('axios');
@@ -118,42 +106,24 @@ async function autoRegisterWebhooks() {
       appUrl = settings?.webhook_url || '';
     } catch (e) {}
   }
-  if (!appUrl) {
-    logger.warn('[Webhook] APP_URL nicht gesetzt - Webhooks nicht auto-registriert.');
-    return;
-  }
+  if (!appUrl) { logger.warn('[Webhook] APP_URL nicht gesetzt.'); return; }
   appUrl = appUrl.replace(/\/$/, '');
 
-  // ─── Support AI Bot Webhook ────────────────────────────────────
   const supportToken = process.env.TELEGRAM_BOT_TOKEN;
   if (supportToken) {
     try {
-      const supportWebhook = `${appUrl}/api/webhooks/telegram`;
       const r = await axios.post(
         `https://api.telegram.org/bot${supportToken}/setWebhook`,
-        {
-          url: supportWebhook,
-          allowed_updates: ['message', 'callback_query', 'my_chat_member', 'channel_post', 'chat_join_request'],
-          drop_pending_updates: false
-        },
+        { url: `${appUrl}/api/webhooks/telegram`, allowed_updates: ['message','callback_query','my_chat_member','channel_post','chat_join_request'], drop_pending_updates: false },
         { timeout: 10000 }
       );
       if (r.data?.ok) {
-        logger.info(`[Webhook/Support] ✅ Registriert: ${supportWebhook}`);
-        try {
-          await supabase.from('settings').upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() });
-        } catch (_) {}
-      } else {
-        logger.warn(`[Webhook/Support] Fehler: ${r.data?.description}`);
-      }
-    } catch (e) {
-      logger.warn(`[Webhook/Support] ${e.response?.data?.description || e.message}`);
-    }
-  } else {
-    logger.warn('[Webhook/Support] TELEGRAM_BOT_TOKEN nicht gesetzt.');
-  }
+        logger.info(`[Webhook/Support] ✅ Registriert: ${appUrl}/api/webhooks/telegram`);
+        try { await supabase.from('settings').upsert({ id: 1, webhook_url: appUrl, updated_at: new Date() }); } catch(_){}
+      } else logger.warn(`[Webhook/Support] Fehler: ${r.data?.description}`);
+    } catch (e) { logger.warn(`[Webhook/Support] ${e.response?.data?.description || e.message}`); }
+  } else logger.warn('[Webhook/Support] TELEGRAM_BOT_TOKEN nicht gesetzt.');
 
-  // ─── AdminHelper Bot Webhook ────────────────────────────────────
   let adminToken = null;
   try {
     const { data: s } = await supabase.from('settings').select('smalltalk_bot_token').single();
@@ -162,56 +132,35 @@ async function autoRegisterWebhooks() {
 
   if (adminToken) {
     try {
-      const adminWebhook = `${appUrl}/api/webhooks/smalltalk`;
       const r = await axios.post(
         `https://api.telegram.org/bot${adminToken}/setWebhook`,
-        {
-          url: adminWebhook,
-          allowed_updates: ['message', 'callback_query', 'my_chat_member', 'channel_post'],
-          drop_pending_updates: false
-        },
+        { url: `${appUrl}/api/webhooks/smalltalk`, allowed_updates: ['message','callback_query','my_chat_member','channel_post'], drop_pending_updates: false },
         { timeout: 10000 }
       );
-      if (r.data?.ok) {
-        logger.info(`[Webhook/AdminHelper] ✅ Registriert: ${adminWebhook}`);
-      } else {
-        logger.warn(`[Webhook/AdminHelper] Fehler: ${r.data?.description}`);
-      }
-    } catch (e) {
-      logger.warn(`[Webhook/AdminHelper] ${e.response?.data?.description || e.message}`);
-    }
-  } else {
-    logger.info('[Webhook/AdminHelper] smalltalk_bot_token nicht gesetzt - übersprungen.');
-  }
+      if (r.data?.ok) logger.info(`[Webhook/AdminHelper] ✅ Registriert: ${appUrl}/api/webhooks/smalltalk`);
+      else logger.warn(`[Webhook/AdminHelper] Fehler: ${r.data?.description}`);
+    } catch (e) { logger.warn(`[Webhook/AdminHelper] ${e.response?.data?.description || e.message}`); }
+  } else logger.info('[Webhook/AdminHelper] smalltalk_bot_token nicht gesetzt — übersprungen.');
 }
 
-/**
- * Setzt die /-Befehle für BEIDE Bots (jeweils unterschiedlich!).
- * - Support AI:   /start, /help, /order
- * - AdminHelper:  /menu, /settings, /dashboard, /check, /scamliste, /feedbacks, /safeliste, /userinfo, /ai
- */
 async function setAutoCommands() {
   const axios = require('axios');
   const supabase = require('./config/supabase');
 
-  // ─── Support AI Bot Commands ──────────────────────────────────
   const supportToken = process.env.TELEGRAM_BOT_TOKEN;
   if (supportToken) {
     try {
       await axios.post(`https://api.telegram.org/bot${supportToken}/setMyCommands`, {
         commands: [
-          { command: 'start', description: 'Begr\u00FC\u00DFung & Hilfe' },
+          { command: 'start', description: 'Begrüßung & Hilfe' },
           { command: 'help',  description: 'Was kann ich tun?' },
-          { command: 'order', description: 'Bestellstatus pr\u00FCfen (/order INVOICE_ID)' }
+          { command: 'order', description: 'Bestellstatus prüfen (/order INVOICE_ID)' }
         ]
       }, { timeout: 8000 });
       logger.info('[Telegram/Support] Autocomplete-Befehle registriert');
-    } catch (err) {
-      logger.warn(`[Telegram/Support] setMyCommands: ${err.response?.data?.description || err.message}`);
-    }
+    } catch (err) { logger.warn(`[Telegram/Support] setMyCommands: ${err.response?.data?.description || err.message}`); }
   }
 
-  // ─── AdminHelper Bot Commands ──────────────────────────────────
   let adminToken = null;
   try {
     const { data } = await supabase.from('settings').select('smalltalk_bot_token').single();
@@ -219,35 +168,42 @@ async function setAutoCommands() {
   } catch (e) {}
 
   if (adminToken) {
+    const privateCommands = [
+      { command: 'menu',      description: 'Hauptmenü öffnen' },
+      { command: 'settings',  description: 'Channel-Einstellungen' },
+      { command: 'dashboard', description: 'Channel-Übersicht' },
+      { command: 'check',     description: 'Feedback eines Users prüfen (/check @user)' },
+      { command: 'scamliste', description: 'Scamliste anzeigen oder Scammer melden' },
+      { command: 'feedbacks', description: 'Ranking der Top-Verkäufer' },
+      { command: 'safeliste', description: 'Verifizierte Mitglieder' },
+      { command: 'userinfo',  description: 'User analysieren (5x/Tag kostenlos)' },
+      { command: 'ai',        description: 'KI-Assistent befragen (/ai Frage)' },
+      { command: 'buy',       description: 'Credit-Paket für eigenen Channel kaufen' },
+      { command: 'refill',    description: 'Credits nachladen' }
+    ];
+    const groupCommands = [
+      { command: 'donate',    description: '❤️ Credit-Paket für diese Gruppe spendieren' },
+      { command: 'check',     description: 'Feedback eines Users prüfen (/check @user)' },
+      { command: 'feedbacks', description: 'Top-Verkäufer ansehen' },
+      { command: 'safeliste', description: 'Verifizierte Mitglieder' },
+      { command: 'scamliste', description: 'Scamliste ansehen' },
+      { command: 'userinfo',  description: 'User analysieren (5x/Tag kostenlos)' },
+      { command: 'ai',        description: 'KI-Assistent befragen (/ai Frage)' }
+    ];
     try {
-      await axios.post(`https://api.telegram.org/bot${adminToken}/setMyCommands`, {
-        commands: [
-          { command: 'menu',      description: 'Hauptmen\u00FC \u00F6ffnen' },
-          { command: 'settings',  description: 'Channel-Einstellungen' },
-          { command: 'dashboard', description: 'Channel-\u00DCbersicht' },
-          { command: 'check',     description: 'Feedback eines Users pr\u00FCfen (/check @user)' },
-          { command: 'scamliste', description: 'Scamliste anzeigen oder Scammer melden' },
-          { command: 'feedbacks', description: 'Ranking der Top-Verk\u00E4ufer' },
-          { command: 'safeliste', description: 'Verifizierte Mitglieder' },
-          { command: 'userinfo',  description: 'User analysieren (5x/Tag kostenlos)' },
-          { command: 'ai',        description: 'KI-Assistent befragen (/ai Frage)' },
-          { command: 'buy',       description: 'Credit-Paket kaufen' }
-        ]
-      }, { timeout: 8000 });
-      logger.info('[Telegram/AdminHelper] Autocomplete-Befehle registriert');
-    } catch (err) {
-      logger.warn(`[Telegram/AdminHelper] setMyCommands: ${err.response?.data?.description || err.message}`);
-    }
+      await axios.post(`https://api.telegram.org/bot${adminToken}/setMyCommands`, { commands: privateCommands, scope: { type: 'all_private_chats' } }, { timeout: 8000 });
+      await axios.post(`https://api.telegram.org/bot${adminToken}/setMyCommands`, { commands: groupCommands, scope: { type: 'all_group_chats' } }, { timeout: 8000 });
+      await axios.post(`https://api.telegram.org/bot${adminToken}/setMyCommands`, { commands: groupCommands, scope: { type: 'default' } }, { timeout: 8000 });
+      logger.info('[Telegram/AdminHelper] Autocomplete-Befehle registriert (private + group scope)');
+    } catch (err) { logger.warn(`[Telegram/AdminHelper] setMyCommands: ${err.response?.data?.description || err.message}`); }
   }
 }
 
 function startKeepAlive() {
   const appUrl = process.env.APP_URL;
   if (!appUrl) return;
-
   const http = require('http');
   const https = require('https');
-
   function ping() {
     try {
       const url = new URL(`${appUrl}/health`);
@@ -257,11 +213,8 @@ function startKeepAlive() {
       });
       req.on('error', (e) => logger.warn(`[KeepAlive] ${e.message}`));
       req.end();
-    } catch (e) {
-      logger.warn(`[KeepAlive] ${e.message}`);
-    }
+    } catch (e) { logger.warn(`[KeepAlive] ${e.message}`); }
   }
-
   setTimeout(() => { ping(); setInterval(ping, 14 * 60 * 1000); }, 30000);
   logger.info(`[KeepAlive] Aktiv → ${appUrl}/health`);
 }
@@ -275,8 +228,8 @@ function shutdown(signal) {
   setTimeout(() => process.exit(1), 10000);
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
 process.on('unhandledRejection', (r) => logger.error('Unhandled Rejection:', r));
-process.on('uncaughtException', (e) => { logger.error('Uncaught Exception:', e); shutdown('uncaughtException'); });
+process.on('uncaughtException',  (e) => { logger.error('Uncaught Exception:', e); shutdown('uncaughtException'); });
 
 module.exports = app;

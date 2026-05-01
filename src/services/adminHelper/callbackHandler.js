@@ -357,10 +357,80 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
     return;
   }
 
-  if (data === "buy_cancel") {
+if (data === "buy_cancel") {
     await answerCb();
     await tg.call("deleteMessage", { chat_id: String(qUserId), message_id: q.message?.message_id }).catch(() => {});
     delete pendingInputs[String(qUserId)];
+    return;
+  }
+
+  // ─── DONATE: User aus Gruppe spendiert dem Channel ein Paket ────────
+  // callback_data Format: donate_pkg_<pkgId>_<channelId>_<donorUserId>
+  if (data.startsWith("donate_pkg_")) {
+    await answerCb();
+    const dParts = data.match(/^donate_pkg_(\d+)_(-?\d+)_(\d+)$/);
+    if (!dParts) return;
+    const dPkgId = parseInt(dParts[1]);
+    const dChanId = dParts[2];
+    const dDonorId = dParts[3];
+
+    if (String(qUserId) !== String(dDonorId)) {
+      return answerCb({ text: "❌ Dieser Button gehört nicht dir.", show_alert: true });
+    }
+
+    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
+
+    let pkg = null;
+    try {
+      const { data: p } = await supabase_db.from("channel_packages").select("*").eq("id", dPkgId).single();
+      pkg = p;
+    } catch (_) {}
+    if (!pkg) {
+      await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Paket nicht gefunden." });
+      return;
+    }
+
+    let dChannel = null;
+    try {
+      const { data } = await supabase_db.from("bot_channels")
+        .select("id, title, is_active").eq("id", String(dChanId)).maybeSingle();
+      dChannel = data;
+    } catch (_) {}
+    if (!dChannel || dChannel.is_active === false) {
+      await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Channel nicht (mehr) verfügbar." });
+      return;
+    }
+
+    await tg.call("sendMessage", { chat_id: String(qUserId), text: "⏳ Erstelle Checkout…" });
+    try {
+      const result = await packageService.generateDonationUrl(pkg, dChanId, qUserId);
+      if (result?.checkoutUrl) {
+        const chTitle = dChannel.title || `Channel ${dChanId}`;
+        await tg.call("sendMessage", {
+          chat_id: String(qUserId),
+          text: `❤️ <b>Spende für „${chTitle}"</b>\n\n📦 ${pkg.name} — ${pkg.credits.toLocaleString()} Credits\n💰 Preis: ${parseFloat(pkg.price_eur).toFixed(2)} €\n\nNach erfolgreicher Bezahlung werden die Credits automatisch dem Channel gutgeschrieben — sie werden auf das bestehende Guthaben aufaddiert.\n\nKlick auf den Button zum Bezahlen:`,
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [[{ text: "💳 Jetzt spendieren", url: result.checkoutUrl }]] }
+        });
+      }
+    } catch (e) {
+      await tg.call("sendMessage", {
+        chat_id: String(qUserId),
+        text: `❌ Checkout fehlgeschlagen:\n<i>${e.message || String(e)}</i>`,
+        parse_mode: "HTML"
+      });
+    }
+    return;
+  }
+
+  if (data.startsWith("donate_cancel_")) {
+    const cParts = data.match(/^donate_cancel_(\d+)$/);
+    const cDonorId = cParts ? cParts[1] : null;
+    if (cDonorId && String(qUserId) !== String(cDonorId)) {
+      return answerCb({ text: "❌ Nicht für dich.", show_alert: true });
+    }
+    await answerCb({ text: "Abgebrochen." });
+    await tg.call("deleteMessage", { chat_id: String(qUserId), message_id: q.message?.message_id }).catch(() => {});
     return;
   }
 

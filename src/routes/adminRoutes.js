@@ -60,115 +60,103 @@ router.get('/learning',          ctrl.getLearningQueue);
 router.post('/learning/resolve', ctrl.resolveLearning);
 router.delete('/learning/:id',   ctrl.deleteLearning);
 
-router.get('/knowledge/categories',       ctrl.getKnowledgeCategories);
-router.post('/knowledge/categories',      ctrl.createKnowledgeCategory);
-router.delete('/knowledge/categories/:id',ctrl.deleteKnowledgeCategory);
+router.get('/knowledge/categories',        ctrl.getKnowledgeCategories);
+router.post('/knowledge/categories',       ctrl.createKnowledgeCategory);
+router.delete('/knowledge/categories/:id', ctrl.deleteKnowledgeCategory);
 
-router.get('/knowledge/entries',     ctrl.getKnowledgeEntries);
-router.delete('/knowledge/entries/:id',      ctrl.deleteKnowledgeEntry);
-router.put('/knowledge/entries/:id',         ctrl.updateKnowledgeEntry);
-router.post('/knowledge/entries/:id/sync',   ctrl.syncKnowledgeEntry);
-router.get('/knowledge/entries/:id/related', ctrl.getRelatedEntries);
+router.get('/knowledge/entries',              ctrl.getKnowledgeEntries);
+router.delete('/knowledge/entries/:id',       ctrl.deleteKnowledgeEntry);
+router.put('/knowledge/entries/:id',          ctrl.updateKnowledgeEntry);
+router.post('/knowledge/entries/:id/sync',    ctrl.syncKnowledgeEntry);
+router.get('/knowledge/entries/:id/related',  ctrl.getRelatedEntries);
 
-router.post('/knowledge/manual',    ctrl.addManualKnowledge);
-router.post('/knowledge/discover',  ctrl.discoverLinks);
-router.post('/scrape',              ctrl.startScraping);
+router.post('/knowledge/manual',   ctrl.addManualKnowledge);
+router.post('/knowledge/discover', ctrl.discoverLinks);
+router.post('/scrape',             ctrl.startScraping);
 
-router.post('/sellauth/test',     ctrl.testSellauthConnection);
-router.post('/sellauth/sync',         ctrl.syncSellauth);
+router.post('/sellauth/test',              ctrl.testSellauthConnection);
+router.post('/sellauth/sync',              ctrl.syncSellauth);
 router.get('/sellauth/invoice/:invoiceId', ctrl.lookupInvoice);
 router.get('/sellauth/sync-status/:jobId', ctrl.getSyncStatus);
-router.get('/sellauth/preview',   ctrl.previewSellauthProducts);
+router.get('/sellauth/preview',            ctrl.previewSellauthProducts);
 
-router.post('/sync-sellauth',     ctrl.syncSellauth);
+router.post('/sync-sellauth', ctrl.syncSellauth);
 
-router.post('/telegram/webhook',  ctrl.setupWebhook);
-router.get('/telegram/webhook',   ctrl.getWebhookInfo);
+router.post('/telegram/webhook', ctrl.setupWebhook);
+router.get('/telegram/webhook',  ctrl.getWebhookInfo);
 
-router.get('/blacklist',       ctrl.getBlacklist);
-router.post('/blacklist',      ctrl.banUser);
-router.delete('/blacklist/:id',ctrl.removeBan);
+router.get('/blacklist',        ctrl.getBlacklist);
+router.post('/blacklist',       ctrl.banUser);
+router.delete('/blacklist/:id', ctrl.removeBan);
 
-router.get('/feedbacks/pending', ctrl.getPendingFeedbacks);
-router.post('/feedbacks/:id/approve', ctrl.approveFeedback);
-router.post('/feedbacks/:id/reject', ctrl.rejectFeedback);
+router.get('/feedbacks/pending',       ctrl.getPendingFeedbacks);
+router.post('/feedbacks/:id/approve',  ctrl.approveFeedback);
+router.post('/feedbacks/:id/reject',   ctrl.rejectFeedback);
 
-router.post('/push-subscription',    ctrl.savePushSubscription);
-router.get('/push/vapid-key',        ctrl.getVapidPublicKey);
-router.post('/push/test',            ctrl.sendTestPush);
+router.post('/push-subscription', ctrl.savePushSubscription);
+router.get('/push/vapid-key',     ctrl.getVapidPublicKey);
+router.post('/push/test',         ctrl.sendTestPush);
 
-router.get('/traffic',               ctrl.getTrafficStats);
-router.get('/traffic/live',          ctrl.getLiveVisitors);
+router.get('/traffic',       ctrl.getTrafficStats);
+router.get('/traffic/live',  ctrl.getLiveVisitors);
 
-router.get('/visitors',              ctrl.getVisitorList);
-router.get('/visitors/ip/:ip',       ctrl.lookupVisitorIp);
-router.post('/visitors/ip/:ip/ban',  ctrl.banVisitorIp);
+router.get('/visitors',             ctrl.getVisitorList);
+router.get('/visitors/ip/:ip',      ctrl.lookupVisitorIp);
+router.post('/visitors/ip/:ip/ban', ctrl.banVisitorIp);
 
-router.get('/coupons/schedule',       ctrl.getCouponSchedule);
-router.put('/coupons/schedule',       ctrl.saveCouponSchedule);
-router.get('/coupons/active',         ctrl.getActiveCoupon);
-router.post('/coupons/create-now',    ctrl.createCouponNow);
-router.get('/coupons/history',        ctrl.getCouponHistory);
+router.get('/coupons/schedule',    ctrl.getCouponSchedule);
+router.put('/coupons/schedule',    ctrl.saveCouponSchedule);
+router.get('/coupons/active',      ctrl.getActiveCoupon);
+router.post('/coupons/create-now', ctrl.createCouponNow);
+router.get('/coupons/history',     ctrl.getCouponHistory);
 
-router.get('/traffic/sessions',       ctrl.getSessions);
+router.get('/traffic/sessions', ctrl.getSessions);
 
 const channelCtrl = require('../controllers/channelController');
-router.get('/channels',                  channelCtrl.getChannels.bind(channelCtrl));
-router.put('/channels/:id/ai',           channelCtrl.toggleAI.bind(channelCtrl));
-router.post('/channels/scan',            channelCtrl.scanChannels.bind(channelCtrl));
-router.post('/channels/register',        channelCtrl.registerChannelById.bind(channelCtrl));
-router.put('/channels/:id',              channelCtrl.updateChannel.bind(channelCtrl));
-router.post('/channels/:id/reset-usage',         channelCtrl.resetChannelUsage.bind(channelCtrl));
-router.get('/channels/:id/kb',                   channelCtrl.getChannelKB.bind(channelCtrl));
-router.post('/channels/:id/kb',                  channelCtrl.addChannelKBEntry.bind(channelCtrl));
-router.delete('/channels/:id/kb/:entryId',       channelCtrl.deleteChannelKBEntry.bind(channelCtrl));
+router.get('/channels',                channelCtrl.getChannels.bind(channelCtrl));
+router.put('/channels/:id/ai',         channelCtrl.toggleAI.bind(channelCtrl));
+router.post('/channels/scan',          channelCtrl.scanChannels.bind(channelCtrl));
+router.post('/channels/register',      channelCtrl.registerChannelById.bind(channelCtrl));
+router.put('/channels/:id',            channelCtrl.updateChannel.bind(channelCtrl));
+router.post('/channels/:id/reset-usage',      channelCtrl.resetChannelUsage.bind(channelCtrl));
+router.get('/channels/:id/kb',                channelCtrl.getChannelKB.bind(channelCtrl));
+router.post('/channels/:id/kb',               channelCtrl.addChannelKBEntry.bind(channelCtrl));
+router.delete('/channels/:id/kb/:entryId',    channelCtrl.deleteChannelKBEntry.bind(channelCtrl));
 
-// Hier fangen wir den Lösch-Befehl für den Channel ab und hängen die "Scorched Earth" Logik dazwischen
 router.delete('/channels/:id', async (req, res, next) => {
   try {
     const channelId = req.params.id;
     const supabase = require('../config/supabase');
-    
-    // Lösche alles, was an dieser Channel-ID hängt
     const tablesToClean = [
-      'user_feedbacks',
-      'channel_safelist',
-      'scam_entries',
-      'user_reputation',
-      'channel_blacklist',
-      'channel_members',
-      'channel_knowledge',
-      'scheduled_messages',
-      'channel_purchases',
-      'bot_messages',
-      'channel_chat_history'
+      'user_feedbacks', 'channel_safelist', 'scam_entries',
+      'user_reputation', 'channel_blacklist', 'channel_members',
+      'channel_knowledge', 'scheduled_messages', 'channel_purchases',
+      'bot_messages', 'channel_chat_history'
     ];
-    
     for (const table of tablesToClean) {
       await supabase.from(table).delete().eq('channel_id', channelId).then(r=>r, ()=>{});
     }
-    
     next();
   } catch (e) {
     next();
   }
 }, channelCtrl.deleteChannel.bind(channelCtrl));
 
-router.get('/smalltalk/status',   ctrl.testSmallTalkBot);
-router.post('/smalltalk/connect',  ctrl.testSmallTalkBot);
+router.get('/smalltalk/status',  ctrl.testSmallTalkBot);
+router.post('/smalltalk/connect', ctrl.testSmallTalkBot);
 
-router.get('/channel-groups',          channelCtrl.getChannelGroups.bind(channelCtrl));
-router.post('/channel-groups',         channelCtrl.createChannelGroup.bind(channelCtrl));
-router.delete('/channel-groups/:id',   channelCtrl.deleteChannelGroup.bind(channelCtrl));
+router.get('/channel-groups',         channelCtrl.getChannelGroups.bind(channelCtrl));
+router.post('/channel-groups',        channelCtrl.createChannelGroup.bind(channelCtrl));
+router.delete('/channel-groups/:id',  channelCtrl.deleteChannelGroup.bind(channelCtrl));
 
-router.get('/scamlist',              channelCtrl.getScamlist.bind(channelCtrl));
-router.post('/scamlist/remove',      channelCtrl.removeFromScamlist.bind(channelCtrl));
+router.get('/scamlist',         channelCtrl.getScamlist.bind(channelCtrl));
+router.post('/scamlist/remove', channelCtrl.removeFromScamlist.bind(channelCtrl));
 
-router.get('/userinfo-pro',               channelCtrl.getProUsers.bind(channelCtrl));
-router.post('/userinfo-pro',              channelCtrl.addProUser.bind(channelCtrl));
-router.delete('/userinfo-pro/:userId',    channelCtrl.removeProUser.bind(channelCtrl));
+router.get('/userinfo-pro',            channelCtrl.getProUsers.bind(channelCtrl));
+router.post('/userinfo-pro',           channelCtrl.addProUser.bind(channelCtrl));
+router.delete('/userinfo-pro/:userId', channelCtrl.removeProUser.bind(channelCtrl));
 
-router.get('/sellauth/product/:productId/variants', async (req, res, next) => {
+router.get('/sellauth/product/:productId/variants', async (req, res) => {
   try {
     const axios    = require("axios");
     const supabase = require("../config/supabase");
@@ -201,16 +189,16 @@ router.get('/sellauth/product/:productId/variants', async (req, res, next) => {
   }
 });
 
-router.get('/packages',          channelCtrl.getPackages.bind(channelCtrl));
-router.post('/packages',         channelCtrl.upsertPackage.bind(channelCtrl));
-router.delete('/packages/:id',   channelCtrl.deletePackage.bind(channelCtrl));
+router.get('/packages',        channelCtrl.getPackages.bind(channelCtrl));
+router.post('/packages',       channelCtrl.upsertPackage.bind(channelCtrl));
+router.delete('/packages/:id', channelCtrl.deletePackage.bind(channelCtrl));
 
-router.get('/channels/admin-list',          channelCtrl.getChannelAdminList.bind(channelCtrl));
-router.post('/channels/manual-credits',     channelCtrl.manualCreditPatch.bind(channelCtrl));
-router.post('/channels/manual-package',     channelCtrl.manualPackageBook.bind(channelCtrl));
+router.get('/channels/admin-list',       channelCtrl.getChannelAdminList.bind(channelCtrl));
+router.post('/channels/manual-credits',  channelCtrl.manualCreditPatch.bind(channelCtrl));
+router.post('/channels/manual-package',  channelCtrl.manualPackageBook.bind(channelCtrl));
 
-router.get('/refills',         channelCtrl.getRefills.bind(channelCtrl));
-router.post('/refills',        channelCtrl.upsertRefill.bind(channelCtrl));
-router.delete('/refills/:id',  channelCtrl.deleteRefill.bind(channelCtrl));
+router.get('/refills',        channelCtrl.getRefills.bind(channelCtrl));
+router.post('/refills',       channelCtrl.upsertRefill.bind(channelCtrl));
+router.delete('/refills/:id', channelCtrl.deleteRefill.bind(channelCtrl));
 
 module.exports = router;

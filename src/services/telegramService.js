@@ -9,10 +9,7 @@ const telegramService = {
     if (!text || !chatId) return null;
     const clean = this._cleanForTelegram(String(text));
     const parts  = this._split(clean);
-    
-    // Wenn ein spezifisches Token übergeben wird (z.B. vom Support-Bot), nutze dieses.
-    // Sonst Fallback auf das Standard-Token aus der ENV.
-    const token = options.token || telegram.token;
+    const token  = options.token || telegram.token;
 
     for (const part of parts) {
       const ok = await this._send(chatId, part, token, options.message_thread_id);
@@ -28,7 +25,9 @@ const telegramService = {
       .replace(/\*([^*\n]+?)\*/g, '$1')
       .replace(/_([^_\n]+?)_/g, '$1')
       .replace(/^#{1,6}\s+/gm, '')
-      .replace(/```[\s\S]*?```/g, function(m) { return m.replace(/```[a-z]*/g, '').replace(/```/g, '').trim(); })
+      .replace(/```[\s\S]*?```/g, function(m) {
+        return m.replace(/```[a-z]*/g, '').replace(/```/g, '').trim();
+      })
       .replace(/`([^`]+)`/g, '$1')
       .replace(/\[(.+?)\]\((.+?)\)/g, '$1: $2')
       .replace(/~~(.+?)~~/g, '$1')
@@ -41,7 +40,6 @@ const telegramService = {
     try {
       const payload = { chat_id: chatId, text: text };
       if (threadId) payload.message_thread_id = threadId;
-
       await axios.post(
         `https://api.telegram.org/bot${token}/sendMessage`,
         payload,
@@ -51,8 +49,8 @@ const telegramService = {
     } catch (err) {
       const st   = err.response?.status;
       const desc = err.response?.data?.description || err.message;
-      if (st === 403) { return false; }
-      console.error(`[Telegram] send Error (Bot-Token: ...${(token||'').substring((token||'').length-5)}): ${desc}`);
+      if (st === 403) return false;
+      console.error(`[Telegram] send Error: ${desc}`);
       return false;
     }
   },
@@ -77,7 +75,6 @@ const telegramService = {
     try {
       const payload = { chat_id: chatId, action: 'typing' };
       if (options.message_thread_id) payload.message_thread_id = options.message_thread_id;
-
       await axios.post(
         `https://api.telegram.org/bot${token}/sendChatAction`,
         payload,
@@ -86,22 +83,16 @@ const telegramService = {
     } catch (_) {}
   },
 
-  /**
-   * Registriert den Webhook beim Telegram-Server.
-   * Wird beim Server-Start automatisch aufgerufen.
-   */
   async setWebhook(appUrl, token = null) {
     const botToken = token || telegram.token;
-    if (!botToken) {
-      return { ok: false, description: 'Kein Bot-Token konfiguriert.' };
-    }
+    if (!botToken) return { ok: false, description: 'Kein Bot-Token konfiguriert.' };
     try {
       const webhookUrl = `${appUrl.replace(/\/$/, '')}/api/webhooks/telegram`;
       const response = await axios.post(
         `https://api.telegram.org/bot${botToken}/setWebhook`,
         {
           url: webhookUrl,
-          allowed_updates: ['message', 'callback_query', 'my_chat_member', 'channel_post', 'chat_join_request'],
+          allowed_updates: ['message','callback_query','my_chat_member','channel_post','chat_join_request'],
           drop_pending_updates: false
         },
         { timeout: 10000 }
@@ -114,14 +105,9 @@ const telegramService = {
     }
   },
 
-  /**
-   * Ruft aktuelle Webhook-Info von Telegram ab.
-   */
   async getWebhookInfo(token = null) {
     const botToken = token || telegram.token;
-    if (!botToken) {
-      return { result: { url: '', last_error_message: 'Kein Bot-Token konfiguriert.' } };
-    }
+    if (!botToken) return { result: { url: '', last_error_message: 'Kein Token.' } };
     try {
       const response = await axios.get(
         `https://api.telegram.org/bot${botToken}/getWebhookInfo`,
@@ -135,9 +121,6 @@ const telegramService = {
     }
   },
 
-  /**
-   * Löscht den aktuell gesetzten Webhook.
-   */
   async deleteWebhook(token = null) {
     const botToken = token || telegram.token;
     if (!botToken) return { ok: false, description: 'Kein Token.' };

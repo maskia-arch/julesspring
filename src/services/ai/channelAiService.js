@@ -25,7 +25,6 @@ function censorText(text) {
 
 const channelAiService = {
 
-  // ── Token-Volumen: Output-Tokens tracken ─────────────────────────────────
   async trackOutputTokens(channelId, outputTokens) {
     if (!outputTokens || outputTokens <= 0) return { limitReached: false };
     try {
@@ -39,11 +38,9 @@ const channelAiService = {
         .update({ output_tokens_used: newTotal, last_active_at: new Date() })
         .eq("id", String(channelId));
 
-      // Limit erreicht?
       if (ch.token_limit && newTotal >= ch.token_limit && ch.ai_enabled) {
         await supabase.from("bot_channels")
           .update({ ai_enabled: false, token_notified: true }).eq("id", String(channelId));
-        // Admin benachrichtigen
         if (ch.added_by_user_id) {
           const { data: s } = await supabase.from("settings").select("smalltalk_bot_token").single().then(r=>r, ()=>({data:null}));
           if (s?.smalltalk_bot_token) {
@@ -63,7 +60,6 @@ const channelAiService = {
     }
   },
 
-  // ── Prüfen ob AI noch verfügbar ───────────────────────────────────────────
   async checkAiAvailable(channelId) {
     try {
       const { data: ch } = await supabase.from("bot_channels")
@@ -74,12 +70,10 @@ const channelAiService = {
     } catch { return false; }
   },
 
-  // ── Tageszusammenfassung ───────────────────────────────────────────────────
   async generateDailySummary(channelId, requestedBy, token) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return { error: "Kein OpenAI-Key konfiguriert" };
 
-    // Prüfen ob heute schon eine Zusammenfassung existiert
     const today = new Date().toISOString().split("T")[0];
     const { data: existing } = await supabase.from("daily_summaries")
       .select("id, summary_text, created_at").eq("channel_id", String(channelId))
@@ -89,14 +83,12 @@ const channelAiService = {
       return { cached: true, summary: existing.summary_text, created_at: existing.created_at };
     }
 
-    // Letzte 24h User-Nachrichten aus channel_context laden (datensparsam!)
     const since = new Date(Date.now() - 86400000).toISOString();
     const { data: contextMsgs } = await supabase.from("channel_context")
       .select("message, username, msg_date")
       .eq("channel_id", String(channelId)).gte("msg_date", since)
       .order("msg_date").limit(200);
 
-    // Member-Statistiken
     const { data: newMembers } = await supabase.from("channel_members")
       .select("id", { count: "exact", head: true }).eq("channel_id", String(channelId))
       .gte("joined_at", since).then(r=>r, ()=>({data:null}));
@@ -104,29 +96,21 @@ const channelAiService = {
       .select("id", { count: "exact", head: true }).eq("channel_id", String(channelId))
       .eq("is_deleted", true).gte("last_seen", since).then(r=>r, ()=>({data:null}));
 
-    const msgCount = contextMsgs?.length || 0;
-    const newCount  = newMembers?.count  || 0;
-    const leftCount = leftMembers?.count || 0;
+    const msgCount  = contextMsgs?.length || 0;
+    const newCount  = newMembers?.count   || 0;
+    const leftCount = leftMembers?.count  || 0;
 
     if (msgCount === 0) {
       return { summary: "Keine User-Nachrichten in den letzten 24h.", msgCount: 0, newCount, leftCount };
     }
 
-    // Zensieren + anonymisieren (nur Text, keine Usernamen)
     const cleanMsgs = (contextMsgs || [])
       .map(m => censorText(m.message))
       .filter(t => t.length > 2)
-      .slice(0, 100) // Max 100 Nachrichten
+      .slice(0, 100)
       .join("\n");
 
-    const prompt = `Erstelle einen knappen Tagesbericht (max 200 Wörter) für diesen Telegram-Channel basierend auf den Nachrichten der letzten 24h.
-
-Statistiken: ${msgCount} Nachrichten, ${newCount} neue Mitglieder, ${leftCount} ausgetreten.
-
-Nachrichten (anonymisiert):
-${cleanMsgs.substring(0, 3000)}
-
-Berichte über: Hauptthemen, Aktivitätsniveau, besondere Ereignisse. Keine Nutzernamen nennen.`;
+    const prompt = `Erstelle einen knappen Tagesbericht (max 200 Wörter) für diesen Telegram-Channel basierend auf den Nachrichten der letzten 24h.\n\nStatistiken: ${msgCount} Nachrichten, ${newCount} neue Mitglieder, ${leftCount} ausgetreten.\n\nNachrichten (anonymisiert):\n${cleanMsgs.substring(0, 3000)}\n\nBerichte über: Hauptthemen, Aktivitätsniveau, besondere Ereignisse. Keine Nutzernamen nennen.`;
 
     try {
       const resp = await axios.post("https://api.openai.com/v1/chat/completions",
@@ -136,7 +120,6 @@ Berichte über: Hauptthemen, Aktivitätsniveau, besondere Ereignisse. Keine Nutz
       );
       const summary = resp.data.choices[0].message.content.trim();
 
-      // Speichern
       try {
         await supabase.from("daily_summaries").insert([{
           channel_id: String(channelId), summary_text: summary,
@@ -152,12 +135,10 @@ Berichte über: Hauptthemen, Aktivitätsniveau, besondere Ereignisse. Keine Nutz
     }
   },
 
-  // ── Scheduled Message: Pin + Delete-Previous ──────────────────────────────
   async sendScheduledMsg(token, msg) {
     if (!token || !msg) return;
     const base = `https://api.telegram.org/bot${token}`;
 
-    // Vorherige Nachricht desselben Inhalts löschen
     if (msg.delete_previous && msg.last_message_id) {
       await axios.post(`${base}/deleteMessage`, {
         chat_id: msg.channel_id, message_id: msg.last_message_id
@@ -180,14 +161,12 @@ Berichte über: Hauptthemen, Aktivitätsniveau, besondere Ereignisse. Keine Nutz
       const resp = await axios.post(`${base}/${method}`, payload, { timeout: 10000 });
       sentMsgId = resp.data?.result?.message_id;
 
-      // Pinnen
       if (msg.pin_message && sentMsgId) {
         await axios.post(`${base}/pinChatMessage`, {
           chat_id: msg.channel_id, message_id: sentMsgId, disable_notification: true
         }, { timeout: 5000 }).catch(() => {});
       }
 
-      // last_message_id für Delete-Previous speichern
       if (sentMsgId) {
         try {
           await supabase.from("scheduled_messages")
