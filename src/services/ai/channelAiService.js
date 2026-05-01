@@ -45,7 +45,7 @@ const channelAiService = {
           .update({ ai_enabled: false, token_notified: true }).eq("id", String(channelId));
         // Admin benachrichtigen
         if (ch.added_by_user_id) {
-          const { data: s } = await supabase.from("settings").select("smalltalk_bot_token").single().catch(() => ({ data: null }));
+          const { data: s } = await supabase.from("settings").select("smalltalk_bot_token").single().then(r=>r, ()=>({data:null}));
           if (s?.smalltalk_bot_token) {
             await axios.post(`https://api.telegram.org/bot${s.smalltalk_bot_token}/sendMessage`, {
               chat_id: String(ch.added_by_user_id),
@@ -83,7 +83,7 @@ const channelAiService = {
     const today = new Date().toISOString().split("T")[0];
     const { data: existing } = await supabase.from("daily_summaries")
       .select("id, summary_text, created_at").eq("channel_id", String(channelId))
-      .gte("created_at", today + "T00:00:00Z").maybeSingle().catch(() => ({ data: null }));
+      .gte("created_at", today + "T00:00:00Z").maybeSingle().then(r=>r, ()=>({data:null}));
 
     if (existing) {
       return { cached: true, summary: existing.summary_text, created_at: existing.created_at };
@@ -99,10 +99,10 @@ const channelAiService = {
     // Member-Statistiken
     const { data: newMembers } = await supabase.from("channel_members")
       .select("id", { count: "exact", head: true }).eq("channel_id", String(channelId))
-      .gte("joined_at", since).catch(() => ({ data: null }));
+      .gte("joined_at", since).then(r=>r, ()=>({data:null}));
     const { data: leftMembers } = await supabase.from("channel_members")
       .select("id", { count: "exact", head: true }).eq("channel_id", String(channelId))
-      .eq("is_deleted", true).gte("last_seen", since).catch(() => ({ data: null }));
+      .eq("is_deleted", true).gte("last_seen", since).then(r=>r, ()=>({data:null}));
 
     const msgCount = contextMsgs?.length || 0;
     const newCount  = newMembers?.count  || 0;
@@ -137,11 +137,13 @@ Berichte über: Hauptthemen, Aktivitätsniveau, besondere Ereignisse. Keine Nutz
       const summary = resp.data.choices[0].message.content.trim();
 
       // Speichern
-      await supabase.from("daily_summaries").insert([{
-        channel_id: String(channelId), summary_text: summary,
-        msg_count: msgCount, new_members: newCount, left_members: leftCount,
-        requested_by: requestedBy
-      }]).catch(() => {});
+      try {
+        await supabase.from("daily_summaries").insert([{
+          channel_id: String(channelId), summary_text: summary,
+          msg_count: msgCount, new_members: newCount, left_members: leftCount,
+          requested_by: requestedBy
+        }]);
+      } catch (_) {}
 
       return { summary, msgCount, newCount, leftCount };
     } catch (e) {
@@ -187,8 +189,10 @@ Berichte über: Hauptthemen, Aktivitätsniveau, besondere Ereignisse. Keine Nutz
 
       // last_message_id für Delete-Previous speichern
       if (sentMsgId) {
-        await supabase.from("scheduled_messages")
-          .update({ last_message_id: sentMsgId }).eq("id", msg.id).catch(() => {});
+        try {
+          await supabase.from("scheduled_messages")
+            .update({ last_message_id: sentMsgId }).eq("id", msg.id);
+        } catch (_) {}
       }
     } catch (e) {
       logger.warn("[ChannelAI] sendScheduledMsg:", e.message);

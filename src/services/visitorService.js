@@ -151,7 +151,7 @@ const visitorService = {
         .limit(50)
         .catch(() => ({ data: [] })),
       supabase.from('blacklist').select('*').eq('ip_hash', ipHash).maybeSingle(),
-      supabase.from('chats').select('*').eq('visitor_ip', ip).order('updated_at', { ascending: false }).limit(20).catch(() => ({ data: [] }))
+      supabase.from('chats').select('*').eq('visitor_ip', ip).order('updated_at', { ascending: false }).limit(20).then(r=>r, ()=>({data:[]}))
     ]);
 
     const visitor    = visitorRes.data;
