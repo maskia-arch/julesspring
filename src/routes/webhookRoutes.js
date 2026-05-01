@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 
 const channelController = require('../controllers/channelController');
-const smalltalkAgent = require('../services/ai/smalltalkAgent');
 
 const _processedUpdates = new Map();
 const _UPDATE_CACHE_MS = 5 * 60 * 1000;
@@ -81,6 +80,7 @@ router.post('/telegram', (req, res) => {
       
       if (!chatId || !text) return;
 
+      // Für private Nachrichten: Support-Bot-Token nutzen falls verfügbar
       const activeToken = (isPrivate && settings?.smalltalk_bot_token) 
         ? settings.smalltalk_bot_token 
         : process.env.TELEGRAM_BOT_TOKEN;
@@ -97,6 +97,7 @@ router.post('/telegram', (req, res) => {
         } catch (e) {}
       }
       
+      // Moderations-Befehle (nur in Gruppen/Channels)
       if (!isPrivate && (text.startsWith('/mute') || text.startsWith('/ban') || text.startsWith('/unban'))) {
         if (isAdmin && msg.reply_to_message && msg.reply_to_message.from) {
           const targetUserId = msg.reply_to_message.from.id;
@@ -130,18 +131,21 @@ router.post('/telegram', (req, res) => {
       const messageProcessor = require('../services/messageProcessor');
       const { data: channelData } = await supabase.from('bot_channels').select('id, is_approved, ai_enabled').eq('id', chatId).maybeSingle();
       
+      // Blacklist-Check (nur in Gruppen/Channels, nicht für Admins/Bots)
       if (!isPrivate && channelData && !from.is_bot && !isAdmin) { 
         const blacklistService = require('../services/adminHelper/blacklistService');
         const blacklistResult = await blacklistService.checkBlacklist(supabase, chatId, text, from, chatId, msg.message_id, tg, activeToken);
         if (blacklistResult?.action?.includes("delete")) return;
       }
       
+      // /start → Willkommensnachricht
       if (text === '/start') {
         const welcome = settings?.welcome_message || 'Willkommen! 👋 Wie kann ich dir helfen?';
         await tg.call('sendMessage', { chat_id: chatId, message_thread_id: threadId, text: welcome }).catch(() => {});
         return;
       }
       
+      // Bestellabfrage per Invoice-ID
       const ID_PATTERN = '([a-f0-9]+-[0-9]+|[0-9]+)';
       const orderMatch = text.match(new RegExp('(?:bestellung|invoice|order|rechnung)[:\\s#]+' + ID_PATTERN, 'i')) ||
                          text.match(new RegExp('^\\/order\\s+' + ID_PATTERN, 'i'));
@@ -164,8 +168,10 @@ router.post('/telegram', (req, res) => {
         return;
       }
       
+      // Typing-Indikator senden
       await tg.call('sendChatAction', { chat_id: chatId, message_thread_id: threadId, action: 'typing' }).catch(() => {});
       
+      // Support AI verarbeitet die Nachricht
       await messageProcessor.handle({
         platform: 'telegram',
         chatId,
@@ -177,7 +183,9 @@ router.post('/telegram', (req, res) => {
           token: activeToken
         }
       });
-    } catch (err) {}
+    } catch (err) {
+      console.error('[Webhook/Telegram] Fehler:', err.message);
+    }
   });
 });
 

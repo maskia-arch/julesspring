@@ -14,6 +14,7 @@ const DICT = {
     ai_locked: "🤖 <b>AI Features</b> — Gesperrt\n\nNutze <b>/buy</b> um ein Paket zu kaufen.",
     mod_locked: "🔒 <b>Moderation</b> — Gesperrt\n\nDein Kanal ist noch nicht verifiziert.\nBitte melde dich bei @autoacts für die Freischaltung.",
     daily: "📰 Tagesbericht", st: "💬 Smalltalk AI", kb: "📚 Wissensdatenbank", aw: "✍️ WerbeTexter", bl_ai: "🤖 Blacklist Enhancer 🔒",
+    group_games: "🎮 Gruppenspiele 🔜",
     banned_users: "🚫 Gebannte User",
     back: "◀️ Zurück", main: "◀️ Hauptmenü"
   },
@@ -26,6 +27,7 @@ const DICT = {
     ai_locked: "🤖 <b>AI Features</b> — Locked\n\nUse <b>/buy</b> to get a package.",
     mod_locked: "🔒 <b>Moderation</b> — Locked\n\nYour channel is not yet verified.\nPlease contact @autoacts for approval.",
     daily: "📰 Daily Report", st: "💬 Smalltalk AI", kb: "📚 Knowledge Base", aw: "✍️ AdWriter", bl_ai: "🤖 Blacklist Enhancer 🔒",
+    group_games: "🎮 Group Games 🔜",
     banned_users: "🚫 Banned Users",
     back: "◀️ Back", main: "◀️ Main Menu"
   },
@@ -38,6 +40,7 @@ const DICT = {
     ai_locked: "🤖 <b>AI Features</b> — Заблокировано\n\nИспользуйте <b>/buy</b>.",
     mod_locked: "🔒 <b>Moderation</b> — Заблокировано\n\nВаш канал еще не верифицирован.",
     daily: "📰 Дневной отчет", st: "💬 Smalltalk ИИ", kb: "📚 База знаний", aw: "✍️ Копирайтер", bl_ai: "🤖 AI Blacklist 🔒",
+    group_games: "🎮 Групповые игры 🔜",
     banned_users: "🚫 Забаненные",
     back: "◀️ Назад", main: "◀️ Главное меню"
   },
@@ -50,6 +53,7 @@ const DICT = {
     ai_locked: "🤖 <b>AI Features</b> — Kilitli\n\n<b>/buy</b> komutunu kullanın.",
     mod_locked: "🔒 <b>Moderation</b> — Kilitli\n\nKanalınız henüz doğrulanmadı.",
     daily: "📰 Günlük Rapor", st: "💬 Sohbet YZ", kb: "📚 Bilgi Bankası", aw: "✍️ ReklamYazarı", bl_ai: "🤖 AI Karaliste 🔒",
+    group_games: "🎮 Grup Oyunları 🔜",
     banned_users: "🚫 Yasaklılar",
     back: "◀️ Geri", main: "◀️ Ana Menü"
   }
@@ -131,6 +135,7 @@ async function sendAiMenu(tg, sendTo, channelId, ch, msgId = null, userLang = "d
     [{ text: t("daily", l), callback_data: `cfg_daily_${channelId}` }, { text: t("st", l), callback_data: `cfg_smalltalk_${channelId}` }],
     [{ text: t("kb", l), callback_data: `cfg_knowledge_${channelId}` }],
     [{ text: t("aw", l), callback_data: `cfg_adwriter_${channelId}` }, { text: t("bl_ai", l), callback_data: `cfg_bl_ai_${channelId}` }],
+    [{ text: t("group_games", l), callback_data: `cfg_groupgames_${channelId}` }],
     [_menuBackBtn(channelId, l)]
   ];
   return editOrSend(tg, sendTo, msgId, text, kb);
@@ -577,6 +582,11 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       if (!ch?.ai_enabled) break;
       await editOrSend(tg, String(userId), msgId, "⏳ Erstelle Tagesbericht...", []);
       await dailySummaryService.runDailySummary(supabase_db, channelId, userId, tg, ch, lang);
+      break;
+    }
+    case "groupgames": {
+      const gamesText = { de: "🎮 <b>Gruppenspiele<\/b>\n\n<i>Dieses Feature wird bald verfügbar!<\/i>\n\nGruppenspiele aktivieren deine Community:\n\n• 🎯 Quiz-Runden mit Auswertung\n• 🃏 Wortspiele \& Rätsel\n• 🏆 Ranglisten \& Punkte-System\n• 🎲 Mini-Games\n\nUpdates: @autoacts", en: "🎮 <b>Group Games<\/b>\n\n<i>Coming soon!<\/i>\n\nEngage your community with:\n\n• 🎯 Quiz rounds with auto-scoring\n• 🃏 Word games \& puzzles\n• 🏆 Leaderboards \& points\n• 🎲 Mini games\n\nFollow @autoacts!", ru: "🎮 <b>Групповые игры<\/b>\n\n<i>Скоро!<\/i>\n\n• 🎯 Викторины\n• 🏆 Таблицы лидеров\n• 🎲 Мини-игры\n\n@autoacts", tr: "🎮 <b>Grup Oyunları<\/b>\n\n<i>Yakında!<\/i>\n\n• 🎯 Quiz\n• 🏆 Liderlik tablosu\n• 🎲 Mini oyunlar\n\n@autoacts" };
+      await editOrSend(tg, String(userId), msgId, gamesText[lang] || gamesText["de"], [[_menuBackBtn(channelId, lang)]]);
       break;
     }
     case "adwriter": {

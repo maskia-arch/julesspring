@@ -52,7 +52,7 @@ const telegramService = {
       const st   = err.response?.status;
       const desc = err.response?.data?.description || err.message;
       if (st === 403) { return false; }
-      console.error(`[Telegram] send Error (Bot-Token: ...${token.substring(token.length-5)}): ${desc}`);
+      console.error(`[Telegram] send Error (Bot-Token: ...${(token||'').substring((token||'').length-5)}): ${desc}`);
       return false;
     }
   },
@@ -84,6 +84,73 @@ const telegramService = {
         { timeout: 5000 }
       );
     } catch (_) {}
+  },
+
+  /**
+   * Registriert den Webhook beim Telegram-Server.
+   * Wird beim Server-Start automatisch aufgerufen.
+   */
+  async setWebhook(appUrl, token = null) {
+    const botToken = token || telegram.token;
+    if (!botToken) {
+      return { ok: false, description: 'Kein Bot-Token konfiguriert.' };
+    }
+    try {
+      const webhookUrl = `${appUrl.replace(/\/$/, '')}/api/webhooks/telegram`;
+      const response = await axios.post(
+        `https://api.telegram.org/bot${botToken}/setWebhook`,
+        {
+          url: webhookUrl,
+          allowed_updates: ['message', 'callback_query', 'my_chat_member', 'channel_post', 'chat_join_request'],
+          drop_pending_updates: false
+        },
+        { timeout: 10000 }
+      );
+      return response.data || { ok: false };
+    } catch (err) {
+      const desc = err.response?.data?.description || err.message;
+      console.error(`[Telegram] setWebhook Error: ${desc}`);
+      return { ok: false, description: desc };
+    }
+  },
+
+  /**
+   * Ruft aktuelle Webhook-Info von Telegram ab.
+   */
+  async getWebhookInfo(token = null) {
+    const botToken = token || telegram.token;
+    if (!botToken) {
+      return { result: { url: '', last_error_message: 'Kein Bot-Token konfiguriert.' } };
+    }
+    try {
+      const response = await axios.get(
+        `https://api.telegram.org/bot${botToken}/getWebhookInfo`,
+        { timeout: 8000 }
+      );
+      return response.data || {};
+    } catch (err) {
+      const desc = err.response?.data?.description || err.message;
+      console.error(`[Telegram] getWebhookInfo Error: ${desc}`);
+      return { result: { url: '', last_error_message: desc } };
+    }
+  },
+
+  /**
+   * Löscht den aktuell gesetzten Webhook.
+   */
+  async deleteWebhook(token = null) {
+    const botToken = token || telegram.token;
+    if (!botToken) return { ok: false, description: 'Kein Token.' };
+    try {
+      const response = await axios.post(
+        `https://api.telegram.org/bot${botToken}/deleteWebhook`,
+        {},
+        { timeout: 8000 }
+      );
+      return response.data || { ok: false };
+    } catch (err) {
+      return { ok: false, description: err.message };
+    }
   }
 };
 
