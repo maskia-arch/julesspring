@@ -33,9 +33,7 @@ router.post('/telegram', (req, res) => {
       const supabase = require('../config/supabase');
       const { tgApi } = require('../services/adminHelper/tgAdminHelper');
       
-      // SICHERHEITS-UPDATE: Wenn der Bot neue Berechtigungen bekommt, 
-      // soll er NIEMALS die Datenbank überschreiben und das Abo löschen.
-      // Wir aktualisieren nur, oder legen ihn neu an, FALLS er noch nicht existiert.
+      // SICHERHEITS-UPDATE: Abos & Verifizierung schützen
       if (my_chat_member) {
         const chatId = my_chat_member.chat.id.toString();
         const userId = my_chat_member.from.id.toString();
@@ -43,28 +41,24 @@ router.post('/telegram', (req, res) => {
         const chatTitle = my_chat_member.chat.title || 'Channel';
 
         if (['administrator', 'member', 'creator'].includes(newStatus)) {
-           // Wir prüfen, ob der Kanal schon in der DB existiert
            const { data: existingChannel } = await supabase.from('bot_channels').select('id, is_approved').eq('id', chatId).maybeSingle();
            
            if (!existingChannel) {
-             // Nur wenn der Kanal GÄNZLICH NEU ist, wird er angelegt
              await supabase.from('bot_channels').insert([{
                id: chatId,
                title: chatTitle,
                added_by_user_id: userId,
-               is_approved: false, // Bei neuen Kanälen immer false (muss gekauft werden)
+               is_approved: false,
                ai_enabled: false,
                is_active: true
              }]);
            } else {
-             // Falls er existiert, aktualisieren wir NUR den is_active Status (falls er z.B. reaktiviert wurde)
              await supabase.from('bot_channels').update({ is_active: true, title: chatTitle }).eq('id', chatId);
            }
         } else if (['left', 'kicked'].includes(newStatus)) {
-           // Wenn der Bot entfernt wird, setzen wir ihn auf inaktiv
            await supabase.from('bot_channels').update({ is_active: false }).eq('id', chatId);
         }
-        return; // Nach Berechtigungs-Updates ist hier Schluss, kein Message-Processing.
+        return; 
       }
 
       if (chat_join_request) {
@@ -92,25 +86,27 @@ router.post('/telegram', (req, res) => {
       if (!msg) return;
       
       const chatId = msg.chat?.id?.toString();
-      const text = msg.text?.trim() || msg.caption?.trim(); // FIX: Caption (Bilder/Videos) auch für Blacklist prüfen
+      const text = msg.text?.trim() || msg.caption?.trim();
       const from = msg.from || { id: msg.sender_chat?.id || 0, first_name: msg.sender_chat?.title || 'Channel' };
       
       if (!chatId || !text) return;
       
+      const { data: settings } = await supabase.from('settings').select('smalltalk_bot_token').single().catch(() => ({ data: null }));
+      const tg = tgApi(settings?.smalltalk_bot_token || process.env.TELEGRAM_BOT_TOKEN);
+      
+      // ADMIN-CHECK: Zentrale Prüfung für Blacklist-Immunität und manuelle Befehle
+      let isAdmin = false;
+      if (msg.chat.type === 'channel') {
+        isAdmin = true; // Im Channel posten eh nur Admins
+      } else if (from.id && from.id !== 777000) {
+        try {
+          const member = await tg.call('getChatMember', { chat_id: chatId, user_id: from.id });
+          if (['creator', 'administrator'].includes(member?.status)) isAdmin = true;
+        } catch (e) {}
+      }
+      
+      // MANUELLE MODERATION
       if (text.startsWith('/mute') || text.startsWith('/ban') || text.startsWith('/unban')) {
-        const { data: settings } = await supabase.from('settings').select('smalltalk_bot_token').single().catch(() => ({ data: null }));
-        const tg = tgApi(settings?.smalltalk_bot_token || process.env.TELEGRAM_BOT_TOKEN);
-        
-        let isAdmin = false;
-        if (msg.chat.type === 'channel') {
-          isAdmin = true;
-        } else {
-          try {
-            const member = await tg.call('getChatMember', { chat_id: chatId, user_id: from.id });
-            if (['creator', 'administrator'].includes(member.status)) isAdmin = true;
-          } catch (e) {}
-        }
-        
         if (isAdmin && msg.reply_to_message && msg.reply_to_message.from) {
           const targetUserId = msg.reply_to_message.from.id;
           const command = text.split(' ')[0].toLowerCase();
@@ -148,11 +144,9 @@ router.post('/telegram', (req, res) => {
       
       const { data: channelData } = await supabase.from('bot_channels').select('id, added_by_user_id').eq('id', chatId).maybeSingle();
       
-      // BLACKLIST LOGIK
-      if (channelData && !from.is_bot && (from.id !== 0 && from.id !== 777000)) { // 777000 ist die offizielle Telegram "Anonymous Channel Post" ID
+      // BLACKLIST LOGIK - Greift NUR, wenn der Schreiber KEIN Admin ist
+      if (channelData && !from.is_bot && (from.id !== 0 && from.id !== 777000) && !isAdmin) { 
         const blacklistService = require('../services/adminHelper/blacklistService');
-        const { data: settings } = await supabase.from('settings').select('smalltalk_bot_token').single().catch(() => ({ data: null }));
-        const tg = tgApi(settings?.smalltalk_bot_token || process.env.TELEGRAM_BOT_TOKEN);
         
         const blacklistResult = await blacklistService.checkBlacklist(
           supabase,
@@ -167,7 +161,7 @@ router.post('/telegram', (req, res) => {
         
         if (blacklistResult) {
           if (blacklistResult.action !== "tolerated" && blacklistResult.action.includes("delete")) {
-            return; // Wenn die Nachricht gelöscht wurde, stoppen wir die weitere Verarbeitung
+            return; // Wenn die Nachricht gelöscht wurde, stoppen wir die weitere KI-Verarbeitung
           }
         }
       }
