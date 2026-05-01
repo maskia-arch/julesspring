@@ -121,7 +121,7 @@ async function checkBlacklist(supabase_db, channelId, messageText, from, chatId,
   if (ch?.added_by_user_id) {
     try {
       await tg.call("sendMessage", { chat_id: String(ch.added_by_user_id),
-        text: `🛡 <b>Blacklist-Eingriff</b>\n\nChannel: ${ch.title || channelId}\nUser: ${targetName}\nWort: <code>${hit.word}</code>\nAktionen: ${actionsTaken.length ? actionsTaken.join(", ") : "Keine"}\n\nNachricht:\n<i>${messageText.substring(0, 150)}</i>`,
+        text: `🛡 <b>Blacklist-Eingriff</b>\n\nGruppe/Kanal: ${ch.title || channelId}\nUser: ${targetName}\nWort: <code>${hit.word}</code>\nAktionen: ${actionsTaken.length ? actionsTaken.join(", ") : "Keine"}\n\nNachricht:\n<i>${messageText.substring(0, 150)}</i>`,
         parse_mode: "HTML" });
     } catch (_) {}
   }
