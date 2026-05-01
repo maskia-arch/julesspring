@@ -28,6 +28,30 @@ const DICT = {
     daily: "📰 Daily Report", st: "💬 Smalltalk AI", kb: "📚 Knowledge Base", aw: "✍️ AdWriter", bl_ai: "🤖 Blacklist Enhancer 🔒",
     banned_users: "🚫 Banned Users",
     back: "◀️ Back", main: "◀️ Main Menu"
+  },
+  ru: {
+    title: "⚙️ <b>{name}</b>\n\nИИ: {ai} | Сейфлист: {sl} | Отзывы: {fb}\n\nВыберите категорию:",
+    ch_settings: "📋 Настройки канала", mod: "🔒 Модерация", ai_feat: "🤖 Функции ИИ",
+    welcome: "👋 Приветствие", goodbye: "👋 Прощание", sched: "📅 Расписание", rep: "🔁 Повторы",
+    lang: "🌐 Язык", clean: "🧹 Очистка", stats: "📊 Статистика",
+    sl_btn: "🛡 Сейфлист {sl}", fb_btn: "💬 Отзывы {fb}", bl: "🚫 Черный список", ui: "🔍 Инфо", fb_mgr: "👤 Управление отзывами",
+    ai_locked: "🤖 <b>AI Features</b> — Заблокировано\n\nИспользуйте <b>/buy</b>.",
+    mod_locked: "🔒 <b>Moderation</b> — Заблокировано\n\nВаш канал еще не верифицирован.",
+    daily: "📰 Дневной отчет", st: "💬 Smalltalk ИИ", kb: "📚 База знаний", aw: "✍️ Копирайтер", bl_ai: "🤖 AI Blacklist 🔒",
+    banned_users: "🚫 Забаненные",
+    back: "◀️ Назад", main: "◀️ Главное меню"
+  },
+  tr: {
+    title: "⚙️ <b>{name}</b>\n\nYZ: {ai} | Güvenli Liste: {sl} | Geri Bildirim: {fb}\n\nKategori seçin:",
+    ch_settings: "📋 Kanal Ayarları", mod: "🔒 Moderasyon", ai_feat: "🤖 YZ Özellikleri",
+    welcome: "👋 Karşılama", goodbye: "👋 Veda", sched: "📅 Takvim", rep: "🔁 Tekrarlar",
+    lang: "🌐 Dil", clean: "🧹 Temizlik", stats: "📊 İstatistik",
+    sl_btn: "🛡 Güvenli Liste {sl}", fb_btn: "💬 Geri Bildirim {fb}", bl: "🚫 Karaliste", ui: "🔍 Bilgi", fb_mgr: "👤 Geri Bildirimleri Yönet",
+    ai_locked: "🤖 <b>AI Features</b> — Kilitli\n\n<b>/buy</b> komutunu kullanın.",
+    mod_locked: "🔒 <b>Moderation</b> — Kilitli\n\nKanalınız henüz doğrulanmadı.",
+    daily: "📰 Günlük Rapor", st: "💬 Sohbet YZ", kb: "📚 Bilgi Bankası", aw: "✍️ ReklamYazarı", bl_ai: "🤖 AI Karaliste 🔒",
+    banned_users: "🚫 Yasaklılar",
+    back: "◀️ Geri", main: "◀️ Ana Menü"
   }
 };
 
@@ -117,14 +141,16 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
   const channelId = parts[parts.length - 1];
   let action = parts[1];
   
-  const compositePrefixes = ["menu", "sl", "fb", "rep", "bl", "st", "aw", "kb", "daily", "clean", "banned", "unban"];
-  if (compositePrefixes.includes(parts[1]) && parts.length >= 4) {
+  if (parts[1] === "bl" && parts[2] === "tgl") {
+    action = parts.slice(1, 5).join("_");
+  } else if (parts[1] === "bl" && parts[2] === "cfg") {
+    action = parts.slice(1, 4).join("_");
+  } else if (["menu", "sl", "fb", "rep", "bl", "st", "aw", "kb", "daily", "clean"].includes(parts[1]) && parts.length >= 4) {
     action = parts[1] + "_" + parts[2];
   }
 
   const ch = await getChannel(channelId);
 
-  // SICHERHEITS-CHECK: Ist der aufrufende User wirklich der Owner des Channels?
   if (ch && String(ch.added_by_user_id) !== String(userId)) {
       return tg.call("answerCallbackQuery", { callback_query_id: q.id, text: "❌ Keine Berechtigung für diesen Channel.", show_alert: true }).catch(()=>{});
   }
