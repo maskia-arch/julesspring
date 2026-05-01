@@ -17,11 +17,15 @@ const messageProcessor = {
   async handle({ platform, chatId, text, metadata = {} }) {
     const t0 = Date.now();
     const threadId = metadata?.message_thread_id || null;
+    const botToken = metadata?.token || null;
 
     const abuse = await abuseDetector.check(chatId, text);
     if (abuse.blocked) {
       if (abuse.reason === 'rate_limit' && platform === 'telegram') {
-        await telegramService.sendMessage(chatId, 'Bitte kurz warten.', { message_thread_id: threadId }).catch(() => {});
+        await telegramService.sendMessage(chatId, 'Bitte kurz warten.', { 
+          message_thread_id: threadId,
+          token: botToken 
+        }).catch(() => {});
       }
       return null;
     }
@@ -44,7 +48,12 @@ const messageProcessor = {
 
     if (chat.is_manual_mode) return null;
 
-    if (platform === 'telegram') telegramService.sendTypingAction(chatId, { message_thread_id: threadId }).catch(() => {});
+    if (platform === 'telegram') {
+      telegramService.sendTypingAction(chatId, { 
+        message_thread_id: threadId,
+        token: botToken 
+      }).catch(() => {});
+    }
 
     const maxHistory     = parseInt(settings.max_history_msgs)  || 4;
     const summaryInterval = parseInt(settings.summary_interval) || 5;
@@ -87,7 +96,7 @@ const messageProcessor = {
     }
 
     if (platform === 'telegram' && aiResult?.text) {
-      await this._sendReliable(chatId, aiResult.text, 3, threadId);
+      await this._sendReliable(chatId, aiResult.text, 3, threadId, botToken);
     }
 
     void (async () => {
@@ -150,10 +159,13 @@ const messageProcessor = {
 
   _pendingDeliveries: new Map(),
 
-  async _sendReliable(chatId, text, maxAttempts = 3, threadId = null) {
+  async _sendReliable(chatId, text, maxAttempts = 3, threadId = null, token = null) {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        await telegramService.sendMessage(chatId, text, { message_thread_id: threadId });
+        await telegramService.sendMessage(chatId, text, { 
+          message_thread_id: threadId,
+          token: token 
+        });
         return;
       } catch (e) {
         if (attempt === maxAttempts) logger.error(`[MP] Zustellung fehlgeschlagen: ${chatId}`);

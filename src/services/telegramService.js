@@ -1,10 +1,3 @@
-/**
- * telegramService.js v1.2.1
- *
- * Kein parse_mode. Alle Markdown-Zeichen werden vor dem Senden entfernt.
- * Telegram zeigt plain text — keine Sternchen, keine Rauten, keine Formatierung.
- */
-
 const axios = require('axios');
 const { telegram } = require('../config/env');
 
@@ -12,62 +5,58 @@ const TG_MAX = 4000;
 
 const telegramService = {
 
-  async sendMessage(chatId, text) {
+  async sendMessage(chatId, text, options = {}) {
     if (!text || !chatId) return null;
     const clean = this._cleanForTelegram(String(text));
     const parts  = this._split(clean);
+    
+    // Wenn ein spezifisches Token übergeben wird (z.B. vom Support-Bot), nutze dieses.
+    // Sonst Fallback auf das Standard-Token aus der ENV.
+    const token = options.token || telegram.token;
+
     for (const part of parts) {
-      const ok = await this._send(chatId, part);
+      const ok = await this._send(chatId, part, token, options.message_thread_id);
       if (!ok) break;
     }
     return true;
   },
 
-  // ── Markdown → Plain Text ─────────────────────────────────────────────
   _cleanForTelegram(text) {
     return text
-      // Fett: **text** oder __text__ → text
       .replace(/\*\*(.+?)\*\*/g, '$1')
       .replace(/__(.+?)__/g, '$1')
-      // Kursiv: *text* oder _text_ → text (vorsichtig, keine Wörter mit _)
       .replace(/\*([^*\n]+?)\*/g, '$1')
       .replace(/_([^_\n]+?)_/g, '$1')
-      // Header: ### Titel → Titel (ohne #)
       .replace(/^#{1,6}\s+/gm, '')
-      // Code-Blöcke: ```code``` → code
       .replace(/```[\s\S]*?```/g, function(m) { return m.replace(/```[a-z]*/g, '').replace(/```/g, '').trim(); })
-      // Inline Code: `code` → code
       .replace(/`([^`]+)`/g, '$1')
-      // Links: [text](url) → text: url
       .replace(/\[(.+?)\]\((.+?)\)/g, '$1: $2')
-      // Strikethrough: ~~text~~ → text
       .replace(/~~(.+?)~~/g, '$1')
-      // Übrig gebliebene einzelne * oder _ am Zeilenanfang (Bullet-ähnlich) → -
       .replace(/^\* /gm, '- ')
-      // Mehrfache Leerzeilen → eine
       .replace(/\n{3,}/g, '\n\n')
       .trim();
   },
 
-  // ── Senden ────────────────────────────────────────────────────────────
-  async _send(chatId, text) {
+  async _send(chatId, text, token, threadId = null) {
     try {
+      const payload = { chat_id: chatId, text: text };
+      if (threadId) payload.message_thread_id = threadId;
+
       await axios.post(
-        `https://api.telegram.org/bot${telegram.token}/sendMessage`,
-        { chat_id: chatId, text: text },
+        `https://api.telegram.org/bot${token}/sendMessage`,
+        payload,
         { timeout: 15000 }
       );
       return true;
     } catch (err) {
       const st   = err.response?.status;
       const desc = err.response?.data?.description || err.message;
-      if (st === 403) { console.warn(`[Telegram] Bot geblockt: ${chatId}`); return false; }
-      console.error(`[Telegram] sendMessage (${chatId}): ${desc}`);
+      if (st === 403) { return false; }
+      console.error(`[Telegram] send Error (Bot-Token: ...${token.substring(token.length-5)}): ${desc}`);
       return false;
     }
   },
 
-  // ── Nachricht aufteilen ───────────────────────────────────────────────
   _split(text) {
     if (text.length <= TG_MAX) return [text];
     const parts = [];
@@ -83,39 +72,18 @@ const telegramService = {
     return parts.filter(Boolean);
   },
 
-  async sendTypingAction(chatId) {
+  async sendTypingAction(chatId, options = {}) {
+    const token = options.token || telegram.token;
     try {
+      const payload = { chat_id: chatId, action: 'typing' };
+      if (options.message_thread_id) payload.message_thread_id = options.message_thread_id;
+
       await axios.post(
-        `https://api.telegram.org/bot${telegram.token}/sendChatAction`,
-        { chat_id: chatId, action: 'typing' },
+        `https://api.telegram.org/bot${token}/sendChatAction`,
+        payload,
         { timeout: 5000 }
       );
     } catch (_) {}
-  },
-
-  async setWebhook(url) {
-    try {
-      const r = await axios.post(
-        `https://api.telegram.org/bot${telegram.token}/setWebhook`,
-        { url: `${url}/api/webhooks/telegram` },
-        { timeout: 20000 }
-      );
-      return r.data;
-    } catch (e) {
-      return { ok: false, description: e.message };
-    }
-  },
-
-  async getWebhookInfo() {
-    try {
-      const r = await axios.get(
-        `https://api.telegram.org/bot${telegram.token}/getWebhookInfo`,
-        { timeout: 10000 }
-      );
-      return r.data;
-    } catch (e) {
-      return { result: { url: null, last_error_message: e.message } };
-    }
   }
 };
 

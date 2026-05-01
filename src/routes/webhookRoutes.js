@@ -33,6 +33,8 @@ router.post('/telegram', (req, res) => {
       const supabase = require('../config/supabase');
       const { tgApi } = require('../services/adminHelper/tgAdminHelper');
       
+      const { data: settings } = await supabase.from('settings').select('smalltalk_bot_token, welcome_message').single().catch(() => ({ data: null }));
+      
       if (my_chat_member) {
         const chatId = my_chat_member.chat.id.toString();
         const userId = my_chat_member.from.id.toString();
@@ -41,15 +43,10 @@ router.post('/telegram', (req, res) => {
 
         if (['administrator', 'member', 'creator'].includes(newStatus)) {
            const { data: existingChannel } = await supabase.from('bot_channels').select('id, is_approved').eq('id', chatId).maybeSingle();
-           
            if (!existingChannel) {
              await supabase.from('bot_channels').insert([{
-               id: chatId,
-               title: chatTitle,
-               added_by_user_id: userId,
-               is_approved: false,
-               ai_enabled: false,
-               is_active: true
+               id: chatId, title: chatTitle, added_by_user_id: userId,
+               is_approved: false, ai_enabled: false, is_active: true
              }]);
            } else {
              await supabase.from('bot_channels').update({ is_active: true, title: chatTitle }).eq('id', chatId);
@@ -63,20 +60,12 @@ router.post('/telegram', (req, res) => {
       if (chat_join_request) {
         const chatId = chat_join_request.chat.id.toString();
         const userId = chat_join_request.from.id.toString();
-        
         try {
           const { data: bannedUser } = await supabase.from('channel_banned_users')
             .select('id').eq('channel_id', chatId).eq('user_id', userId).maybeSingle();
-          
           if (bannedUser) {
-            const { data: settings } = await supabase.from('settings').select('smalltalk_bot_token').single().catch(() => ({ data: null }));
-            const tg = tgApi(settings?.smalltalk_bot_token || process.env.TELEGRAM_BOT_TOKEN);
-            
-            await tg.call('declineChatJoinRequest', {
-              chat_id: chatId,
-              user_id: userId
-            });
-            return;
+            const tg = tgApi(process.env.TELEGRAM_BOT_TOKEN);
+            await tg.call('declineChatJoinRequest', { chat_id: chatId, user_id: userId });
           }
         } catch (e) {}
         return;
@@ -88,11 +77,15 @@ router.post('/telegram', (req, res) => {
       const text = msg.text?.trim() || msg.caption?.trim();
       const from = msg.from || { id: msg.sender_chat?.id || 0, first_name: msg.sender_chat?.title || 'Channel' };
       const threadId = msg.message_thread_id || null;
+      const isPrivate = msg.chat?.type === 'private';
       
       if (!chatId || !text) return;
-      
-      const { data: settings } = await supabase.from('settings').select('smalltalk_bot_token').single().catch(() => ({ data: null }));
-      const tg = tgApi(settings?.smalltalk_bot_token || process.env.TELEGRAM_BOT_TOKEN);
+
+      const activeToken = (isPrivate && settings?.smalltalk_bot_token) 
+        ? settings.smalltalk_bot_token 
+        : process.env.TELEGRAM_BOT_TOKEN;
+        
+      const tg = tgApi(activeToken);
       
       let isAdmin = false;
       if (msg.chat.type === 'channel') {
@@ -104,7 +97,7 @@ router.post('/telegram', (req, res) => {
         } catch (e) {}
       }
       
-      if (text.startsWith('/mute') || text.startsWith('/ban') || text.startsWith('/unban')) {
+      if (!isPrivate && (text.startsWith('/mute') || text.startsWith('/ban') || text.startsWith('/unban'))) {
         if (isAdmin && msg.reply_to_message && msg.reply_to_message.from) {
           const targetUserId = msg.reply_to_message.from.id;
           const command = text.split(' ')[0].toLowerCase();
@@ -112,8 +105,7 @@ router.post('/telegram', (req, res) => {
           
           if (command === '/mute') {
             await tg.call('restrictChatMember', {
-              chat_id: chatId,
-              user_id: targetUserId,
+              chat_id: chatId, user_id: targetUserId,
               permissions: { can_send_messages: false },
               until_date: Math.floor(Date.now() / 1000) + (12 * 3600)
             }).catch(() => {});
@@ -122,11 +114,9 @@ router.post('/telegram', (req, res) => {
             await tg.call('banChatMember', { chat_id: chatId, user_id: targetUserId }).catch(() => {});
             await tg.call('sendMessage', { chat_id: chatId, message_thread_id: threadId, text: `🚫 User gebannt.\nGrund: ${reason}` }).catch(() => {});
             await supabase.from("channel_banned_users").upsert([{
-              channel_id: String(chatId),
-              user_id: String(targetUserId),
+              channel_id: String(chatId), user_id: String(targetUserId),
               username: msg.reply_to_message.from.username || null,
-              reason: reason,
-              banned_at: new Date().toISOString()
+              reason: reason, banned_at: new Date().toISOString()
             }], { onConflict: "channel_id,user_id" }).catch(() => {});
           } else if (command === '/unban') {
             await tg.call('unbanChatMember', { chat_id: chatId, user_id: targetUserId, only_if_banned: false }).catch(() => {});
@@ -137,86 +127,39 @@ router.post('/telegram', (req, res) => {
         return;
       }
       
-      const telegramService = require('../services/telegramService');
       const messageProcessor = require('../services/messageProcessor');
+      const { data: channelData } = await supabase.from('bot_channels').select('id, is_approved, ai_enabled').eq('id', chatId).maybeSingle();
       
-      const { data: channelData } = await supabase.from('bot_channels').select('id, added_by_user_id').eq('id', chatId).maybeSingle();
-      
-      if (channelData && !from.is_bot && (from.id !== 0 && from.id !== 777000) && !isAdmin) { 
+      if (!isPrivate && channelData && !from.is_bot && !isAdmin) { 
         const blacklistService = require('../services/adminHelper/blacklistService');
-        
-        const blacklistResult = await blacklistService.checkBlacklist(
-          supabase,
-          chatId,
-          text,
-          from,
-          chatId,
-          msg.message_id,
-          tg,
-          settings?.smalltalk_bot_token
-        );
-        
-        if (blacklistResult) {
-          if (blacklistResult.action !== "tolerated" && blacklistResult.action.includes("delete")) {
-            return;
-          }
-        }
+        const blacklistResult = await blacklistService.checkBlacklist(supabase, chatId, text, from, chatId, msg.message_id, tg, activeToken);
+        if (blacklistResult?.action?.includes("delete")) return;
       }
       
       if (text === '/start') {
-        let welcome = 'Willkommen! 👋 Wie kann ich dir helfen?';
-        try {
-          const { data: settings } = await supabase
-            .from('settings').select('welcome_message').single();
-          if (settings?.welcome_message) welcome = settings.welcome_message;
-        } catch (_) {}
+        const welcome = settings?.welcome_message || 'Willkommen! 👋 Wie kann ich dir helfen?';
         await tg.call('sendMessage', { chat_id: chatId, message_thread_id: threadId, text: welcome }).catch(() => {});
         return;
       }
       
-      const UNIQUE_ID_RE = /[a-f0-9]{8,}-[0-9]{10,}/i;
-      const PLAIN_ID_RE = /\b(\d{5,})\b/;
-      
       const ID_PATTERN = '([a-f0-9]+-[0-9]+|[0-9]+)';
-      const explicitOrder = text.match(new RegExp('^\\/order\\s+' + ID_PATTERN, 'i')) ||
-        text.match(new RegExp('^(?:bestellung|invoice|order|rechnung)[:\\s#]+' + ID_PATTERN, 'i'));
-      
-      const hasOrderContext = /(?:bestellung|bestell|order|invoice|rechnung|esim|status|wo ist|lieferung|kauft?e?|bezahlt?|meine bestellung|wann kommt|schon da|angekommen|erhalten)/i.test(text);
-      const uniqueIdInText = text.match(UNIQUE_ID_RE);
-      const plainIdInText = hasOrderContext && text.match(PLAIN_ID_RE);
-      const implicitOrder = uniqueIdInText || plainIdInText;
-      
-      const orderMatch = explicitOrder || (implicitOrder ? [null, implicitOrder[0]] : null);
+      const orderMatch = text.match(new RegExp('(?:bestellung|invoice|order|rechnung)[:\\s#]+' + ID_PATTERN, 'i')) ||
+                         text.match(new RegExp('^\\/order\\s+' + ID_PATTERN, 'i'));
+
       if (orderMatch) {
         const sellauthService = require('../services/sellauthService');
         const invoiceId = orderMatch[1];
         try {
-          let s = null;
-          try {
-            const { data: _s } = await supabase.from('settings')
-              .select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single();
-            s = _s;
-          } catch (_) {}
-          
-          if (!s?.sellauth_api_key || !s?.sellauth_shop_id) {
-            await tg.call('sendMessage', { chat_id: chatId, message_thread_id: threadId, text: 'Bestellabfrage ist derzeit nicht verfügbar. Bitte wende dich an unseren Support.' }).catch(() => {});
+          const { data: s } = await supabase.from('settings').select('sellauth_api_key, sellauth_shop_id, sellauth_shop_url').single().catch(() => ({ data: null }));
+          if (!s?.sellauth_api_key) {
+            await tg.call('sendMessage', { chat_id: chatId, message_thread_id: threadId, text: 'Bestellabfrage derzeit nicht verfügbar.' }).catch(() => {});
             return;
           }
-          
-          const invoice = await sellauthService.getInvoice(
-            s.sellauth_api_key, s.sellauth_shop_id, invoiceId
-          );
+          const invoice = await sellauthService.getInvoice(s.sellauth_api_key, s.sellauth_shop_id, invoiceId);
           const response = sellauthService.formatInvoiceForCustomer(invoice, s.sellauth_shop_url);
           await tg.call('sendMessage', { chat_id: chatId, message_thread_id: threadId, text: response, parse_mode: "HTML" }).catch(() => {});
         } catch (err) {
-          const status = err.response?.status;
-          if (status === 404) {
-            await tg.call('sendMessage', { chat_id: chatId, message_thread_id: threadId, text: `Bestellung ${invoiceId} wurde nicht gefunden. Bitte prüfe ob die Invoice-ID korrekt ist.\n\nDie ID steht in der Bestätigungs-E-Mail von Sellauth (Format: xxxxxxx-0000000000000)` }).catch(() => {});
-          } else if (status === 401 || status === 403) {
-            await tg.call('sendMessage', { chat_id: chatId, message_thread_id: threadId, text: 'Bestellabfrage konnte nicht durchgeführt werden. Bitte wende dich an den Support: @autoacts' }).catch(() => {});
-          } else {
-            await tg.call('sendMessage', { chat_id: chatId, message_thread_id: threadId, text: `Bestellabfrage ist momentan nicht verfügbar (Code: ${status || 'timeout'}). Bitte wende dich an @autoacts` }).catch(() => {});
-          }
+          await tg.call('sendMessage', { chat_id: chatId, message_thread_id: threadId, text: 'Bestellung nicht gefunden oder Fehler bei der Abfrage.' }).catch(() => {});
         }
         return;
       }
@@ -230,8 +173,8 @@ router.post('/telegram', (req, res) => {
         metadata: {
           username: from.username || null,
           first_name: from.first_name || 'Nutzer',
-          language: from.language_code || 'de',
-          message_thread_id: threadId
+          message_thread_id: threadId,
+          token: activeToken
         }
       });
     } catch (err) {}
@@ -245,10 +188,7 @@ router.post('/sellauth', (req, res) => {
       const supabase = require('../config/supabase');
       const event = req.body;
       await supabase.from('integration_logs').insert([{
-        source: 'sellauth',
-        event_type: event.type || 'unknown',
-        payload: event,
-        created_at: new Date()
+        source: 'sellauth', event_type: event.type || 'unknown', payload: event, created_at: new Date()
       }]);
     } catch (err) {}
   });
