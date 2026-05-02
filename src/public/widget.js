@@ -1,11 +1,38 @@
 /**
- * ValueShop25 Chat Widget v1.3.6
+ * ValueShop25 Chat Widget v1.3.7
  * WhatsApp-inspiriertes Design, Status-Dot, Toggle-Switch, Session-Tracking
+ *
+ * v1.5.38 (Bot-Version):
+ *   • Chat-ID wird in sessionStorage statt localStorage abgelegt → bei Tab-
+ *     Schließen / Verlassen der Domain ist der Chat aus Kundensicht weg.
+ *   • Beim Verlassen der Seite (pagehide) wird sessionStorage zusätzlich
+ *     proaktiv gelöscht, damit auch Browser-Backforward-Cache nichts behält.
+ *   • Backend-seitig bleibt die Historie erhalten – das Dashboard zeigt
+ *     den Verlauf weiterhin bis zur manuellen Löschung.
  */
 (function(){
 'use strict';
 var API=(function(){var s=document.querySelectorAll('script[src*="widget.js"]');return s.length?s[s.length-1].src.replace('/widget.js',''):'https://ai-agent-lix6.onrender.com';})();
 var chatId=null,isOpen=false,isTyping=false,_proDone=false,_handover=false,_faqUsed=false,_proTimer=null,_statusInt=null;
+
+// ─── Storage-Wrapper: sessionStorage statt localStorage ─────────────────────
+// sessionStorage hält die Chat-ID nur solange wie der Tab offen ist.
+// Beim Schließen / Verlassen der Domain ist der Chat aus Kundensicht "weg".
+var STORAGE_KEY='vs25_cid';
+function _ssGet(){ try { return sessionStorage.getItem(STORAGE_KEY); } catch(_) { return null; } }
+function _ssSet(v){ try { sessionStorage.setItem(STORAGE_KEY,v); } catch(_) {} }
+function _ssClear(){
+  try { sessionStorage.removeItem(STORAGE_KEY); } catch(_) {}
+  // Defensiv: falls noch alte localStorage-Reste vorhanden sind, weg damit.
+  try { localStorage.removeItem(STORAGE_KEY); } catch(_) {}
+}
+// Migration: falls ein alter Eintrag noch in localStorage hängt, einmalig
+// in die Session übernehmen und dann aus localStorage entfernen.
+try {
+  var _legacy = localStorage.getItem(STORAGE_KEY);
+  if (_legacy && !_ssGet()) _ssSet(_legacy);
+  if (_legacy) localStorage.removeItem(STORAGE_KEY);
+} catch(_) {}
 
 function smartTitle(){
   var url=location.pathname;
@@ -153,15 +180,29 @@ function build(){
 
   passiveTrack();startSession();loadFaq();
   _proTimer=setTimeout(showInv,28000);
+
+  // ─── Auto-Cleanup beim Verlassen der Seite ────────────────────────────────
+  // pagehide deckt sowohl Tab-Schließen als auch Domain-Wechsel ab
+  // (zuverlässiger als beforeunload, kompatibel mit BFCache).
+  window.addEventListener('pagehide', function(e){
+    if (!e.persisted) {
+      _ssClear();
+      chatId = null;
+    }
+  });
+  // Fallback für ältere Browser
+  window.addEventListener('beforeunload', function(){
+    _ssClear();
+  });
 }
 
 function passiveTrack(){
   // Lightweight beacon - updates existing session, never creates new one
-  var saved=localStorage.getItem('vs25_cid')||chatId;
+  var saved=_ssGet()||chatId;
   fetch(API+'/api/widget/beacon',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({fingerprint:fp(),pageUrl:location.href,pageTitle:smartTitle(),chatId:saved}),keepalive:true})
   .then(function(r){return r.json();}).then(function(d){
-    if(d.chatId&&!localStorage.getItem('vs25_cid')) localStorage.setItem('vs25_cid',d.chatId);
+    if(d.chatId&&!_ssGet()) _ssSet(d.chatId);
   }).catch(function(){});
 }
 
@@ -171,9 +212,10 @@ function startSession(){
     if(ft){if(d.poweredBy===null||d.poweredBy===''){ft.parentElement.style.display='none';}else if(d.poweredBy){ft.textContent=d.poweredBy;}}
   }).catch(function(){});
 
-  var saved=localStorage.getItem('vs25_cid');
+  var saved=_ssGet();
 
-  // RESUME: if we already know this visitor, skip full init to avoid duplicate sessions
+  // RESUME: if we already know this visitor (current browser session),
+  // skip full init to avoid duplicate sessions.
   if(saved){
     chatId=saved;
     loadHist();
@@ -187,7 +229,7 @@ function startSession(){
     body:JSON.stringify({fingerprint:fp(),pageUrl:location.href,pageTitle:smartTitle(),chatId:null})})
   .then(function(r){return r.json();}).then(function(d){
     if(d.banned) return;
-    chatId=d.chatId; localStorage.setItem('vs25_cid',chatId);
+    chatId=d.chatId; _ssSet(chatId);
     if(d.welcome) addMsg('b',d.welcome);
     loadHist(); startStatusPoll();
   }).catch(function(){});

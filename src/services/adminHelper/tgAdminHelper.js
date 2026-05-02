@@ -1,46 +1,24 @@
 const axios = require("axios");
 const supabase = require("../../config/supabase");
 const safelistService = require("./safelistService");
+const { t } = require("../i18n");
 
-const DICT = {
-  de: {
-    admin_menu: "⚙️ <b>Admin-Menü</b>\nWähle eine Funktion:",
-    clean: "🧹 Gelöschte Accounts entfernen",
-    pin: "📌 Nachricht pinnen",
-    count: "📋 Mitglieder-Anzahl",
-    del_last: "🗑 Letzte Nachricht löschen",
-    sched: "⏰ Geplante Nachrichten",
-    safe: "🛡 Safelist verwalten",
-    no_admin: "❌ Nur für Admins.",
-    clean_res: "🧹 Ergebnis: {checked} Mitglieder geprüft, {removed} gelöschte Accounts entfernt.",
-    count_res: "👥 Aktuelle Mitgliederzahl: <b>{count}</b>",
-    pin_ok: "📌 Nachricht angeheftet!",
-    pin_err: "Antworte auf die Nachricht die gepinnt werden soll mit /pin",
-    sched_none: "⏰ Keine geplanten Nachrichten.\n\nNutze das Dashboard um Nachrichten zu planen.",
-    sched_list: "⏰ <b>Geplante Nachrichten:</b>\n{list}"
-  },
-  en: {
-    admin_menu: "⚙️ <b>Admin Menu</b>\nSelect a function:",
-    clean: "🧹 Remove deleted accounts",
-    pin: "📌 Pin message",
-    count: "📋 Member count",
-    del_last: "🗑 Delete last message",
-    sched: "⏰ Scheduled messages",
-    safe: "🛡 Manage Safelist",
-    no_admin: "❌ Admins only.",
-    clean_res: "🧹 Result: {checked} members checked, {removed} deleted accounts removed.",
-    count_res: "👥 Current member count: <b>{count}</b>",
-    pin_ok: "📌 Message pinned!",
-    pin_err: "Reply to the message you want to pin with /pin",
-    sched_none: "⏰ No scheduled messages.\n\nUse the dashboard to schedule messages.",
-    sched_list: "⏰ <b>Scheduled messages:</b>\n{list}"
-  }
-};
-
-function t(key, lang) {
-  const l = DICT[lang] ? lang : (DICT["en"] ? "en" : "de");
-  return DICT[l]?.[key] || DICT["de"][key] || key;
-}
+// ─── Lokales DICT entfernt – nun zentrales Translation-Tool aus services/i18n.js
+// Schlüssel-Mapping (alt → neu):
+//   admin_menu  → ah_menu
+//   clean       → ah_clean
+//   pin         → ah_pin
+//   count       → ah_count
+//   del_last    → ah_del_last
+//   sched       → ah_sched
+//   safe        → ah_safe
+//   no_admin    → ah_no_admin
+//   clean_res   → ah_clean_res
+//   count_res   → ah_count_res
+//   pin_ok      → ah_pin_ok
+//   pin_err     → ah_pin_err
+//   sched_none  → ah_sched_none
+//   sched_list  → ah_sched_list
 
 function tgApi(token) {
   const base = `https://api.telegram.org/bot${token}`;
@@ -112,15 +90,15 @@ const tgAdminHelper = {
     const tg = tgApi(token);
     const keyboard = {
       inline_keyboard: [
-        [{ text: t("clean", userLang), callback_data: "admin_clean" }],
-        [{ text: t("pin", userLang), callback_data: "admin_pin_last" }],
-        [{ text: t("count", userLang), callback_data: "admin_count" }],
-        [{ text: t("del_last", userLang), callback_data: "admin_del_last" }],
-        [{ text: t("sched", userLang), callback_data: "admin_schedule" }],
-        [{ text: t("safe", userLang), callback_data: "admin_safelist" }]
+        [{ text: t("ah_clean", userLang), callback_data: "admin_clean" }],
+        [{ text: t("ah_pin", userLang), callback_data: "admin_pin_last" }],
+        [{ text: t("ah_count", userLang), callback_data: "admin_count" }],
+        [{ text: t("ah_del_last", userLang), callback_data: "admin_del_last" }],
+        [{ text: t("ah_sched", userLang), callback_data: "admin_schedule" }],
+        [{ text: t("ah_safe", userLang), callback_data: "admin_safelist" }]
       ]
     };
-    return tg.send(chatId, t("admin_menu", userLang), { reply_markup: keyboard, ...(msgId ? { reply_to_message_id: msgId } : {}) });
+    return tg.send(chatId, t("ah_menu", userLang), { reply_markup: keyboard, ...(msgId ? { reply_to_message_id: msgId } : {}) });
   },
 
   async handleCallback(token, query, channel) {
@@ -134,7 +112,7 @@ const tgAdminHelper = {
 
     const isAdmin = await tg.isUserAdmin(targetChatId, userId);
     if (!isAdmin) {
-      await tg.call("answerCallbackQuery", { callback_query_id: query.id, text: t("no_admin", lang) });
+      await tg.call("answerCallbackQuery", { callback_query_id: query.id, text: t("ah_no_admin", lang) });
       return;
     }
 
@@ -152,12 +130,12 @@ const tgAdminHelper = {
     switch (baseData) {
       case "admin_clean": {
         const { removed, checked } = await this.cleanDeletedAccounts(token, String(targetChatId));
-        await tg.send(chatId, t("clean_res", lang).replace("{checked}", checked).replace("{removed}", removed));
+        await tg.send(chatId, t("ah_clean_res", lang, { checked, removed }));
         break;
       }
       case "admin_count": {
         const count = await tg.call("getChatMembersCount", { chat_id: targetChatId }).catch(() => "?");
-        await tg.send(chatId, t("count_res", lang).replace("{count}", count));
+        await tg.send(chatId, t("ah_count_res", lang, { count }));
         break;
       }
       case "admin_pin_last": {
@@ -168,9 +146,9 @@ const tgAdminHelper = {
         const msgToPin = query.message?.reply_to_message?.message_id;
         if (msgToPin) {
           await tg.pinMessage(chatId, msgToPin);
-          await tg.send(chatId, t("pin_ok", lang));
+          await tg.send(chatId, t("ah_pin_ok", lang));
         } else {
-          await tg.send(chatId, t("pin_err", lang));
+          await tg.send(chatId, t("ah_pin_err", lang));
         }
         break;
       }
@@ -187,10 +165,10 @@ const tgAdminHelper = {
       case "admin_schedule": {
         const { data: msgs } = await supabase.from("scheduled_messages").select("id, message, next_run_at, repeat").eq("channel_id", String(targetChatId)).eq("is_active", true);
         if (!msgs?.length) {
-          await tg.send(chatId, t("sched_none", lang));
+          await tg.send(chatId, t("ah_sched_none", lang));
         } else {
           const list = msgs.map(m => `• ${m.message.substring(0, 50)}… → ${m.next_run_at ? new Date(m.next_run_at).toLocaleString(lang === "en" ? "en-US" : "de-DE") : "einmalig"}`).join("\n");
-          await tg.send(chatId, t("sched_list", lang).replace("{list}", list));
+          await tg.send(chatId, t("ah_sched_list", lang, { list }));
         }
         break;
       }
@@ -203,15 +181,15 @@ const tgAdminHelper = {
       case "admin_menu": {
         const suffix = query.extractedChannelId ? `_${query.extractedChannelId}` : "";
         await tg.call("editMessageText", {
-          chat_id: chatId, message_id: query.message.message_id, text: t("admin_menu", lang), parse_mode: "HTML",
+          chat_id: chatId, message_id: query.message.message_id, text: t("ah_menu", lang), parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
-              [{ text: t("clean", lang), callback_data: "admin_clean" + suffix }],
-              [{ text: t("pin", lang), callback_data: "admin_pin_last" + suffix }],
-              [{ text: t("count", lang), callback_data: "admin_count" + suffix }],
-              [{ text: t("del_last", lang), callback_data: "admin_del_last" + suffix }],
-              [{ text: t("sched", lang), callback_data: "admin_schedule" + suffix }],
-              [{ text: t("safe", lang), callback_data: "admin_safelist" + suffix }]
+              [{ text: t("ah_clean", lang), callback_data: "admin_clean" + suffix }],
+              [{ text: t("ah_pin", lang), callback_data: "admin_pin_last" + suffix }],
+              [{ text: t("ah_count", lang), callback_data: "admin_count" + suffix }],
+              [{ text: t("ah_del_last", lang), callback_data: "admin_del_last" + suffix }],
+              [{ text: t("ah_sched", lang), callback_data: "admin_schedule" + suffix }],
+              [{ text: t("ah_safe", lang), callback_data: "admin_safelist" + suffix }]
             ]
           }
         }).catch(() => {});

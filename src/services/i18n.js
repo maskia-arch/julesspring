@@ -1,3 +1,31 @@
+/**
+ * i18n.js v1.5.38
+ * ----------------------------------------------------------------------------
+ * Echtes Translation-Tool für den AdminHelper-Bot.
+ *
+ * Konzept:
+ *   • Eine einzige Source of Truth in DEUTSCH (Object T_DE unten).
+ *   • Alle anderen Sprachen werden zur Laufzeit via DeepSeek-API übersetzt.
+ *   • Persistenter Cache in der Tabelle `translation_cache` (Supabase).
+ *   • In-Memory-Cache für O(1) Lookups nach dem Preload.
+ *   • `t(key, lang, params)` ist synchron (Telegram-Pfade müssen nicht warten).
+ *     Fehlt eine Übersetzung im Cache, wird der deutsche Originaltext sofort
+ *     zurückgegeben und parallel im Hintergrund eine Übersetzung erzeugt
+ *     (Stale-while-revalidate). Beim nächsten Aufruf ist sie dann da.
+ *   • `preloadTranslations()` füllt den Cache beim Server-Start.
+ *
+ * Platzhalter-Konvention:
+ *   Strings enthalten Platzhalter in der Form `{name}`.
+ *   Die Übersetzungs-API wird angewiesen, Platzhalter unverändert zu lassen.
+ * ----------------------------------------------------------------------------
+ */
+
+const axios = require("axios");
+const supabase = require("../config/supabase");
+const { deepseek } = require("../config/env");
+const logger = require("../utils/logger");
+
+// ─── Sprachen ───────────────────────────────────────────────────────────────
 const SUPPORTED_LANGUAGES = {
   de: "🇩🇪 Deutsch",
   en: "🇬🇧 English",
@@ -9,154 +37,376 @@ const SUPPORTED_LANGUAGES = {
   tr: "🇹🇷 Türkçe",
 };
 
-const T = {
-  settings_header: {
-    de: (title) => `⚙️ <b>Einstellungen für: ${title}</b>`,
-    en: (title) => `⚙️ <b>Settings for: ${title}</b>`,
-    es: (title) => `⚙️ <b>Ajustes para: ${title}</b>`,
-    zh: (title) => `⚙️ <b>${title} 的设置</b>`,
-    ar: (title) => `⚙️ <b>إعدادات: ${title}</b>`,
-    fr: (title) => `⚙️ <b>Paramètres de: ${title}</b>`,
-    ru: (title) => `⚙️ <b>Настройки для: ${title}</b>`,
-    tr: (title) => `⚙️ <b>${title} için ayarlar</b>`,
-  },
-  status_approved: {
-    de: "🟢 Freigeschaltet", en: "🟢 Active", es: "🟢 Activo",
-    zh: "🟢 已激活", ar: "🟢 مفعّل", fr: "🟢 Activé",
-    ru: "🟢 Одобрено", tr: "🟢 Onaylandı",
-  },
-  status_pending: {
-    de: "🔴 Ausstehend", en: "🔴 Pending", es: "🔴 Pendiente",
-    zh: "🔴 待审核", ar: "🔴 قيد الانتظار", fr: "🔴 En attente",
-    ru: "🔴 В ожидании", tr: "🔴 Bekliyor",
-  },
-  ai_active: {
-    de: "✅ Aktiv", en: "✅ Active", es: "✅ Activo",
-    zh: "✅ 已启用", ar: "✅ نشط", fr: "✅ Actif",
-    ru: "✅ Активен", tr: "✅ Aktif",
-  },
-  ai_inactive: {
-    de: "❌ Inaktiv", en: "❌ Inactive", es: "❌ Inactivo",
-    zh: "❌ 未启用", ar: "❌ غير نشط", fr: "❌ Inactif",
-    ru: "❌ Неактивен", tr: "❌ Pasif",
-  },
-  choose_action: {
-    de: "Wähle was du verwalten möchtest:",
-    en: "Choose what you want to manage:",
-    es: "Elige qué quieres gestionar:",
-    zh: "选择你要管理的内容：",
-    ar: "اختر ما تريد إدارته:",
-    fr: "Choisissez ce que vous voulez gérer :",
-    ru: "Выберите, что вы хотите настроить:",
-    tr: "Neyi yönetmek istediğinizi seçin:",
-  },
-  btn_welcome: {
-    de: "👋 Willkommensnachricht", en: "👋 Welcome message",
-    es: "👋 Mensaje de bienvenida", zh: "👋 欢迎消息",
-    ar: "👋 رسالة الترحيب", fr: "👋 Message de bienvenue",
-    ru: "👋 Сообщение приветствия", tr: "👋 Karşılama mesajı",
-  },
-  btn_goodbye: {
-    de: "👋 Abschiedsnachricht", en: "👋 Goodbye message",
-    es: "👋 Mensaje de despedida", zh: "👋 告别消息",
-    ar: "👋 رسالة الوداع", fr: "👋 Message d'au revoir",
-    ru: "👋 Сообщение прощания", tr: "👋 Veda mesajı",
-  },
-  btn_schedule: {
-    de: "⏰ Geplante Nachrichten", en: "⏰ Scheduled messages",
-    es: "⏰ Mensajes programados", zh: "⏰ 定时消息",
-    ar: "⏰ رسائل مجدولة", fr: "⏰ Messages planifiés",
-    ru: "⏰ Запланированные сообщения", tr: "⏰ Planlanmış mesajlar",
-  },
-  btn_clean: {
-    de: "🧹 Gelöschte bereinigen", en: "🧹 Clean deleted",
-    es: "🧹 Limpiar eliminados", zh: "🧹 清理已删除",
-    ar: "🧹 تنظيف المحذوفين", fr: "🧹 Nettoyer les supprimés",
-    ru: "🧹 Очистить удаленные", tr: "🧹 Silinenleri temizle",
-  },
-  btn_stats: {
-    de: "📊 Statistiken", en: "📊 Statistics",
-    es: "📊 Estadísticas", zh: "📊 统计",
-    ar: "📊 الإحصاءات", fr: "📊 Statistiques",
-    ru: "📊 Статистика", tr: "📊 İstatistikler",
-  },
-  btn_safelist: {
-    de: "🛡 Safelist", en: "🛡 Safelist",
-    es: "🛡 Lista segura", zh: "🛡 安全名单",
-    ar: "🛡 قائمة آمنة", fr: "🛡 Liste sûre",
-    ru: "🛡 Сейфлист", tr: "🛡 Güvenli Liste",
-  },
-  btn_ai: {
-    de: "🤖 KI-Features", en: "🤖 AI Features",
-    es: "🤖 Funciones IA", zh: "🤖 AI 功能",
-    ar: "🤖 ميزات الذكاء", fr: "🤖 Fonctions IA",
-    ru: "🤖 Функции ИИ", tr: "🤖 YZ Özellikleri",
-  },
-  btn_language: {
-    de: "🌐 Sprache", en: "🌐 Language",
-    es: "🌐 Idioma", zh: "🌐 语言",
-    ar: "🌐 اللغة", fr: "🌐 Langue",
-    ru: "🌐 Язык", tr: "🌐 Dil",
-  },
-  welcome_intro: {
-    de: (username) => `👋 Hallo${username ? " " + username : ""}!\n\nFüge mich als Admin zu deinem Channel/Gruppe hinzu und schreibe dann /start hier.\n\nBefehle: /menu · /settings · /dashboard · /help`,
-    en: (username) => `👋 Hi${username ? " " + username : ""}!\n\nAdd me as admin to your channel/group, then write /start here.\n\nCommands: /menu · /settings · /dashboard · /help`,
-    es: (username) => `👋 ¡Hola${username ? " " + username : ""}!\n\nAgrégame como admin a tu canal/grupo y luego escribe /start aquí.\n\nComandos: /menu · /settings · /dashboard`,
-    zh: (username) => `👋 你好${username ? username : ""}！\n\n将我添加为你的频道/群组管理员，然后在这里发送 /start。\n\n命令：/menu · /settings · /dashboard`,
-    ar: (username) => `👋 مرحباً${username ? " " + username : ""}!\n\nأضفني كمشرف في قناتك/مجموعتك ثم اكتب /start هنا.\n\nالأوامر: /menu · /settings`,
-    fr: (username) => `👋 Bonjour${username ? " " + username : ""}!\n\nAjoutez-moi comme admin à votre canal/groupe, puis écrivez /start ici.\n\nCommandes : /menu · /settings · /dashboard`,
-    ru: (username) => `👋 Привет${username ? " " + username : ""}!\n\nДобавьте меня как администратора в ваш канал/группу, затем напишите /start здесь.\n\nКоманды: /menu · /settings · /dashboard · /help`,
-    tr: (username) => `👋 Merhaba${username ? " " + username : ""}!\n\nBeni kanalınıza/grubunuza yönetici olarak ekleyin ve buraya /start yazın.\n\nKomutlar: /menu · /settings · /dashboard · /help`,
-  },
-  summary_creating: {
-    de: (est) => `⏳ Erstelle Tageszusammenfassung… (~${est} Token)`,
-    en: (est) => `⏳ Creating daily summary… (~${est} tokens)`,
-    es: (est) => `⏳ Creando resumen diario… (~${est} tokens)`,
-    zh: (est) => `⏳ 正在生成每日摘要… (~${est} 代币)`,
-    ar: (est) => `⏳ جارٍ إنشاء الملخص اليومي… (~${est} رمز)`,
-    fr: (est) => `⏳ Création du résumé quotidien… (~${est} tokens)`,
-    ru: (est) => `⏳ Создание дневного отчета… (~${est} токенов)`,
-    tr: (est) => `⏳ Günlük özet oluşturuluyor… (~${est} token)`,
-  },
-  summary_cooldown: {
-    de: (nextAt) => `⏳ Tageszusammenfassung nur 1x pro 24h.\nNächste möglich um ${nextAt}.`,
-    en: (nextAt) => `⏳ Daily summary only once per 24h.\nNext available at ${nextAt}.`,
-    es: (nextAt) => `⏳ Resumen diario solo 1x cada 24h.\nPróximo disponible a las ${nextAt}.`,
-    zh: (nextAt) => `⏳ 每日摘要每24小时仅限一次。\n下次可用时间：${nextAt}。`,
-    ar: (nextAt) => `⏳ الملخص اليومي مرة واحدة كل 24 ساعة.\nمتاح التالي في ${nextAt}.`,
-    fr: (nextAt) => `⏳ Résumé quotidien 1x par 24h seulement.\nProchain disponible à ${nextAt}.`,
-    ru: (nextAt) => `⏳ Дневной отчет доступен только 1x в 24 часа.\nСледующий доступен в ${nextAt}.`,
-    tr: (nextAt) => `⏳ Günlük özet 24 saatte sadece 1 kez alınabilir.\nBir sonraki uygun zaman: ${nextAt}.`,
-  },
-  language_menu: {
-    de: "🌐 <b>Bot-Sprache wählen</b>\n\nWähle die Sprache für Menüs und Nachrichten in diesem Channel:",
-    en: "🌐 <b>Select bot language</b>\n\nChoose the language for menus and messages in this channel:",
-    es: "🌐 <b>Seleccionar idioma del bot</b>\n\nElige el idioma para menús y mensajes de este canal:",
-    zh: "🌐 <b>选择机器人语言</b>\n\n为此频道的菜单和消息选择语言：",
-    ar: "🌐 <b>اختر لغة البوت</b>\n\nاختر لغة القوائم والرسائل لهذه القناة:",
-    fr: "🌐 <b>Choisir la langue du bot</b>\n\nChoisissez la langue des menus et messages de ce canal :",
-    ru: "🌐 <b>Выберите язык бота</b>\n\nВыберите язык для меню и сообщений в этом канале:",
-    tr: "🌐 <b>Bot dilini seçin</b>\n\nBu kanaldaki menüler ve mesajlar için dili seçin:",
-  },
-  language_set: {
-    de: (lang) => `✅ Sprache auf ${lang} gesetzt.`,
-    en: (lang) => `✅ Language set to ${lang}.`,
-    es: (lang) => `✅ Idioma cambiado a ${lang}.`,
-    zh: (lang) => `✅ 语言已设置为 ${lang}。`,
-    ar: (lang) => `✅ تم تعيين اللغة إلى ${lang}.`,
-    fr: (lang) => `✅ Langue définie sur ${lang}.`,
-    ru: (lang) => `✅ Язык изменен на ${lang}.`,
-    tr: (lang) => `✅ Dil ${lang} olarak ayarlandı.`,
-  },
+const LANG_NAMES = {
+  en: "English",
+  es: "Spanish",
+  zh: "Simplified Chinese",
+  ar: "Arabic",
+  fr: "French",
+  ru: "Russian",
+  tr: "Turkish",
 };
 
-function t(key, lang, ...args) {
-  const entry = T[key];
-  if (!entry) return key;
-  const langCode = (lang || "de").split("-")[0].toLowerCase();
-  const fn = entry[langCode] || entry["de"];
-  if (typeof fn === "function") return fn(...args);
-  return fn;
+// ─── Source of Truth: ALLE Texte in Deutsch ──────────────────────────────────
+// Sammelt alle bisher in den lokalen DICTs verstreuten Strings an einem Ort.
+const T_DE = {
+  // ── Allgemeine Status & Buttons ────────────────────────────────────────────
+  status_approved: "🟢 Freigeschaltet",
+  status_pending: "🔴 Ausstehend",
+  ai_active: "✅ Aktiv",
+  ai_inactive: "❌ Inaktiv",
+  choose_action: "Wähle was du verwalten möchtest:",
+  back: "◀️ Zurück",
+  main_menu: "◀️ Hauptmenü",
+  cancel: "❌ Abbrechen",
+
+  // ── Welcome (Privat-Chat /start) ───────────────────────────────────────────
+  welcome_intro: "👋 Hallo{name}!\n\nFüge mich als Admin zu deinem Channel/Gruppe hinzu und schreibe dann /start hier.\n\nBefehle: /menu · /settings · /dashboard · /help",
+
+  // ── Sprache wählen ─────────────────────────────────────────────────────────
+  language_menu: "🌐 <b>Bot-Sprache wählen</b>\n\nWähle die Sprache für Menüs und Nachrichten in diesem Channel:",
+  language_set: "✅ Sprache auf {lang} gesetzt.",
+  btn_language: "🌐 Sprache",
+
+  // ── Tagesbericht ───────────────────────────────────────────────────────────
+  summary_creating: "⏳ Erstelle Tageszusammenfassung… (~{est} Token)",
+  summary_cooldown: "⏳ Tageszusammenfassung nur 1x pro 24h.\nNächste möglich um {nextAt}.",
+
+  // ── Settings-Hauptmenü ─────────────────────────────────────────────────────
+  settings_title: "⚙️ <b>{name}</b>\n\nKI: {ai} | Safelist: {sl} | Feedback: {fb}\n\nWähle eine Kategorie:",
+  settings_ch: "📋 Channel-Einstellungen",
+  settings_mod: "🔒 Moderation",
+  settings_ai: "🤖 AI Features",
+
+  // ── Channel-Untermenü ──────────────────────────────────────────────────────
+  ch_title: "📋 <b>Channel-Einstellungen</b> — {name}",
+  ch_welcome: "👋 Willkommen",
+  ch_goodbye: "👋 Abschied",
+  ch_schedule: "📅 Zeitplan",
+  ch_repeat: "🔁 Wiederholungen",
+  ch_clean: "🧹 Bereinigen",
+  ch_stats: "📊 Statistik",
+
+  // ── Moderation-Untermenü ───────────────────────────────────────────────────
+  mod_title: "🔒 <b>Moderation</b> — {name}",
+  mod_locked: "🔒 <b>Moderation</b> — Gesperrt\n\nDein Kanal ist noch nicht verifiziert.\nBitte melde dich bei @autoacts für die Freischaltung.",
+  mod_safelist: "🛡 Safelist {sl}",
+  mod_feedback: "💬 Feedback {fb}",
+  mod_blacklist: "🚫 Blacklist",
+  mod_userinfo: "🔍 UserInfo",
+  mod_banned: "🚫 Gebannte User",
+  mod_fb_mgr: "👤 User-Feedbacks verwalten",
+
+  // ── AI-Features-Untermenü ──────────────────────────────────────────────────
+  ai_title: "🤖 <b>AI Features</b> — {name}",
+  ai_locked: "🤖 <b>AI Features</b> — Gesperrt\n\nNutze <b>/buy</b> um ein Paket zu kaufen.",
+  ai_daily: "📰 Tagesbericht",
+  ai_smalltalk: "💬 Smalltalk AI",
+  ai_kb: "📚 Wissensdatenbank",
+  ai_adwriter: "✍️ WerbeTexter",
+  ai_blacklist: "🤖 Blacklist Enhancer 🔒",
+  ai_groupgames: "🎮 Gruppenspiele 🔜",
+  ai_groupgames_info: "🎮 <b>Gruppenspiele</b>\n\n<i>Dieses Feature wird bald verfügbar!</i>\n\nGruppenspiele aktivieren deine Community:\n\n• 🎯 Quiz-Runden mit Auswertung\n• 🃏 Wortspiele & Rätsel\n• 🏆 Ranglisten & Punkte-System\n• 🎲 Mini-Games\n\nUpdates: @autoacts",
+
+  // ── AdminHelper-Schnellmenü (tgAdminHelper) ────────────────────────────────
+  ah_menu: "⚙️ <b>Admin-Menü</b>\nWähle eine Funktion:",
+  ah_clean: "🧹 Gelöschte Accounts entfernen",
+  ah_pin: "📌 Nachricht pinnen",
+  ah_count: "📋 Mitglieder-Anzahl",
+  ah_del_last: "🗑 Letzte Nachricht löschen",
+  ah_sched: "⏰ Geplante Nachrichten",
+  ah_safe: "🛡 Safelist verwalten",
+  ah_no_admin: "❌ Nur für Admins.",
+  ah_clean_res: "🧹 Ergebnis: {checked} Mitglieder geprüft, {removed} gelöschte Accounts entfernt.",
+  ah_count_res: "👥 Aktuelle Mitgliederzahl: <b>{count}</b>",
+  ah_pin_ok: "📌 Nachricht angeheftet!",
+  ah_pin_err: "Antworte auf die Nachricht die gepinnt werden soll mit /pin",
+  ah_sched_none: "⏰ Keine geplanten Nachrichten.\n\nNutze das Dashboard um Nachrichten zu planen.",
+  ah_sched_list: "⏰ <b>Geplante Nachrichten:</b>\n{list}",
+
+  // ── Common Action-Texte ────────────────────────────────────────────────────
+  no_permission: "❌ Keine Berechtigung für diesen Channel.",
+  saved: "✅ Gespeichert",
+  removed: "✅ Entfernt",
+  updated: "✅ Aktualisiert",
+};
+
+// ─── In-Memory-Cache: Map<lang, Map<key, value>> ────────────────────────────
+const memCache = new Map();
+memCache.set("de", new Map(Object.entries(T_DE)));
+
+// Tracking, welche Übersetzungen gerade im Hintergrund laufen, damit wir nicht
+// dieselbe Übersetzung 100x parallel triggern.
+const inFlight = new Set(); // "key|lang"
+
+// ─── DB-Helper: Cache lesen / schreiben ─────────────────────────────────────
+async function _loadFromDb() {
+  try {
+    const { data, error } = await supabase
+      .from("translation_cache")
+      .select("source_key, target_lang, translated_text");
+    if (error) {
+      logger.warn(`[i18n] DB-Cache laden fehlgeschlagen: ${error.message}`);
+      return 0;
+    }
+    let n = 0;
+    for (const row of data || []) {
+      if (!memCache.has(row.target_lang)) memCache.set(row.target_lang, new Map());
+      memCache.get(row.target_lang).set(row.source_key, row.translated_text);
+      n++;
+    }
+    return n;
+  } catch (e) {
+    logger.warn(`[i18n] DB-Cache laden fehlgeschlagen: ${e.message}`);
+    return 0;
+  }
+}
+
+async function _saveToDb(key, lang, text, sourceText) {
+  try {
+    await supabase.from("translation_cache").upsert(
+      {
+        source_key: key,
+        target_lang: lang,
+        source_text: sourceText,
+        translated_text: text,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "source_key,target_lang" }
+    );
+  } catch (e) {
+    logger.warn(`[i18n] DB-Cache speichern fehlgeschlagen: ${e.message}`);
+  }
+}
+
+async function _invalidateForKey(key) {
+  // Wenn der deutsche Source-String sich geändert hat, müssen alte
+  // Übersetzungen verworfen werden.
+  try {
+    await supabase.from("translation_cache").delete().eq("source_key", key);
+  } catch (e) {}
+  for (const [lang, langMap] of memCache.entries()) {
+    if (lang !== "de") langMap.delete(key);
+  }
+}
+
+// ─── DeepSeek-Aufruf zum Übersetzen ─────────────────────────────────────────
+async function _translate(text, targetLang) {
+  if (!deepseek?.apiKey) {
+    logger.warn("[i18n] DEEPSEEK_API_KEY fehlt – keine Übersetzungen möglich.");
+    return null;
+  }
+
+  const langName = LANG_NAMES[targetLang] || targetLang;
+  const sys =
+    `You are a precise translator for a Telegram bot UI. ` +
+    `Translate the user's German text into ${langName}.\n` +
+    `STRICT RULES:\n` +
+    `1) Keep ALL placeholders like {name}, {count}, {est} EXACTLY as-is.\n` +
+    `2) Keep ALL HTML tags (<b>, <i>, <code>) and emojis exactly.\n` +
+    `3) Keep newlines (\\n) at the same positions.\n` +
+    `4) Output ONLY the translation – no quotes, no notes, no explanations.`;
+
+  try {
+    const r = await axios.post(
+      `${deepseek.baseUrl}/v1/chat/completions`,
+      {
+        model: "deepseek-chat",
+        max_tokens: 500,
+        temperature: 0.1,
+        messages: [
+          { role: "system", content: sys },
+          { role: "user", content: text },
+        ],
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${deepseek.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        timeout: 25000,
+      }
+    );
+    let out = r.data?.choices?.[0]?.message?.content?.trim() || null;
+    if (!out) return null;
+    // Leading/trailing quotes wegtrimmen, falls das Modell sie doch ausgibt
+    out = out.replace(/^["'`]+|["'`]+$/g, "").trim();
+    return out;
+  } catch (e) {
+    const msg = e.response?.data?.error?.message || e.message;
+    logger.warn(`[i18n] DeepSeek-Übersetzung (${targetLang}) fehlgeschlagen: ${msg}`);
+    return null;
+  }
+}
+
+async function _translateAndCache(key, lang) {
+  const flightKey = `${key}|${lang}`;
+  if (inFlight.has(flightKey)) return;
+  inFlight.add(flightKey);
+  try {
+    const sourceText = T_DE[key];
+    if (typeof sourceText !== "string") return; // nur Strings übersetzen
+    const translated = await _translate(sourceText, lang);
+    if (translated) {
+      if (!memCache.has(lang)) memCache.set(lang, new Map());
+      memCache.get(lang).set(key, translated);
+      await _saveToDb(key, lang, translated, sourceText);
+    }
+  } finally {
+    inFlight.delete(flightKey);
+  }
+}
+
+// ─── Public API ─────────────────────────────────────────────────────────────
+
+/**
+ * Synchroner Lookup. Gibt sofort den übersetzten String zurück, falls im
+ * Cache. Ansonsten Fallback auf Deutsch und Übersetzung im Hintergrund.
+ *
+ * @param {string} key   - Schlüssel aus T_DE
+ * @param {string} lang  - z.B. "en", "ru" oder "en-US"
+ * @param {object} [params] - optionales Object mit Werten für {placeholder}
+ */
+function t(key, lang, params) {
+  const langCode = String(lang || "de").split("-")[0].toLowerCase();
+  const fallback = T_DE[key];
+  if (fallback === undefined) return key;
+
+  let val;
+  if (langCode === "de") {
+    val = fallback;
+  } else {
+    val = memCache.get(langCode)?.get(key);
+    if (val === undefined) {
+      // Cache-Miss: Hintergrund-Übersetzung anstoßen, sofort Deutsch liefern
+      void _translateAndCache(key, langCode);
+      val = fallback;
+    }
+  }
+
+  // Platzhalter-Substitution (akzeptiert sowohl Object als auch positional)
+  if (typeof val === "string" && params && typeof params === "object") {
+    for (const [k, v] of Object.entries(params)) {
+      val = val.replace(new RegExp("\\{" + k + "\\}", "g"), String(v ?? ""));
+    }
+  }
+  return val;
+}
+
+/**
+ * Async-Variante. Wartet auf eine echte Übersetzung und liefert garantiert
+ * die Zielsprache (sofern DeepSeek erreichbar ist). Wird intern z.B. von
+ * preloadTranslations() genutzt.
+ */
+async function tAsync(key, lang, params) {
+  const langCode = String(lang || "de").split("-")[0].toLowerCase();
+  const fallback = T_DE[key];
+  if (fallback === undefined) return key;
+
+  let val;
+  if (langCode === "de") {
+    val = fallback;
+  } else {
+    val = memCache.get(langCode)?.get(key);
+    if (val === undefined) {
+      await _translateAndCache(key, langCode);
+      val = memCache.get(langCode)?.get(key) || fallback;
+    }
+  }
+
+  if (typeof val === "string" && params && typeof params === "object") {
+    for (const [k, v] of Object.entries(params)) {
+      val = val.replace(new RegExp("\\{" + k + "\\}", "g"), String(v ?? ""));
+    }
+  }
+  return val;
+}
+
+/**
+ * Beim Server-Start aufrufen. Lädt den DB-Cache in den Memory-Cache und
+ * stößt fehlende Übersetzungen für alle SUPPORTED_LANGUAGES an.
+ *
+ * @param {object} [opts]
+ * @param {boolean} [opts.eager=false] - true = wartet bis alle Übersetzungen
+ *                                        fertig sind. Default: feuert sie
+ *                                        async ab.
+ */
+async function preloadTranslations(opts = {}) {
+  const t0 = Date.now();
+  const loaded = await _loadFromDb();
+  logger.info(`[i18n] DB-Cache geladen: ${loaded} Einträge`);
+
+  // Source-Hash check: wenn Source-Text sich vs. DB unterscheidet → invalidate
+  // (light: prüft nur das aktuell deutsche Source vs. das vorhandene)
+  // Für den ersten Rollout reicht der einfache Ansatz: fehlende ergänzen.
+
+  const targetLangs = Object.keys(SUPPORTED_LANGUAGES).filter(l => l !== "de");
+  const tasks = [];
+  for (const key of Object.keys(T_DE)) {
+    if (typeof T_DE[key] !== "string") continue;
+    for (const lang of targetLangs) {
+      const cached = memCache.get(lang)?.get(key);
+      if (!cached) tasks.push(_translateAndCache(key, lang));
+    }
+  }
+
+  if (!tasks.length) {
+    logger.info(`[i18n] Alle Übersetzungen sind bereits vorhanden.`);
+    return;
+  }
+
+  logger.info(`[i18n] ${tasks.length} fehlende Übersetzungen werden erzeugt…`);
+
+  if (opts.eager) {
+    // Sequentiell, damit DeepSeek-Ratelimits nicht überschritten werden
+    for (const task of tasks) {
+      try { await task; } catch (_) {}
+    }
+    logger.info(`[i18n] Preload abgeschlossen in ${Date.now() - t0} ms`);
+  } else {
+    // Im Hintergrund, gestaffelt
+    (async () => {
+      let i = 0;
+      for (const task of tasks) {
+        try { await task; } catch (_) {}
+        if (++i % 10 === 0) await new Promise(r => setTimeout(r, 250));
+      }
+      logger.info(`[i18n] Background-Preload abgeschlossen (${tasks.length} Einträge) in ${Date.now() - t0} ms`);
+    })();
+  }
+}
+
+/**
+ * Ad-hoc-Übersetzung beliebiger Texte (z.B. dynamische Inhalte aus der DB).
+ * Wird ebenfalls cached.
+ */
+async function translateText(text, targetLang) {
+  if (!text) return text;
+  const langCode = String(targetLang || "de").split("-")[0].toLowerCase();
+  if (langCode === "de") return text;
+
+  // Cache-Lookup über pseudo-Key (Hash des Texts)
+  const key = "ad_hoc_" + _hash(text);
+  const cached = memCache.get(langCode)?.get(key);
+  if (cached) return cached;
+
+  const out = await _translate(text, langCode);
+  if (out) {
+    if (!memCache.has(langCode)) memCache.set(langCode, new Map());
+    memCache.get(langCode).set(key, out);
+    await _saveToDb(key, langCode, out, text);
+    return out;
+  }
+  return text;
+}
+
+function _hash(str) {
+  let h = 0;
+  for (let i = 0; i < str.length; i++) {
+    h = ((h << 5) - h) + str.charCodeAt(i);
+    h |= 0;
+  }
+  return Math.abs(h).toString(36);
 }
 
 function detectLang(telegramUser) {
@@ -165,4 +415,12 @@ function detectLang(telegramUser) {
   return SUPPORTED_LANGUAGES[code] ? code : "de";
 }
 
-module.exports = { t, detectLang, SUPPORTED_LANGUAGES };
+module.exports = {
+  t,
+  tAsync,
+  detectLang,
+  preloadTranslations,
+  translateText,
+  SUPPORTED_LANGUAGES,
+  T_DE,
+};

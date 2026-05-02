@@ -36,6 +36,12 @@ const server = app.listen(port, () => {
     setAutoCommands();
     startKeepAlive();
 
+    // ─── i18n: DB-Cache laden + fehlende Übersetzungen im Hintergrund erzeugen ───
+    try {
+      const i18n = require('./services/i18n');
+      i18n.preloadTranslations({ eager: false }).catch(e => logger.warn(`[i18n] preload error: ${e.message}`));
+    } catch(e) { logger.warn(`[i18n] preload init failed: ${e.message}`); }
+
     try {
       const couponService = require('./services/couponService');
       couponService.startDailyScheduler();

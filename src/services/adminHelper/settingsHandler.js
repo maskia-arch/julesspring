@@ -2,67 +2,37 @@ const supabase = require("../../config/supabase");
 const { tgAdminHelper } = require("./tgAdminHelper");
 const safelistService = require("./safelistService");
 const dailySummaryService = require("./dailySummaryService");
-const { SUPPORTED_LANGUAGES } = require("../i18n");
+const { SUPPORTED_LANGUAGES, t } = require("../i18n");
 
-const DICT = {
-  de: {
-    title: "⚙️ <b>{name}</b>\n\nKI: {ai} | Safelist: {sl} | Feedback: {fb}\n\nWähle eine Kategorie:",
-    ch_settings: "📋 Channel-Einstellungen", mod: "🔒 Moderation", ai_feat: "🤖 AI Features",
-    welcome: "👋 Willkommen", goodbye: "👋 Abschied", sched: "📅 Zeitplan", rep: "🔁 Wiederholungen",
-    lang: "🌐 Sprache", clean: "🧹 Bereinigen", stats: "📊 Statistik",
-    sl_btn: "🛡 Safelist {sl}", fb_btn: "💬 Feedback {fb}", bl: "🚫 Blacklist", ui: "🔍 UserInfo", fb_mgr: "👤 User-Feedbacks verwalten",
-    ai_locked: "🤖 <b>AI Features</b> — Gesperrt\n\nNutze <b>/buy</b> um ein Paket zu kaufen.",
-    mod_locked: "🔒 <b>Moderation</b> — Gesperrt\n\nDein Kanal ist noch nicht verifiziert.\nBitte melde dich bei @autoacts für die Freischaltung.",
-    daily: "📰 Tagesbericht", st: "💬 Smalltalk AI", kb: "📚 Wissensdatenbank", aw: "✍️ WerbeTexter", bl_ai: "🤖 Blacklist Enhancer 🔒",
-    group_games: "🎮 Gruppenspiele 🔜",
-    banned_users: "🚫 Gebannte User",
-    back: "◀️ Zurück", main: "◀️ Hauptmenü"
-  },
-  en: {
-    title: "⚙️ <b>{name}</b>\n\nAI: {ai} | Safelist: {sl} | Feedback: {fb}\n\nSelect a category:",
-    ch_settings: "📋 Channel Settings", mod: "🔒 Moderation", ai_feat: "🤖 AI Features",
-    welcome: "👋 Welcome", goodbye: "👋 Goodbye", sched: "📅 Schedule", rep: "🔁 Repeats",
-    lang: "🌐 Language", clean: "🧹 Cleanup", stats: "📊 Stats",
-    sl_btn: "🛡 Safelist {sl}", fb_btn: "💬 Feedback {fb}", bl: "🚫 Blacklist", ui: "🔍 UserInfo", fb_mgr: "👤 Manage User Feedbacks",
-    ai_locked: "🤖 <b>AI Features</b> — Locked\n\nUse <b>/buy</b> to get a package.",
-    mod_locked: "🔒 <b>Moderation</b> — Locked\n\nYour channel is not yet verified.\nPlease contact @autoacts for approval.",
-    daily: "📰 Daily Report", st: "💬 Smalltalk AI", kb: "📚 Knowledge Base", aw: "✍️ AdWriter", bl_ai: "🤖 Blacklist Enhancer 🔒",
-    group_games: "🎮 Group Games 🔜",
-    banned_users: "🚫 Banned Users",
-    back: "◀️ Back", main: "◀️ Main Menu"
-  },
-  ru: {
-    title: "⚙️ <b>{name}</b>\n\nИИ: {ai} | Сейфлист: {sl} | Отзывы: {fb}\n\nВыберите категорию:",
-    ch_settings: "📋 Настройки канала", mod: "🔒 Модерация", ai_feat: "🤖 Функции ИИ",
-    welcome: "👋 Приветствие", goodbye: "👋 Прощание", sched: "📅 Расписание", rep: "🔁 Повторы",
-    lang: "🌐 Язык", clean: "🧹 Очистка", stats: "📊 Статистика",
-    sl_btn: "🛡 Сейфлист {sl}", fb_btn: "💬 Отзывы {fb}", bl: "🚫 Черный список", ui: "🔍 Инфо", fb_mgr: "👤 Управление отзывами",
-    ai_locked: "🤖 <b>AI Features</b> — Заблокировано\n\nИспользуйте <b>/buy</b>.",
-    mod_locked: "🔒 <b>Moderation</b> — Заблокировано\n\nВаш канал еще не верифицирован.",
-    daily: "📰 Дневной отчет", st: "💬 Smalltalk ИИ", kb: "📚 База знаний", aw: "✍️ Копирайтер", bl_ai: "🤖 AI Blacklist 🔒",
-    group_games: "🎮 Групповые игры 🔜",
-    banned_users: "🚫 Забаненные",
-    back: "◀️ Назад", main: "◀️ Главное меню"
-  },
-  tr: {
-    title: "⚙️ <b>{name}</b>\n\nYZ: {ai} | Güvenli Liste: {sl} | Geri Bildirim: {fb}\n\nKategori seçin:",
-    ch_settings: "📋 Kanal Ayarları", mod: "🔒 Moderasyon", ai_feat: "🤖 YZ Özellikleri",
-    welcome: "👋 Karşılama", goodbye: "👋 Veda", sched: "📅 Takvim", rep: "🔁 Tekrarlar",
-    lang: "🌐 Dil", clean: "🧹 Temizlik", stats: "📊 İstatistik",
-    sl_btn: "🛡 Güvenli Liste {sl}", fb_btn: "💬 Geri Bildirim {fb}", bl: "🚫 Karaliste", ui: "🔍 Bilgi", fb_mgr: "👤 Geri Bildirimleri Yönet",
-    ai_locked: "🤖 <b>AI Features</b> — Kilitli\n\n<b>/buy</b> komutunu kullanın.",
-    mod_locked: "🔒 <b>Moderation</b> — Kilitli\n\nKanalınız henüz doğrulanmadı.",
-    daily: "📰 Günlük Rapor", st: "💬 Sohbet YZ", kb: "📚 Bilgi Bankası", aw: "✍️ ReklamYazarı", bl_ai: "🤖 AI Karaliste 🔒",
-    group_games: "🎮 Grup Oyunları 🔜",
-    banned_users: "🚫 Yasaklılar",
-    back: "◀️ Geri", main: "◀️ Ana Menü"
-  }
-};
-
-function t(key, lang) {
-  const l = DICT[lang] ? lang : (DICT["en"] ? "en" : "de");
-  return DICT[l]?.[key] || DICT["de"][key] || key;
-}
+// ─── Lokales DICT entfernt – nun zentrales Translation-Tool aus services/i18n.js
+// Schlüssel-Mapping (alt → neu):
+//   title         → settings_title
+//   ch_settings   → settings_ch
+//   mod           → settings_mod
+//   ai_feat       → settings_ai
+//   welcome       → ch_welcome
+//   goodbye       → ch_goodbye
+//   sched         → ch_schedule
+//   rep           → ch_repeat
+//   lang          → btn_language
+//   clean         → ch_clean
+//   stats         → ch_stats
+//   sl_btn        → mod_safelist
+//   fb_btn        → mod_feedback
+//   bl            → mod_blacklist
+//   ui            → mod_userinfo
+//   fb_mgr        → mod_fb_mgr
+//   ai_locked     → ai_locked
+//   mod_locked    → mod_locked
+//   daily         → ai_daily
+//   st            → ai_smalltalk
+//   kb            → ai_kb
+//   aw            → ai_adwriter
+//   bl_ai         → ai_blacklist
+//   group_games   → ai_groupgames
+//   banned_users  → mod_banned
+//   back          → back
+//   main          → main_menu
 
 async function getSettings() {
   try { const { data } = await supabase.from("settings").select("*").maybeSingle(); return data || null; } catch { return null; }
@@ -77,7 +47,7 @@ function backBtn(channelId, lang) {
 }
 
 function _menuBackBtn(channelId, lang) {
-  return { text: t("main", lang), callback_data: `cfg_mainmenu_${channelId}` };
+  return { text: t("main_menu", lang), callback_data: `cfg_mainmenu_${channelId}` };
 }
 
 async function editOrSend(tg, sendTo, msgId, text, kb) {
@@ -92,22 +62,27 @@ async function editOrSend(tg, sendTo, msgId, text, kb) {
 async function sendSettingsMenu(tg, sendTo, channelId, ch, msgId = null, userLang = "de") {
   const l = ch?.bot_language || userLang;
   const aiText = ch?.ai_enabled ? "✅" : "❌";
-  const text = t("title", l).replace("{name}", ch?.title || channelId).replace("{ai}", aiText).replace("{sl}", ch?.safelist_enabled ? "✅" : "❌").replace("{fb}", ch?.feedback_enabled ? "✅" : "❌");
+  const text = t("settings_title", l, {
+    name: ch?.title || channelId,
+    ai: aiText,
+    sl: ch?.safelist_enabled ? "✅" : "❌",
+    fb: ch?.feedback_enabled ? "✅" : "❌",
+  });
   const kb = [
-    [{ text: t("ch_settings", l), callback_data: `cfg_menu_channel_${channelId}` }],
-    [{ text: ch?.is_approved ? t("mod", l) : t("mod", l) + " 🔒", callback_data: `cfg_menu_mod_${channelId}` }],
-    [{ text: ch?.ai_enabled ? t("ai_feat", l) : t("ai_feat", l) + " 🔒", callback_data: `cfg_menu_ai_${channelId}` }]
+    [{ text: t("settings_ch", l), callback_data: `cfg_menu_channel_${channelId}` }],
+    [{ text: ch?.is_approved ? t("settings_mod", l) : t("settings_mod", l) + " 🔒", callback_data: `cfg_menu_mod_${channelId}` }],
+    [{ text: ch?.ai_enabled ? t("settings_ai", l) : t("settings_ai", l) + " 🔒", callback_data: `cfg_menu_ai_${channelId}` }]
   ];
   return editOrSend(tg, sendTo, msgId, text, kb);
 }
 
 async function sendChannelMenu(tg, sendTo, channelId, ch, msgId = null, userLang = "de") {
   const l = ch?.bot_language || userLang;
-  const text = `${t("ch_settings", l).split(" ")[0]} <b>${t("ch_settings", l).replace(/^[^\s]+\s/, "")}</b> — ${ch?.title || channelId}`;
+  const text = t("ch_title", l, { name: ch?.title || channelId });
   const kb = [
-    [{ text: t("welcome", l), callback_data: `cfg_welcome_${channelId}` }, { text: t("goodbye", l), callback_data: `cfg_goodbye_${channelId}` }],
-    [{ text: t("sched", l), callback_data: `cfg_schedule_${channelId}` }, { text: t("rep", l), callback_data: `cfg_repeat_${channelId}` }],
-    [{ text: t("lang", l), callback_data: `cfg_lang_${channelId}` }, { text: t("stats", l), callback_data: `cfg_stats_${channelId}` }],
+    [{ text: t("ch_welcome", l), callback_data: `cfg_welcome_${channelId}` }, { text: t("ch_goodbye", l), callback_data: `cfg_goodbye_${channelId}` }],
+    [{ text: t("ch_schedule", l), callback_data: `cfg_schedule_${channelId}` }, { text: t("ch_repeat", l), callback_data: `cfg_repeat_${channelId}` }],
+    [{ text: t("btn_language", l), callback_data: `cfg_lang_${channelId}` }, { text: t("ch_stats", l), callback_data: `cfg_stats_${channelId}` }],
     [_menuBackBtn(channelId, l)]
   ];
   return editOrSend(tg, sendTo, msgId, text, kb);
@@ -116,11 +91,14 @@ async function sendChannelMenu(tg, sendTo, channelId, ch, msgId = null, userLang
 async function sendModerationMenu(tg, sendTo, channelId, ch, msgId = null, userLang = "de") {
   const l = ch?.bot_language || userLang;
   if (!ch?.is_approved) return editOrSend(tg, sendTo, msgId, t("mod_locked", l), [[_menuBackBtn(channelId, l)]]);
-  const text = `${t("mod", l).split(" ")[0]} <b>${t("mod", l).replace(/^[^\s]+\s/, "")}</b> — ${ch?.title || channelId}`;
+  const text = t("mod_title", l, { name: ch?.title || channelId });
   const kb = [
-    [{ text: t("sl_btn", l).replace("{sl}", ch?.safelist_enabled ? "✅" : "❌"), callback_data: `cfg_safelist_${channelId}` }, { text: t("fb_btn", l).replace("{fb}", ch?.feedback_enabled ? "✅" : "❌"), callback_data: `cfg_feedback_${channelId}` }],
-    [{ text: t("bl", l), callback_data: `cfg_blacklist_${channelId}` }, { text: t("ui", l), callback_data: `cfg_userinfo_${channelId}` }],
-    [{ text: t("banned_users", l), callback_data: `cfg_banned_${channelId}` }, { text: t("clean", l), callback_data: `cfg_clean_${channelId}` }],
+    [
+      { text: t("mod_safelist", l, { sl: ch?.safelist_enabled ? "✅" : "❌" }), callback_data: `cfg_safelist_${channelId}` },
+      { text: t("mod_feedback", l, { fb: ch?.feedback_enabled ? "✅" : "❌" }), callback_data: `cfg_feedback_${channelId}` }
+    ],
+    [{ text: t("mod_blacklist", l), callback_data: `cfg_blacklist_${channelId}` }, { text: t("mod_userinfo", l), callback_data: `cfg_userinfo_${channelId}` }],
+    [{ text: t("mod_banned", l), callback_data: `cfg_banned_${channelId}` }, { text: t("ch_clean", l), callback_data: `cfg_clean_${channelId}` }],
     [_menuBackBtn(channelId, l)]
   ];
   return editOrSend(tg, sendTo, msgId, text, kb);
@@ -129,12 +107,12 @@ async function sendModerationMenu(tg, sendTo, channelId, ch, msgId = null, userL
 async function sendAiMenu(tg, sendTo, channelId, ch, msgId = null, userLang = "de") {
   const l = ch?.bot_language || userLang;
   if (!ch?.ai_enabled) return editOrSend(tg, sendTo, msgId, t("ai_locked", l), [[_menuBackBtn(channelId, l)]]);
-  const text = `${t("ai_feat", l).split(" ")[0]} <b>${t("ai_feat", l).replace(/^[^\s]+\s/, "")}</b> — ${ch?.title || channelId}`;
+  const text = t("ai_title", l, { name: ch?.title || channelId });
   const kb = [
-    [{ text: t("daily", l), callback_data: `cfg_daily_${channelId}` }, { text: t("st", l), callback_data: `cfg_smalltalk_${channelId}` }],
-    [{ text: t("kb", l), callback_data: `cfg_knowledge_${channelId}` }],
-    [{ text: t("aw", l), callback_data: `cfg_adwriter_${channelId}` }, { text: t("bl_ai", l), callback_data: `cfg_bl_ai_${channelId}` }],
-    [{ text: t("group_games", l), callback_data: `cfg_groupgames_${channelId}` }],
+    [{ text: t("ai_daily", l), callback_data: `cfg_daily_${channelId}` }, { text: t("ai_smalltalk", l), callback_data: `cfg_smalltalk_${channelId}` }],
+    [{ text: t("ai_kb", l), callback_data: `cfg_knowledge_${channelId}` }],
+    [{ text: t("ai_adwriter", l), callback_data: `cfg_adwriter_${channelId}` }, { text: t("ai_blacklist", l), callback_data: `cfg_bl_ai_${channelId}` }],
+    [{ text: t("ai_groupgames", l), callback_data: `cfg_groupgames_${channelId}` }],
     [_menuBackBtn(channelId, l)]
   ];
   return editOrSend(tg, sendTo, msgId, text, kb);
@@ -178,14 +156,14 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         kb.push(row);
       }
       kb.push([_menuBackBtn(channelId, lang)]);
-      await editOrSend(tg, String(userId), msgId, `🌐 <b>Sprache / Language</b>\n\nAktuell: ${SUPPORTED_LANGUAGES[lang] || lang}`, kb);
+      await editOrSend(tg, String(userId), msgId, `${t("language_menu", lang)}\n\nAktuell: ${SUPPORTED_LANGUAGES[lang] || lang}`, kb);
       break;
     }
     case "setlang": {
       const m = data.match(/^cfg_setlang_([a-z]{2,3})_(-?\d+)$/);
       if (m) {
         await supabase_db.from("bot_channels").update({ bot_language: m[1], updated_at: new Date() }).eq("id", m[2]);
-        await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: `✅ ${SUPPORTED_LANGUAGES[m[1]]}` }).catch(()=>{});
+        await tg.call("answerCallbackQuery", { callback_query_id: q.id, text: t("language_set", m[1], { lang: SUPPORTED_LANGUAGES[m[1]] }) }).catch(()=>{});
         const updated = await getChannel(m[2]);
         await sendChannelMenu(tg, String(userId), m[2], updated, msgId, userLang);
       }
@@ -315,7 +293,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     case "feedback": {
       await editOrSend(tg, String(userId), msgId, `💬 <b>Feedback-System</b>\n\nManuell: /safelist @user · /scamlist @user`, [
         [{ text: ch?.feedback_enabled ? "🔴 Deaktivieren" : "🟢 Aktivieren", callback_data: `cfg_fb_toggle_${channelId}` }],
-        [{ text: t("fb_mgr", lang), callback_data: `fb_mgr_user_${channelId}` }],
+        [{ text: t("mod_fb_mgr", lang), callback_data: `fb_mgr_user_${channelId}` }],
         [{ text: "📋 Offene Reviews", callback_data: `cfg_sl_reviews_${channelId}` }, { text: "🏆 Top 10", callback_data: `cfg_fb_ranking_${channelId}` }],
         [backBtn(channelId, lang)[0]]
       ]);
@@ -553,13 +531,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       break;
     }
     case "groupgames": {
-      const gamesText = {
-        de: "🎮 <b>Gruppenspiele</b>\n\n<i>Dieses Feature wird bald verfügbar!</i>\n\nGruppenspiele aktivieren deine Community:\n\n• 🎯 Quiz-Runden mit Auswertung\n• 🃏 Wortspiele & Rätsel\n• 🏆 Ranglisten & Punkte-System\n• 🎲 Mini-Games\n\nUpdates: @autoacts",
-        en: "🎮 <b>Group Games</b>\n\n<i>Coming soon!</i>\n\nEngage your community with:\n\n• 🎯 Quiz rounds with auto-scoring\n• 🃏 Word games & puzzles\n• 🏆 Leaderboards & points\n• 🎲 Mini games\n\nFollow @autoacts!",
-        ru: "🎮 <b>Групповые игры</b>\n\n<i>Скоро!</i>\n\n• 🎯 Викторины\n• 🏆 Таблицы лидеров\n• 🎲 Мини-игры\n\n@autoacts",
-        tr: "🎮 <b>Grup Oyunları</b>\n\n<i>Yakında!</i>\n\n• 🎯 Quiz\n• 🏆 Liderlik tablosu\n• 🎲 Mini oyunlar\n\n@autoacts"
-      };
-      await editOrSend(tg, String(userId), msgId, gamesText[lang] || gamesText["de"], [[_menuBackBtn(channelId, lang)]]);
+      await editOrSend(tg, String(userId), msgId, t("ai_groupgames_info", lang), [[_menuBackBtn(channelId, lang)]]);
       break;
     }
     case "adwriter": {
