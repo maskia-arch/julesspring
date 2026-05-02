@@ -129,6 +129,14 @@ const T_DE = {
   saved: "✅ Gespeichert",
   removed: "✅ Entfernt",
   updated: "✅ Aktualisiert",
+
+  // ── Blacklist-Durchsetzung ─────────────────────────────────────────────────
+  bl_warn_msg: "⚠️ <b>Blacklist Wort erkannt!</b>\nKonsequenzen werden durchgeführt…",
+  bl_action_deleted: "Nachricht gelöscht",
+  bl_action_muted: "Stummgeschaltet ({hours}h)",
+  bl_action_banned: "Gebannt",
+  bl_action_none: "Keine Aktion",
+  bl_admin_alert: "🛡 <b>Blacklist-Eingriff</b>\n\nGruppe/Kanal: {channel}\nUser: {user}\nWort: <code>{word}</code>\nAktionen: {actions}\n\nNachricht:\n<i>{text}</i>",
 };
 
 // ─── In-Memory-Cache: Map<lang, Map<key, value>> ────────────────────────────
