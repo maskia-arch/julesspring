@@ -341,7 +341,7 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
         kb_add: "📚 <b>Wissensdatenbank</b>\n\nSende FAQ, Preise, Regeln etc. (KI sortiert automatisch ein).",
         bl_add: "🚫 <b>Wort zur Harte Liste hinzufügen</b>\n\nSende das Wort (oder /cancel)",
         bl_addsoft: "🟡 <b>Wort zur Toleriert-Liste hinzufügen</b>\n\nSende das Wort (oder /cancel)",
-        schedule: "📅 <b>Sende Nachrichtentext:</b>\n\nOder /skip für nur Medien.",
+        schedule: "📅 <b>Schritt 1/6: Nachrichtentext</b>\n\nSende den Text der Nachricht.\n\n<i>✨ Tipp: Du kannst beliebige Formatierungen verwenden — fett, kursiv, Spoiler, Links und auch <b>animierte Premium-Emojis</b>. Alles, was du in der Nachricht sehen kannst, wird vom Bot 1:1 übernommen.</i>\n\nOder /skip für nur Medien.",
         aw_new: "✍️ <b>WerbeTexter</b>\n\nSende Originaltext (Kosten: 30 Credits).",
         st_prompt: "✏️ <b>System-Prompt</b>\n\nSende neuen Prompt."
       };

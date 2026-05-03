@@ -49,11 +49,21 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
   const { action, channelId, entryId, targetUsername } = pending;
 
   if (action === "sched_wizard_text") {
-    global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_file", msgText: text };
+    // Telegram liefert `entities` (oder bei Mediennachrichten `caption_entities`)
+    // mit allen Formatierungen — inkl. Premium-/Custom-Emojis. Wir nehmen das
+    // Array 1:1 mit; beim Senden geben wir es zurück und Telegram rendert
+    // alles wie ursprünglich vom Admin getippt.
+    const incomingEntities = msg?.entities || msg?.caption_entities || null;
+    global.pendingInputs[String(userId)] = {
+      ...pending,
+      action: "sched_wizard_file",
+      msgText: text,
+      msgEntities: incomingEntities && incomingEntities.length ? incomingEntities : null,
+    };
     if (pending.aiOn) {
-      await nextStep(tg, userId, pending, "📎 <b>Schritt 2/6: Mediendatei (optional)</b>\n\nSende ein Foto, GIF oder Video – oder schreibe /skip um ohne Medien fortzufahren.", [[{text:"⏭ Überspringen (/skip)", callback_data:`cfg_noop`}]]);
+      await nextStep(tg, userId, pending, "📎 <b>Schritt 2/6: Mediendatei (optional)</b>\n\nSende ein Foto, GIF oder Video – oder schreibe /skip um ohne Medien fortzufahren.\n\n<i>Tipp: Schicke das Medium <b>mit Caption</b>, dann übernehme ich die Caption-Formatierung (inkl. Premium-Emojis) automatisch.</i>", [[{text:"⏭ Überspringen (/skip)", callback_data:`cfg_noop`}]]);
     } else {
-      global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_time", msgText: text, fileId: null, fileType: null };
+      global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_time", msgText: text, msgEntities: incomingEntities && incomingEntities.length ? incomingEntities : null, fileId: null, fileType: null };
       await nextStep(tg, userId, pending, "📅 <b>Schritt 3/6: Start-Datum & Uhrzeit</b>\n\nWann soll die erste Nachricht gesendet werden?\nFormat: <code>DD.MM.YYYY HH:MM</code>\nBeispiel: <code>20.04.2026 09:00</code>\n\n/skip für sofort.", [[{text:"⚡ Sofort senden (/skip)", callback_data:`cfg_noop`}]]);
     }
     return true;
@@ -61,6 +71,8 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
 
   if (action === "sched_wizard_file") {
     let fileId = null, fileType = null;
+    let captionEntities = null;
+    let captionText = null;
     if (text !== "/skip") {
       if (msg?.photo) {
         fileId = msg.photo[msg.photo.length - 1]?.file_id; fileType = "photo";
@@ -72,8 +84,23 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
         await nextStep(tg, userId, pending, "❌ Bitte sende ein Foto, GIF oder Video – oder /skip.");
         return true;
       }
+      // Falls der Admin direkt mit dem Medium eine Caption mitgeschickt hat,
+      // die ist dann am Medium dran und ÜBERSCHREIBT den Text aus Schritt 1
+      // — denn die Caption gehört semantisch zum Medium und enthält die
+      // korrekten caption_entities-Offsets.
+      if (msg?.caption) {
+        captionText = msg.caption;
+        if (msg.caption_entities && msg.caption_entities.length) {
+          captionEntities = msg.caption_entities;
+        }
+      }
     }
-    global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_time", fileId, fileType };
+    const patch = { ...pending, action: "sched_wizard_time", fileId, fileType };
+    if (captionText !== null) {
+      patch.msgText = captionText;
+      patch.msgEntities = captionEntities;
+    }
+    global.pendingInputs[String(userId)] = patch;
     await nextStep(tg, userId, pending, "📅 <b>Schritt 3/6: Start-Datum & Uhrzeit</b>\n\nWann soll die erste Nachricht gesendet werden?\nFormat: <code>DD.MM.YYYY HH:MM</code>\nBeispiel: <code>20.04.2026 09:00</code>\n\n/skip für sofort.", [[{text:"⚡ Sofort senden (/skip)", callback_data:`cfg_noop`}]]);
     return true;
   }

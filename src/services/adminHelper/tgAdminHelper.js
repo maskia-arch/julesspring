@@ -22,12 +22,35 @@ const { t } = require("../i18n");
 
 function tgApi(token) {
   const base = `https://api.telegram.org/bot${token}`;
+
+  // Wenn der Aufrufer entities/caption_entities mitgibt, dürfen wir KEINEN
+  // parse_mode setzen — Telegram lehnt sonst die Nachricht mit
+  // "Bad Request: can't parse entities" ab. Diese Logik macht das
+  // transparent, sodass alle bestehenden send*-Aufrufe weiterhin den
+  // HTML-Parse-Mode bekommen, NUR wenn keine entities präsent sind.
+  function _withParseMode(extra, entityField) {
+    if (extra && (Array.isArray(extra.entities) || Array.isArray(extra.caption_entities))) {
+      const out = { ...extra };
+      delete out.parse_mode;
+      return out;
+    }
+    return { parse_mode: "HTML", ...(extra || {}) };
+  }
+
   return {
     async call(method, params = {}) { const r = await axios.post(`${base}/${method}`, params, { timeout: 10000 }); return r.data?.result; },
-    async send(chatId, text, extra = {}) { return this.call("sendMessage", { chat_id: chatId, text, parse_mode: "HTML", ...extra }); },
-    async sendPhoto(chatId, photo, caption, extra = {}) { return this.call("sendPhoto", { chat_id: chatId, photo, caption, parse_mode: "HTML", ...extra }); },
-    async sendVideo(chatId, video, caption, extra = {}) { return this.call("sendVideo", { chat_id: chatId, video, caption, parse_mode: "HTML", ...extra }); },
-    async sendAnimation(chatId, animation, caption, extra = {}) { return this.call("sendAnimation", { chat_id: chatId, animation, caption, parse_mode: "HTML", ...extra }); },
+    async send(chatId, text, extra = {}) {
+      return this.call("sendMessage", { chat_id: chatId, text, ..._withParseMode(extra, "entities") });
+    },
+    async sendPhoto(chatId, photo, caption, extra = {}) {
+      return this.call("sendPhoto", { chat_id: chatId, photo, caption, ..._withParseMode(extra, "caption_entities") });
+    },
+    async sendVideo(chatId, video, caption, extra = {}) {
+      return this.call("sendVideo", { chat_id: chatId, video, caption, ..._withParseMode(extra, "caption_entities") });
+    },
+    async sendAnimation(chatId, animation, caption, extra = {}) {
+      return this.call("sendAnimation", { chat_id: chatId, animation, caption, ..._withParseMode(extra, "caption_entities") });
+    },
     async kick(chatId, userId) { return this.call("banChatMember", { chat_id: chatId, user_id: userId, revoke_messages: false }); },
     async unban(chatId, userId) { return this.call("unbanChatMember", { chat_id: chatId, user_id: userId, only_if_banned: true }); },
     async getMember(chatId, userId) { return this.call("getChatMember", { chat_id: chatId, user_id: userId }); },
@@ -330,11 +353,32 @@ const tgAdminHelper = {
               if (Array.isArray(raw) && raw.length) inlineKb = raw;
             } catch (_) {}
           }
-          const extra = inlineKb ? { reply_markup: { inline_keyboard: inlineKb } } : {};
+
+          // Message-Entities (bold/italic/custom_emoji etc.) rekonstruieren.
+          // Diese wurden 1:1 aus der eingehenden Admin-Nachricht übernommen
+          // und werden hier als entities (sendMessage) bzw. caption_entities
+          // (sendPhoto/Video/Animation) wieder mitgegeben — dadurch werden
+          // Premium/Custom Emojis korrekt animiert dargestellt.
+          let entities = null;
+          if (msg.entities) {
+            try {
+              const raw = typeof msg.entities === "string"
+                ? JSON.parse(msg.entities)
+                : msg.entities;
+              if (Array.isArray(raw) && raw.length) entities = raw;
+            } catch (_) {}
+          }
+
+          const extra = {};
+          if (inlineKb) extra.reply_markup = { inline_keyboard: inlineKb };
 
           let sentMsg = null;
+          const hasMedia = !!(msg.photo_file_id || msg.photo_url);
 
-          if (msg.photo_file_id || msg.photo_url) {
+          if (hasMedia) {
+             // Bei Mediennachrichten wird der Text als caption mitgesendet,
+             // entities entsprechend als caption_entities.
+             if (entities) extra.caption_entities = entities;
              const mediaId = msg.photo_file_id || msg.photo_url;
              if (msg.file_type === "video") {
                 sentMsg = await tg.sendVideo(msg.channel_id, mediaId, msg.message, extra);
@@ -344,6 +388,7 @@ const tgAdminHelper = {
                 sentMsg = await tg.sendPhoto(msg.channel_id, mediaId, msg.message, extra);
              }
           } else {
+             if (entities) extra.entities = entities;
              sentMsg = await tg.send(msg.channel_id, msg.message, extra);
           }
           

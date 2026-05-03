@@ -332,7 +332,8 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
         cron_expr: null, interval_minutes: wizard.intervalMinutes || null, end_at: wizard.endAt || null, 
         next_run_at: wizard.nextRunAt || new Date().toISOString(), repeat: isRepeat,
         is_active: true, pin_after_send: wizard.pinAfterSend || false, delete_previous: wizard.deletePrevious || false,
-        inline_buttons: (Array.isArray(wizard.inlineButtons) && wizard.inlineButtons.length) ? wizard.inlineButtons : null
+        inline_buttons: (Array.isArray(wizard.inlineButtons) && wizard.inlineButtons.length) ? wizard.inlineButtons : null,
+        entities: (Array.isArray(wizard.msgEntities) && wizard.msgEntities.length) ? wizard.msgEntities : null
       }]);
       
       if (insertError) {
@@ -344,15 +345,33 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
       if (wizard.intervalMinutes) {
         repeatLabel = wizard.intervalMinutes >= 60 ? `alle ${wizard.intervalMinutes/60}h` : `alle ${wizard.intervalMinutes}m`;
       }
-      
+
+      // Hinweise zu erhaltenen Features
+      const featureBits = [];
+      if (Array.isArray(wizard.msgEntities) && wizard.msgEntities.length) {
+        const customEmojiCount = wizard.msgEntities.filter(e => e.type === "custom_emoji").length;
+        if (customEmojiCount > 0) {
+          featureBits.push(`✨ ${customEmojiCount} Premium-Emoji${customEmojiCount === 1 ? "" : "s"} erkannt`);
+        } else {
+          featureBits.push(`📐 Formatierung übernommen`);
+        }
+      }
+      if (Array.isArray(wizard.inlineButtons) && wizard.inlineButtons.length) {
+        featureBits.push(`🔘 ${wizard.inlineButtons.flat().length} Inline-Button${wizard.inlineButtons.flat().length === 1 ? "" : "s"}`);
+      }
+      const featureLine = featureBits.length ? `\n${featureBits.join(" · ")}` : "";
+
+      const _esc = (s) => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      const confirmText = `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${_esc((wizard.msgText||"").substring(0,80))}${wizard.fileId ? "\n📎 Medien: ✅" : ""}${featureLine}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`;
+
       await tg.call("editMessageText", {
         chat_id: String(qUserId),
         message_id: q.message?.message_id,
-        text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`,
+        text: confirmText,
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück zu Wiederholungen", callback_data: `cfg_repeat_${chanId2}` }]] }
       }).catch(async () => {
-        await tg.call("sendMessage", { chat_id: String(qUserId), text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück zu Wiederholungen", callback_data: `cfg_repeat_${chanId2}` }]] } });
+        await tg.call("sendMessage", { chat_id: String(qUserId), text: confirmText, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück zu Wiederholungen", callback_data: `cfg_repeat_${chanId2}` }]] } });
       });
     } catch (e2) {
       await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Fehler beim Speichern der geplanten Nachricht:\n" + e2.message });
