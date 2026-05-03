@@ -37,6 +37,114 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
     return answerCb();
   }
 
+  // ─── Blacklist Undo-Buttons (in Admin-DM nach Eingriff) ─────────────────
+  // Format: bl_unmute_<channelId>_<userId>
+  //         bl_unban_<channelId>_<userId>
+  //         bl_unbanmute_<channelId>_<userId>
+  if (data.startsWith("bl_unmute_") || data.startsWith("bl_unban_") || data.startsWith("bl_unbanmute_")) {
+    const blacklistService = require("./blacklistService");
+    const m = data.match(/^bl_(unmute|unban|unbanmute)_(-?\d+)_(\d+)$/);
+    if (!m) {
+      return answerCb({ text: "❌ Ungültige Aktion.", show_alert: true });
+    }
+    const action = m[1];
+    const blChannelId = m[2];
+    const blUserId = m[3];
+
+    // Berechtigungs-Check: nur der Channel-Owner darf die DM-Buttons nutzen
+    let blChannel = null;
+    try {
+      const { data: cd } = await supabase_db.from("bot_channels")
+        .select("added_by_user_id, bot_language, title")
+        .eq("id", String(blChannelId)).maybeSingle();
+      blChannel = cd;
+    } catch (_) {}
+
+    if (!blChannel || String(blChannel.added_by_user_id) !== String(qUserId)) {
+      return answerCb({ text: "❌ Keine Berechtigung.", show_alert: true });
+    }
+
+    const blLang = blChannel.bot_language || "de";
+    const { t } = require("../i18n");
+
+    // Username (für die Bestätigung im Dialog) aus der DB nachladen
+    let blUsername = null;
+    try {
+      const { data: m1 } = await supabase_db.from("channel_members")
+        .select("username").eq("channel_id", String(blChannelId)).eq("user_id", blUserId).maybeSingle();
+      blUsername = m1?.username || null;
+      if (!blUsername) {
+        const { data: m2 } = await supabase_db.from("channel_banned_users")
+          .select("username").eq("channel_id", String(blChannelId)).eq("user_id", String(blUserId)).maybeSingle();
+        blUsername = m2?.username || null;
+      }
+    } catch (_) {}
+    const userDisplay = blUsername ? "@" + blUsername : `<code>${blUserId}</code>`;
+
+    let actionLabel = "";
+    let success = true;
+    let errorMsg = "";
+
+    if (action === "unmute") {
+      const r = await blacklistService.unmuteUser(tg, blChannelId, blUserId);
+      success = r.ok; errorMsg = r.error || "";
+      actionLabel = t("bl_action_unmute_done", blLang);
+    } else if (action === "unban") {
+      const r = await blacklistService.unbanUser(supabase_db, tg, blChannelId, blUserId);
+      success = r.ok; errorMsg = r.error || "";
+      actionLabel = t("bl_action_unban_done", blLang);
+    } else if (action === "unbanmute") {
+      const r1 = await blacklistService.unbanUser(supabase_db, tg, blChannelId, blUserId);
+      // Nach unban darf der User der Gruppe wieder beitreten – Mute zurücksetzen
+      // greift nur, wenn er Mitglied ist. Wir versuchen es trotzdem; Fehler
+      // sind hier unkritisch.
+      const r2 = await blacklistService.unmuteUser(tg, blChannelId, blUserId);
+      success = r1.ok; // unban ist die kritische Aktion
+      errorMsg = r1.error || r2.error || "";
+      actionLabel = t("bl_action_unban_unmute_done", blLang);
+    }
+
+    if (!success) {
+      return answerCb({ text: `❌ ${errorMsg || "Aktion fehlgeschlagen"}`.substring(0, 200), show_alert: true });
+    }
+
+    await answerCb({ text: actionLabel });
+
+    // Original-DM mit Inline-Bestätigung markieren und Buttons entfernen.
+    const adminName = q.from?.username ? "@" + q.from.username : (q.from?.first_name || "Admin");
+    const origText = q.message?.text || "";
+    const newText = origText + t("cmd_undo_done_inline", blLang, { action: actionLabel, admin: adminName });
+    await tg.call("editMessageText", {
+      chat_id: qChatId,
+      message_id: q.message?.message_id,
+      text: newText,
+      parse_mode: "HTML"
+    }).catch(async () => {
+      // Fallback: Wenn editMessageText scheitert, einfach die Buttons entfernen
+      await tg.call("editMessageReplyMarkup", {
+        chat_id: qChatId,
+        message_id: q.message?.message_id,
+        reply_markup: { inline_keyboard: [] }
+      }).catch(() => {});
+    });
+
+    // Bestätigung in der Gruppe selbst (kurz sichtbar)
+    try {
+      const groupMsg = await tg.call("sendMessage", {
+        chat_id: blChannelId,
+        text: `${actionLabel}: ${userDisplay}`,
+        parse_mode: "HTML"
+      });
+      if (groupMsg?.message_id) {
+        setTimeout(() => {
+          tg.call("deleteMessage", { chat_id: blChannelId, message_id: groupMsg.message_id }).catch(() => {});
+        }, 15000);
+      }
+    } catch (_) {}
+
+    return;
+  }
+
   if (data.startsWith("uinfo_sangmata_")) {
     const targetId = data.split("_")[2];
     await answerCb();

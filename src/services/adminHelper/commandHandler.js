@@ -612,19 +612,67 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/unban(?:@\w+)?\s+(\S+)/i.test(text) && ch?.is_approved) {
+    if (/^\/unban(?:@\w+)?(?:\s+(\S+))?/i.test(text) && ch?.is_approved) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
-      const unbanId = text.match(/^\/unban(?:@\w+)?\s+(\S+)/i)?.[1];
-      if (!unbanId) return;
-      try {
-        await tg.call("unbanChatMember", { chat_id: chatId, user_id: unbanId, only_if_banned: false });
-        const unbanMsg = await tg.send(chatId, `✅ User <code>${unbanId}</code> wurde entbannt.`);
-        if (unbanMsg?.message_id) void safelistService.trackBotMessage(chatId, unbanMsg.message_id, "temp", 15000);
+      const lang = ch?.bot_language || "de";
+      const unbanRef = text.match(/^\/unban(?:@\w+)?\s+(\S+)/i)?.[1] || (msg.reply_to_message?.from ? String(msg.reply_to_message.from.id) : null);
+      if (!unbanRef) {
+        const usageMsg = await tg.send(chatId, t("cmd_unban_usage", lang));
+        if (usageMsg?.message_id) void safelistService.trackBotMessage(chatId, usageMsg.message_id, "temp", 15000);
+        return;
+      }
+      const resolved = await blacklistService.resolveUserRef(supabase_db, chatId, unbanRef);
+      const targetUserId = resolved?.userId || (/^\d+$/.test(unbanRef) ? unbanRef : null);
+      if (!targetUserId) {
+        const errMsg = await tg.send(chatId, t("cmd_user_not_found", lang, { ref: unbanRef }));
+        if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 15000);
         await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
-      } catch (e2) {
-        const errMsg = await tg.send(chatId, `❌ Entbannen fehlgeschlagen: ${e2.message}`);
+        return;
+      }
+      const result = await blacklistService.unbanUser(supabase_db, tg, chatId, targetUserId);
+      const display = resolved?.username ? "@" + resolved.username : `<code>${targetUserId}</code>`;
+      if (result.ok) {
+        const okMsg = await tg.send(chatId, t("cmd_unban_ok", lang, { user: display }));
+        if (okMsg?.message_id) void safelistService.trackBotMessage(chatId, okMsg.message_id, "temp", 15000);
+      } else {
+        const errMsg = await tg.send(chatId, t("cmd_unban_fail", lang, { error: result.error || "?" }));
         if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 10000);
       }
+      await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+      return;
+    }
+
+    // /unmute @username | USER_ID | (als Reply auf eine Nachricht)
+    if (/^\/unmute(?:@\w+)?(?:\s|$)/i.test(text) && ch?.is_approved) {
+      if (!await isGroupAdmin(tg, chatId, from.id)) return;
+      const lang = ch?.bot_language || "de";
+      const unmuteRef = text.match(/^\/unmute(?:@\w+)?\s+(\S+)/i)?.[1]
+                        || (msg.reply_to_message?.from ? String(msg.reply_to_message.from.id) : null);
+      if (!unmuteRef) {
+        const usageMsg = await tg.send(chatId, t("cmd_unmute_usage", lang));
+        if (usageMsg?.message_id) void safelistService.trackBotMessage(chatId, usageMsg.message_id, "temp", 15000);
+        return;
+      }
+      const resolved = await blacklistService.resolveUserRef(supabase_db, chatId, unmuteRef);
+      const targetUserId = resolved?.userId || (/^\d+$/.test(unmuteRef) ? unmuteRef : null);
+      if (!targetUserId) {
+        const errMsg = await tg.send(chatId, t("cmd_user_not_found", lang, { ref: unmuteRef }));
+        if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 15000);
+        await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+        return;
+      }
+      const result = await blacklistService.unmuteUser(tg, chatId, targetUserId);
+      const display = resolved?.username
+        ? "@" + resolved.username
+        : (msg.reply_to_message?.from?.first_name || `<code>${targetUserId}</code>`);
+      if (result.ok) {
+        const okMsg = await tg.send(chatId, t("cmd_unmute_ok", lang, { user: display }));
+        if (okMsg?.message_id) void safelistService.trackBotMessage(chatId, okMsg.message_id, "temp", 15000);
+      } else {
+        const errMsg = await tg.send(chatId, t("cmd_unmute_fail", lang, { error: result.error || "?" }));
+        if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 10000);
+      }
+      await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
       return;
     }
 

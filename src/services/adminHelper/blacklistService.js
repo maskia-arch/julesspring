@@ -166,6 +166,8 @@ async function checkBlacklist(supabase_db, channelId, messageText, from, chatId,
 
   const actionsTaken = [];
   let deleted = false;
+  let didMute = false;
+  let didBan = false;
 
   // Dem Channel signalisieren, dass ein Eingriff folgt.
   let warnMsg = null;
@@ -211,6 +213,7 @@ async function checkBlacklist(supabase_db, channelId, messageText, from, chatId,
         until_date: Math.floor(Date.now() / 1000) + (muteHours * 3600)
       });
       actionsTaken.push(t("bl_action_muted", lang, { hours: muteHours }));
+      didMute = true;
     } catch (e) {
       logger.warn(`[Blacklist] mute failed for ${from.id} in ${chatId}: ${e.message}`);
     }
@@ -230,6 +233,7 @@ async function checkBlacklist(supabase_db, channelId, messageText, from, chatId,
         }], { onConflict: "channel_id,user_id" });
       } catch (_) {}
       actionsTaken.push(t("bl_action_banned", lang));
+      didBan = true;
     } catch (e) {
       logger.warn(`[Blacklist] ban failed for ${from.id} in ${chatId}: ${e.message}`);
     }
@@ -252,7 +256,7 @@ async function checkBlacklist(supabase_db, channelId, messageText, from, chatId,
     }, WARN_AUTODELETE_MS);
   }
 
-  // Admin per DM informieren
+  // Admin per DM informieren — mit Undo-Buttons für die durchgeführten Aktionen
   if (ADMIN_NOTIFY && ch?.added_by_user_id) {
     try {
       const adminText = t("bl_admin_alert", lang, {
@@ -262,10 +266,36 @@ async function checkBlacklist(supabase_db, channelId, messageText, from, chatId,
         actions: actionsTaken.length ? actionsTaken.join(", ") : t("bl_action_none", lang),
         text: messageText.substring(0, 150)
       });
+
+      // Undo-Buttons nur anzeigen wenn etwas zu rückgängig machen ist.
+      // callback_data Format:
+      //   bl_unmute_<channelId>_<userId>
+      //   bl_unban_<channelId>_<userId>
+      //   bl_unban_unmute_<channelId>_<userId>
+      const undoRow = [];
+      if (didMute && !didBan) {
+        undoRow.push({
+          text: t("bl_btn_unmute", lang),
+          callback_data: `bl_unmute_${channelId}_${from.id}`
+        });
+      }
+      if (didBan) {
+        // Wenn gebannt, ist der User automatisch auch "stumm" (weil weg) –
+        // der Unban-Button reicht. Falls zusätzlich gemutet wurde, umfasst
+        // unban_unmute beides in einem Schritt.
+        undoRow.push({
+          text: didMute ? t("bl_btn_unban_unmute", lang) : t("bl_btn_unban", lang),
+          callback_data: `bl_${didMute ? "unbanmute" : "unban"}_${channelId}_${from.id}`
+        });
+      }
+
+      const replyMarkup = undoRow.length ? { inline_keyboard: [undoRow] } : undefined;
+
       await tg.call("sendMessage", {
         chat_id: String(ch.added_by_user_id),
         text: adminText,
-        parse_mode: "HTML"
+        parse_mode: "HTML",
+        ...(replyMarkup ? { reply_markup: replyMarkup } : {})
       });
     } catch (e) {
       logger.warn(`[Blacklist] admin DM failed: ${e.message}`);
@@ -282,8 +312,119 @@ async function checkBlacklist(supabase_db, channelId, messageText, from, chatId,
   };
 }
 
+// ─── Resolver: Username (@user) oder ID → numerische Telegram-ID ────────────
+/**
+ * Versucht, die numerische User-ID zu ermitteln. Quellen:
+ *   1) Direkter Zahleneingabe → diese.
+ *   2) "@username" → channel_members Tabelle, dann user_name_history.
+ *   3) "username" (ohne @) → genauso.
+ * Liefert { userId, username } oder null wenn nicht auflösbar.
+ */
+async function resolveUserRef(supabase_db, channelId, ref) {
+  if (!ref) return null;
+  const cleaned = String(ref).trim().replace(/^@/, "");
+  if (!cleaned) return null;
+
+  // Numerische ID?
+  if (/^\d+$/.test(cleaned)) {
+    let username = null;
+    try {
+      const { data } = await supabase_db.from("channel_members")
+        .select("username").eq("channel_id", String(channelId)).eq("user_id", cleaned).maybeSingle();
+      username = data?.username || null;
+    } catch (_) {}
+    return { userId: cleaned, username };
+  }
+
+  // Username → erst channel_members (Mitglieder), dann channel_banned_users
+  try {
+    const { data } = await supabase_db.from("channel_members")
+      .select("user_id, username").eq("channel_id", String(channelId)).ilike("username", cleaned).maybeSingle();
+    if (data?.user_id) return { userId: String(data.user_id), username: data.username };
+  } catch (_) {}
+
+  try {
+    const { data } = await supabase_db.from("channel_banned_users")
+      .select("user_id, username").eq("channel_id", String(channelId)).ilike("username", cleaned).maybeSingle();
+    if (data?.user_id) return { userId: String(data.user_id), username: data.username };
+  } catch (_) {}
+
+  // Letzter Versuch: globale Namens-Historie
+  try {
+    const { data } = await supabase_db.from("user_name_history")
+      .select("user_id, username").ilike("username", cleaned).order("detected_at", { ascending: false }).limit(1);
+    if (data?.[0]?.user_id) return { userId: String(data[0].user_id), username: data[0].username };
+  } catch (_) {}
+
+  return null;
+}
+
+// ─── Aktionen: Unmute / Unban ───────────────────────────────────────────────
+/**
+ * Hebt die Stummschaltung auf. Setzt die Default-Permissions zurück.
+ *
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+async function unmuteUser(tg, chatId, userId) {
+  try {
+    await tg.call("restrictChatMember", {
+      chat_id: chatId,
+      user_id: parseInt(userId),
+      permissions: {
+        can_send_messages: true,
+        can_send_audios: true,
+        can_send_documents: true,
+        can_send_photos: true,
+        can_send_videos: true,
+        can_send_video_notes: true,
+        can_send_voice_notes: true,
+        can_send_polls: true,
+        can_send_other_messages: true,
+        can_add_web_page_previews: true,
+        can_change_info: false,
+        can_invite_users: true,
+        can_pin_messages: false
+      },
+      until_date: 0
+    });
+    return { ok: true };
+  } catch (e) {
+    logger.warn(`[Blacklist] unmute failed for ${userId} in ${chatId}: ${e.message}`);
+    return { ok: false, error: e.message };
+  }
+}
+
+/**
+ * Hebt einen Bann auf. Entfernt zusätzlich den Eintrag aus channel_banned_users.
+ *
+ * @returns {Promise<{ ok: boolean, error?: string }>}
+ */
+async function unbanUser(supabase_db, tg, chatId, userId) {
+  try {
+    await tg.call("unbanChatMember", {
+      chat_id: chatId,
+      user_id: parseInt(userId),
+      only_if_banned: false
+    });
+  } catch (e) {
+    logger.warn(`[Blacklist] unban failed for ${userId} in ${chatId}: ${e.message}`);
+    return { ok: false, error: e.message };
+  }
+  try {
+    await supabase_db.from("channel_banned_users")
+      .delete()
+      .eq("channel_id", String(chatId))
+      .eq("user_id", String(userId));
+  } catch (_) {}
+  return { ok: true };
+}
+
+
 module.exports = {
   normalizeForBlacklist,
   parseDuration,
   checkBlacklist,
+  resolveUserRef,
+  unmuteUser,
+  unbanUser,
 };

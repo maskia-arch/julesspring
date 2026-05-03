@@ -194,7 +194,9 @@ async function setAutoCommands() {
       { command: 'safeliste', description: 'Verifizierte Mitglieder' },
       { command: 'scamliste', description: 'Scamliste ansehen' },
       { command: 'userinfo',  description: 'User analysieren (5x/Tag kostenlos)' },
-      { command: 'ai',        description: 'KI-Assistent befragen (/ai Frage)' }
+      { command: 'ai',        description: 'KI-Assistent befragen (/ai Frage)' },
+      { command: 'unmute',    description: '🔊 Admin: User entstummen (/unmute @user oder als Reply)' },
+      { command: 'unban',     description: '🔓 Admin: User entbannen (/unban @user)' }
     ];
     try {
       await axios.post(`https://api.telegram.org/bot${adminToken}/setMyCommands`, { commands: privateCommands, scope: { type: 'all_private_chats' } }, { timeout: 8000 });

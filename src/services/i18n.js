@@ -137,6 +137,26 @@ const T_DE = {
   bl_action_banned: "Gebannt",
   bl_action_none: "Keine Aktion",
   bl_admin_alert: "🛡 <b>Blacklist-Eingriff</b>\n\nGruppe/Kanal: {channel}\nUser: {user}\nWort: <code>{word}</code>\nAktionen: {actions}\n\nNachricht:\n<i>{text}</i>",
+
+  // ── Undo-Buttons im Admin-DM ───────────────────────────────────────────────
+  bl_btn_unmute: "🔊 Stummschalten aufheben",
+  bl_btn_unban: "🔓 Entbannen",
+  bl_btn_unban_unmute: "🔓 Entbannen & Stumm aufheben",
+  bl_action_unmute_done: "🔊 Stummschalten aufgehoben",
+  bl_action_unban_done: "🔓 Entbannt",
+  bl_action_unban_unmute_done: "🔓 Entbannt & Stumm aufgehoben",
+
+  // ── Befehle: /unmute, /unban ───────────────────────────────────────────────
+  cmd_only_groups: "ℹ️ Dieser Befehl funktioniert nur in Gruppen.",
+  cmd_only_admins: "❌ Nur für Admins.",
+  cmd_unmute_usage: "ℹ️ Verwendung: <code>/unmute @username</code> oder <code>/unmute USER_ID</code>\nAlternativ: Antworte auf eine Nachricht des Users mit <code>/unmute</code>.",
+  cmd_unban_usage: "ℹ️ Verwendung: <code>/unban @username</code> oder <code>/unban USER_ID</code>",
+  cmd_user_not_found: "❌ User <b>{ref}</b> konnte nicht gefunden werden.",
+  cmd_unmute_ok: "🔊 <b>{user}</b> kann wieder schreiben.",
+  cmd_unmute_fail: "❌ Stummschaltung aufheben fehlgeschlagen: {error}",
+  cmd_unban_ok: "🔓 <b>{user}</b> wurde entbannt.",
+  cmd_unban_fail: "❌ Entbannen fehlgeschlagen: {error}",
+  cmd_undo_done_inline: "\n\n✅ <i>{action} erledigt von {admin}.</i>",
 };
 
 // ─── In-Memory-Cache: Map<lang, Map<key, value>> ────────────────────────────
