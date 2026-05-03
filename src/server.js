@@ -178,6 +178,7 @@ async function setAutoCommands() {
       { command: 'menu',      description: 'Hauptmenü öffnen' },
       { command: 'settings',  description: 'Channel-Einstellungen' },
       { command: 'dashboard', description: 'Channel-Übersicht' },
+      { command: 'help',      description: 'Alle Admin-Befehle anzeigen' },
       { command: 'check',     description: 'Feedback eines Users prüfen (/check @user)' },
       { command: 'scamliste', description: 'Scamliste anzeigen oder Scammer melden' },
       { command: 'feedbacks', description: 'Ranking der Top-Verkäufer' },
@@ -187,16 +188,20 @@ async function setAutoCommands() {
       { command: 'buy',       description: 'Credit-Paket für eigenen Channel kaufen' },
       { command: 'refill',    description: 'Credits nachladen' }
     ];
+    // Group-Commands: nur was jeder User in der Gruppe sehen darf.
+    // Admin-Tools (/ban, /unban, /mute, /unmute) sind absichtlich NICHT
+    // in der Slashcommand-Liste — sie funktionieren weiterhin per Tippen,
+    // tauchen aber nicht als Vorschlag auf, damit normale User sie nicht
+    // verwirrt anwählen.
     const groupCommands = [
       { command: 'donate',    description: '❤️ Credit-Paket für diese Gruppe spendieren' },
+      { command: 'help',      description: 'Übersicht der Befehle' },
       { command: 'check',     description: 'Feedback eines Users prüfen (/check @user)' },
       { command: 'feedbacks', description: 'Top-Verkäufer ansehen' },
       { command: 'safeliste', description: 'Verifizierte Mitglieder' },
       { command: 'scamliste', description: 'Scamliste ansehen' },
       { command: 'userinfo',  description: 'User analysieren (5x/Tag kostenlos)' },
-      { command: 'ai',        description: 'KI-Assistent befragen (/ai Frage)' },
-      { command: 'unmute',    description: '🔊 Admin: User entstummen (/unmute @user oder als Reply)' },
-      { command: 'unban',     description: '🔓 Admin: User entbannen (/unban @user)' }
+      { command: 'ai',        description: 'KI-Assistent befragen (/ai Frage)' }
     ];
     try {
       await axios.post(`https://api.telegram.org/bot${adminToken}/setMyCommands`, { commands: privateCommands, scope: { type: 'all_private_chats' } }, { timeout: 8000 });

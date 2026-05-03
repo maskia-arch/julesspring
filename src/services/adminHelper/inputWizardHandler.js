@@ -51,10 +51,10 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
   if (action === "sched_wizard_text") {
     global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_file", msgText: text };
     if (pending.aiOn) {
-      await nextStep(tg, userId, pending, "📎 <b>Schritt 2/5: Mediendatei (optional)</b>\n\nSende ein Foto, GIF oder Video – oder schreibe /skip um ohne Medien fortzufahren.", [[{text:"⏭ Überspringen (/skip)", callback_data:`cfg_noop`}]]);
+      await nextStep(tg, userId, pending, "📎 <b>Schritt 2/6: Mediendatei (optional)</b>\n\nSende ein Foto, GIF oder Video – oder schreibe /skip um ohne Medien fortzufahren.", [[{text:"⏭ Überspringen (/skip)", callback_data:`cfg_noop`}]]);
     } else {
       global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_time", msgText: text, fileId: null, fileType: null };
-      await nextStep(tg, userId, pending, "📅 <b>Schritt 3/5: Start-Datum & Uhrzeit</b>\n\nWann soll die erste Nachricht gesendet werden?\nFormat: <code>DD.MM.YYYY HH:MM</code>\nBeispiel: <code>20.04.2026 09:00</code>\n\n/skip für sofort.", [[{text:"⚡ Sofort senden (/skip)", callback_data:`cfg_noop`}]]);
+      await nextStep(tg, userId, pending, "📅 <b>Schritt 3/6: Start-Datum & Uhrzeit</b>\n\nWann soll die erste Nachricht gesendet werden?\nFormat: <code>DD.MM.YYYY HH:MM</code>\nBeispiel: <code>20.04.2026 09:00</code>\n\n/skip für sofort.", [[{text:"⚡ Sofort senden (/skip)", callback_data:`cfg_noop`}]]);
     }
     return true;
   }
@@ -74,7 +74,7 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
       }
     }
     global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_time", fileId, fileType };
-    await nextStep(tg, userId, pending, "📅 <b>Schritt 3/5: Start-Datum & Uhrzeit</b>\n\nWann soll die erste Nachricht gesendet werden?\nFormat: <code>DD.MM.YYYY HH:MM</code>\nBeispiel: <code>20.04.2026 09:00</code>\n\n/skip für sofort.", [[{text:"⚡ Sofort senden (/skip)", callback_data:`cfg_noop`}]]);
+    await nextStep(tg, userId, pending, "📅 <b>Schritt 3/6: Start-Datum & Uhrzeit</b>\n\nWann soll die erste Nachricht gesendet werden?\nFormat: <code>DD.MM.YYYY HH:MM</code>\nBeispiel: <code>20.04.2026 09:00</code>\n\n/skip für sofort.", [[{text:"⚡ Sofort senden (/skip)", callback_data:`cfg_noop`}]]);
     return true;
   }
 
@@ -90,7 +90,7 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
       }
     }
     global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_interval", nextRunAt };
-    await nextStep(tg, userId, pending, "🔁 <b>Schritt 4/5: Intervall (Minuten/Stunden)</b>\n\nSende das Wiederholungs-Intervall:\n\nBeispiele:\n<code>30m</code> (alle 30 Minuten)\n<code>2h</code> (alle 2 Stunden)\n<code>24h</code> (Täglich)\n\n/skip für einmalige Nachricht.", [[{text:"🚫 Einmalig (/skip)", callback_data:`cfg_noop`}]]);
+    await nextStep(tg, userId, pending, "🔁 <b>Schritt 4/6: Intervall (Minuten/Stunden)</b>\n\nSende das Wiederholungs-Intervall:\n\nBeispiele:\n<code>30m</code> (alle 30 Minuten)\n<code>2h</code> (alle 2 Stunden)\n<code>24h</code> (Täglich)\n\n/skip für einmalige Nachricht.", [[{text:"🚫 Einmalig (/skip)", callback_data:`cfg_noop`}]]);
     return true;
   }
 
@@ -110,15 +110,16 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
         return true;
       }
     }
-    
+
     if (!intervalMinutes) {
-      global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_options", intervalMinutes: null, endAt: null };
-      await _sendSchedOptions(tg, userId, global.pendingInputs[String(userId)]);
+      // Einmalige Nachricht → trotzdem in Buttons-Step (kein Enddatum nötig)
+      global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_buttons", intervalMinutes: null, endAt: null };
+      await _sendButtonsPrompt(tg, userId, global.pendingInputs[String(userId)]);
       return true;
     }
-    
+
     global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_end", intervalMinutes };
-    await nextStep(tg, userId, pending, "🛑 <b>Schritt 5/5: Enddatum</b>\n\nBis wann soll wiederholt werden?\nBeispiele:\n<code>14d</code> (In 14 Tagen)\n<code>48h</code> (In 48 Stunden)\n<code>20.05.2026 12:00</code> (Exaktes Datum)\n\n/skip für nie (Endlos).", [[{text:"♾ Endlos (/skip)", callback_data:`cfg_noop`}]]);
+    await nextStep(tg, userId, pending, "🛑 <b>Schritt 5/6: Enddatum</b>\n\nBis wann soll wiederholt werden?\nBeispiele:\n<code>14d</code> (In 14 Tagen)\n<code>48h</code> (In 48 Stunden)\n<code>20.05.2026 12:00</code> (Exaktes Datum)\n\n/skip für nie (Endlos).", [[{text:"♾ Endlos (/skip)", callback_data:`cfg_noop`}]]);
     return true;
   }
 
@@ -127,7 +128,7 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
     if (text !== "/skip") {
       const mDate = text.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})/);
       const mRel = text.trim().toLowerCase().match(/^(\d+)(d|h)$/);
-      
+
       if (mDate) {
         endAt = new Date(parseInt(mDate[3]), parseInt(mDate[2])-1, parseInt(mDate[1]), parseInt(mDate[4]), parseInt(mDate[5])).toISOString();
       } else if (mRel) {
@@ -139,7 +140,25 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
         return true;
       }
     }
-    global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_options", endAt };
+    global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_buttons", endAt };
+    await _sendButtonsPrompt(tg, userId, global.pendingInputs[String(userId)]);
+    return true;
+  }
+
+  if (action === "sched_wizard_buttons") {
+    let inlineButtons = null;
+    if (text !== "/skip") {
+      const parsed = _parseInlineButtonsSpec(text);
+      if (!parsed.ok) {
+        await nextStep(tg, userId, pending,
+          `❌ ${parsed.error}\n\nFormat pro Zeile: <code>Button-Name, https://example.com</code>\nMaximal 8 Buttons. Oder /skip für keine Buttons.`,
+          [[{ text: "⏭ Keine Buttons (/skip)", callback_data: `cfg_noop` }]]
+        );
+        return true;
+      }
+      inlineButtons = parsed.buttons;
+    }
+    global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_options", inlineButtons };
     await _sendSchedOptions(tg, userId, global.pendingInputs[String(userId)]);
     return true;
   }
@@ -422,12 +441,99 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
 async function _sendSchedOptions(tg, userId, p) {
   const pinOpt = "📌 Anpinnen: " + (p.pinAfterSend ? "✅" : "❌");
   const delPrevOpt = "🔄 Vorherige löschen: " + (p.deletePrevious ? "✅" : "❌");
-  
-  await nextStep(tg, userId, p, "⚙️ <b>Letzter Schritt: Optionen prüfen</b>\n\nPasst alles?", [
+
+  const btnSummary = Array.isArray(p.inlineButtons) && p.inlineButtons.length
+    ? `\n🔘 Inline-Buttons: ${p.inlineButtons.flat().length} konfiguriert`
+    : "";
+
+  await nextStep(tg, userId, p, `⚙️ <b>Letzter Schritt: Optionen prüfen</b>\n\nPasst alles?${btnSummary}`, [
     [{ text: pinOpt, callback_data: "sched_opt_pin_" + p.channelId }, { text: delPrevOpt, callback_data: "sched_opt_delprev_" + p.channelId }],
     [{ text: "✅ Nachricht jetzt einplanen", callback_data: "sched_save_final_" + p.channelId }],
     [{ text: "❌ Abbrechen", callback_data: `cfg_back_${p.channelId}` }]
   ]);
+}
+
+/**
+ * Schritt 6/6: Buttons-Spezifikation entgegennehmen.
+ *
+ * Erwartetes Format (eine Zeile pro Button):
+ *   Button-Name, https://example.com
+ *   [Andere Zeile], [https://example.org]
+ *
+ * Eckige Klammern werden vor dem Parsing entfernt — das ermöglicht beide
+ * Schreibweisen.
+ */
+async function _sendButtonsPrompt(tg, userId, p) {
+  const promptText =
+    "🔘 <b>Schritt 6/6: Inline-Buttons (optional)</b>\n\n" +
+    "Möchtest du unter der Nachricht klickbare Buttons mit Links anzeigen?\n\n" +
+    "Sende eine Zeile pro Button im Format:\n" +
+    "<code>Button-Name, https://example.com</code>\n\n" +
+    "Beispiel für mehrere Buttons (eine Zeile = ein Button):\n" +
+    "<code>📢 Channel beitreten, https://t.me/example</code>\n" +
+    "<code>🌐 Webseite, https://example.com</code>\n\n" +
+    "Maximal 8 Buttons. Reine Telegram-Links (<code>https://t.me/…</code>) und HTTPS-URLs werden akzeptiert.\n\n" +
+    "Oder /skip für keine Buttons.";
+  await nextStep(tg, userId, p, promptText, [[{ text: "⏭ Keine Buttons (/skip)", callback_data: `cfg_noop` }]]);
+}
+
+/**
+ * Parst die User-Eingabe in eine Telegram-kompatible inline_keyboard
+ * Struktur: Array<Array<{text, url}>>.
+ *
+ * Jede nicht-leere Zeile = ein Button = eine eigene Tastatur-Zeile.
+ * (Spätere Versionen könnten "|" als Trenner für mehrere Buttons in einer
+ * Reihe einführen — für jetzt halten wir es einfach.)
+ *
+ * @returns {{ ok: boolean, buttons?: Array, error?: string }}
+ */
+function _parseInlineButtonsSpec(input) {
+  if (!input || typeof input !== "string") return { ok: false, error: "Leere Eingabe." };
+
+  const lines = input.split(/\r?\n/).map(l => l.trim()).filter(l => l.length > 0);
+  if (!lines.length) return { ok: false, error: "Keine Zeilen erkannt." };
+  if (lines.length > 8) return { ok: false, error: "Maximal 8 Buttons erlaubt." };
+
+  const buttons = [];
+  for (let i = 0; i < lines.length; i++) {
+    let line = lines[i];
+
+    // Eckige Klammern um die einzelnen Felder entfernen, falls der User
+    // sie aus der Vorlage übernommen hat: "[Name], [Link]" → "Name, Link"
+    line = line.replace(/^\s*\[\s*/, "").replace(/\s*\]\s*$/, "");
+    line = line.replace(/\]\s*,\s*\[/g, ", ");
+    line = line.replace(/\[/g, "").replace(/\]/g, "");
+
+    // Letztes Komma als Trenner — der Button-Name darf selbst Kommas haben.
+    const lastComma = line.lastIndexOf(",");
+    if (lastComma === -1) {
+      return { ok: false, error: `Zeile ${i + 1}: Kein Komma gefunden. Erwartetes Format: <code>Name, https://...</code>` };
+    }
+
+    const name = line.slice(0, lastComma).trim();
+    const url  = line.slice(lastComma + 1).trim();
+
+    if (!name) return { ok: false, error: `Zeile ${i + 1}: Button-Name fehlt.` };
+    if (name.length > 64) return { ok: false, error: `Zeile ${i + 1}: Button-Name ist zu lang (max. 64 Zeichen).` };
+    if (!url) return { ok: false, error: `Zeile ${i + 1}: URL fehlt.` };
+
+    // URL-Validierung: muss https:// oder tg:// (für Telegram-Aktionen) sein.
+    // http:// erlauben wir nicht, da Telegram das von Bots kommend oft blockt.
+    let validUrl;
+    try {
+      const u = new URL(url);
+      if (u.protocol !== "https:" && u.protocol !== "tg:") {
+        return { ok: false, error: `Zeile ${i + 1}: URL muss mit <code>https://</code> beginnen.` };
+      }
+      validUrl = u.toString();
+    } catch (_) {
+      return { ok: false, error: `Zeile ${i + 1}: <code>${url.substring(0, 60)}</code> ist keine gültige URL.` };
+    }
+
+    buttons.push([{ text: name, url: validUrl }]);
+  }
+
+  return { ok: true, buttons };
 }
 
 module.exports = { handle };

@@ -178,13 +178,28 @@ const packageService = {
 
     return result;
   },
-  async generateRefillUrl(refill, channelId) {
+  /**
+   * Standard-Refill (oder Refill-Spende durch einen Dritten).
+   *
+   * @param {object} refill   - Zeile aus channel_refills
+   * @param {string} channelId
+   * @param {object} [extra]  - { donorUserId?: string|number }
+   *                            Wenn gesetzt, wird der Refill als Spende
+   *                            markiert und der Channel-Owner kann später
+   *                            informiert werden.
+   */
+  async generateRefillUrl(refill, channelId, extra = {}) {
     if (!refill.sellauth_variant_id) throw new Error(`Refill "${refill.name}": Variant-ID fehlt.`);
     if (!refill.sellauth_product_id) throw new Error(`Refill "${refill.name}": Product-ID fehlt.`);
     const creds = await _loadCreds();
     const result = await _createCheckoutSession(
       refill.sellauth_product_id, refill.sellauth_variant_id, channelId, creds
     );
+    const meta = { type: "refill", refill_name: refill.name, price_eur: refill.price_eur };
+    if (extra.donorUserId) {
+      meta.source = "donation";
+      meta.donor_user_id = String(extra.donorUserId);
+    }
     try {
       await supabase.from("channel_purchases").insert([{
         channel_id:          String(channelId),
@@ -195,7 +210,7 @@ const packageService = {
         expires_at:          new Date(Date.now() + 365 * 86400000).toISOString(),
         status:              "pending",
         kind:                "refill",
-        meta:                { type: "refill", refill_name: refill.name, price_eur: refill.price_eur }
+        meta
       }]);
     } catch (e) { logger.warn("[Packages] refill log:", e.message); }
     return result;

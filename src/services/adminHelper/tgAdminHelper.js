@@ -198,19 +198,76 @@ const tgAdminHelper = {
     }
   },
 
+  /**
+   * Substituiert die unterstützten Platzhalter in einem Welcome/Goodbye-Text.
+   *
+   * Unterstützte Platzhalter:
+   *   {name}        → erste-name (HTML-bold) — "fallback chain"
+   *   {first_name}  → user.first_name (escaped)
+   *   {last_name}   → user.last_name (escaped, leer wenn nicht gesetzt)
+   *   {username}    → "@user" wenn vorhanden, sonst leer
+   *   {user_id}     → numerische Telegram-ID
+   *   {chat_title}  → Channel/Gruppen-Titel
+   *   {chat}        → Chat-ID (numerisch, behavior wie bisher)
+   *   {time}        → aktuelle Uhrzeit HH:MM (Server-Zeit)
+   *   {date}        → aktuelles Datum DD.MM.YYYY
+   *   {member_count}→ aktuelle Mitgliederzahl (best effort, leer bei Fehler)
+   *
+   * Mehrfaches Vorkommen wird ersetzt.
+   */
+  _renderTemplate(template, user, channel, chatId, memberCount) {
+    if (!template) return "";
+    const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const firstName = esc(user?.first_name || "");
+    const lastName  = esc(user?.last_name || "");
+    const usernameHandle = user?.username ? "@" + esc(user.username) : "";
+    const display = firstName || (user?.username ? "@" + esc(user.username) : "Mitglied");
+
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2, "0");
+    const mm = String(now.getMinutes()).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    const MM = String(now.getMonth() + 1).padStart(2, "0");
+    const yyyy = now.getFullYear();
+
+    const map = {
+      "{name}":         `<b>${display}</b>`,
+      "{first_name}":   firstName,
+      "{last_name}":    lastName,
+      "{username}":     usernameHandle,
+      "{user_id}":      String(user?.id || ""),
+      "{chat_title}":   esc(channel?.title || ""),
+      "{chat}":         String(chatId || ""),
+      "{time}":         `${hh}:${mm}`,
+      "{date}":         `${dd}.${MM}.${yyyy}`,
+      "{member_count}": String(memberCount ?? "")
+    };
+    let out = String(template);
+    for (const [k, v] of Object.entries(map)) {
+      out = out.split(k).join(v);
+    }
+    return out;
+  },
+
   async sendWelcome(token, chatId, user, channel) {
     if (!channel?.welcome_msg) return;
     const tg = tgApi(token);
-    const name = user.first_name || user.username || "Neues Mitglied";
-    const msg = channel.welcome_msg.replace("{name}", `<b>${name}</b>`).replace("{chat}", chatId);
+    let memberCount = null;
+    try {
+      memberCount = await tg.call("getChatMembersCount", { chat_id: chatId });
+    } catch (_) {}
+    const msg = this._renderTemplate(channel.welcome_msg, user, channel, chatId, memberCount);
     await tg.send(chatId, msg).catch(() => {});
   },
 
   async sendGoodbye(token, chatId, user, channel) {
     if (!channel?.goodbye_msg) return;
     const tg = tgApi(token);
-    const name = user.first_name || user.username || "Mitglied";
-    const msg = channel.goodbye_msg.replace("{name}", `<b>${name}</b>`);
+    let memberCount = null;
+    try {
+      memberCount = await tg.call("getChatMembersCount", { chat_id: chatId });
+    } catch (_) {}
+    const msg = this._renderTemplate(channel.goodbye_msg, user, channel, chatId, memberCount);
     await tg.send(chatId, msg).catch(() => {});
   },
 
@@ -261,20 +318,33 @@ const tgAdminHelper = {
         const tg = tgApi(token);
         try {
           if (msg.delete_previous && msg.last_sent_msg_id) { await tg.call("deleteMessage", { chat_id: msg.channel_id, message_id: msg.last_sent_msg_id }).catch(() => {}); }
-          
+
+          // Inline-Buttons rekonstruieren falls in DB hinterlegt.
+          // Format aus Wizard: Array<Array<{text, url}>>
+          let inlineKb = null;
+          if (msg.inline_buttons) {
+            try {
+              const raw = typeof msg.inline_buttons === "string"
+                ? JSON.parse(msg.inline_buttons)
+                : msg.inline_buttons;
+              if (Array.isArray(raw) && raw.length) inlineKb = raw;
+            } catch (_) {}
+          }
+          const extra = inlineKb ? { reply_markup: { inline_keyboard: inlineKb } } : {};
+
           let sentMsg = null;
-          
-          if (msg.photo_file_id || msg.photo_url) { 
+
+          if (msg.photo_file_id || msg.photo_url) {
              const mediaId = msg.photo_file_id || msg.photo_url;
              if (msg.file_type === "video") {
-                sentMsg = await tg.sendVideo(msg.channel_id, mediaId, msg.message);
+                sentMsg = await tg.sendVideo(msg.channel_id, mediaId, msg.message, extra);
              } else if (msg.file_type === "animation") {
-                sentMsg = await tg.sendAnimation(msg.channel_id, mediaId, msg.message);
+                sentMsg = await tg.sendAnimation(msg.channel_id, mediaId, msg.message, extra);
              } else {
-                sentMsg = await tg.sendPhoto(msg.channel_id, mediaId, msg.message); 
+                sentMsg = await tg.sendPhoto(msg.channel_id, mediaId, msg.message, extra);
              }
-          } else { 
-             sentMsg = await tg.send(msg.channel_id, msg.message); 
+          } else {
+             sentMsg = await tg.send(msg.channel_id, msg.message, extra);
           }
           
           if (msg.pin_after_send && sentMsg?.message_id) { await tg.pinMessage(msg.channel_id, sentMsg.message_id).catch(() => {}); }

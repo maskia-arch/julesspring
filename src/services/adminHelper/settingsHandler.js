@@ -171,7 +171,27 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
     }
     case "welcome": case "goodbye": {
       const isW = action === "welcome";
-      const sent = await editOrSend(tg, String(userId), msgId, `📝 <b>${isW ? "Willkommen" : "Abschied"} bearbeiten</b>\n\nAktuell: <i>${(isW ? ch?.welcome_msg : ch?.goodbye_msg) || "(leer)"}</i>\n\nSende neuen Text oder /cancel.`, [[backBtn(channelId, lang)[0]]]);
+      const currentText = (isW ? ch?.welcome_msg : ch?.goodbye_msg) || "(leer)";
+      // Header mit Variablen-Liste, damit der Admin sieht was er einbauen kann.
+      // Bei welcome: Mitglieder-Beitrittstexte; bei goodbye: User existiert evtl.
+      // nicht mehr in der Gruppe — daher dieselben Variablen, aber mit Hinweis.
+      const headerText =
+        `📝 <b>${isW ? "Willkommens" : "Abschieds"}-Nachricht bearbeiten</b>\n\n` +
+        `<b>Verfügbare Platzhalter</b> – beliebig oft im Text einsetzbar:\n` +
+        `• <code>{name}</code> – Name fett markiert\n` +
+        `• <code>{first_name}</code> – Vorname (klar)\n` +
+        `• <code>{last_name}</code> – Nachname\n` +
+        `• <code>{username}</code> – @-Handle (z.B. @max)\n` +
+        `• <code>{user_id}</code> – Telegram-ID\n` +
+        `• <code>{chat_title}</code> – Channel-/Gruppentitel\n` +
+        `• <code>{member_count}</code> – aktuelle Mitgliederzahl\n` +
+        `• <code>{time}</code> – Uhrzeit (HH:MM)\n` +
+        `• <code>{date}</code> – Datum (TT.MM.JJJJ)\n\n` +
+        `<b>Beispiel:</b>\n` +
+        `<code>Willkommen {name}! Du bist Mitglied #{member_count} – schön dass du um {time} dabei bist. 🎉</code>\n\n` +
+        `<b>Aktuell:</b>\n<i>${currentText}</i>\n\n` +
+        `Sende den neuen Text oder /cancel.`;
+      const sent = await editOrSend(tg, String(userId), msgId, headerText, [[backBtn(channelId, lang)[0]]]);
       global.pendingInputs[String(userId)] = { action: `set_${action}`, channelId, wizardMsgId: sent?.message_id || msgId };
       break;
     }

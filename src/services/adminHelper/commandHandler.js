@@ -24,6 +24,83 @@ async function isGroupAdmin(tg, chatId, userId) {
   } catch { return false; }
 }
 
+/**
+ * Prüft ob ein Channel ein laufendes Paket besitzt.
+ *
+ * Kriterien (alle müssen zutreffen):
+ *   • bot_channels.token_limit > 0           (Paket wurde aktiviert)
+ *   • bot_channels.credits_expire_at in der Zukunft  (oder NULL = endlos)
+ *   • bot_channels.is_active !== false       (Channel selbst aktiv)
+ *
+ * Note: Nur weil token_used >= token_limit ist, gilt das Paket NICHT als
+ *       inaktiv — der Owner kann ja Refills draufladen. Was zählt, ist die
+ *       Laufzeit.
+ */
+function hasActivePackage(channel) {
+  if (!channel) return false;
+  if (channel.is_active === false) return false;
+  if (!channel.token_limit || channel.token_limit <= 0) return false;
+  if (!channel.credits_expire_at) return true; // endlos
+  return new Date(channel.credits_expire_at).getTime() > Date.now();
+}
+
+/**
+ * Schickt dem Spender (im Privatchat) das passende Donate-Menü:
+ *   • Channel hat laufendes Paket → Refill-Liste (verlängert nicht die
+ *     Laufzeit, aber stockt Credits auf)
+ *   • Sonst → Paket-Liste (Aktiviert ein Paket für den Channel)
+ *
+ * @returns {Promise<{ ok: boolean, mode: "refill"|"package", reason?: string }>}
+ */
+async function sendDonationOptions(tg, supabase_db, donorChatId, donorUserId, channel) {
+  const mode = hasActivePackage(channel) ? "refill" : "package";
+  const chTitle = channel?.title || `Channel ${channel?.id}`;
+
+  if (mode === "refill") {
+    const { data: refills } = await supabase_db.from("channel_refills")
+      .select("id, name, credits, price_eur, is_active, sort_order")
+      .eq("is_active", true).order("sort_order", { ascending: true });
+    const active = (refills || []).filter(r => r.is_active !== false);
+    if (!active.length) return { ok: false, mode, reason: "no_refills" };
+
+    const kb = active.map(r => [{
+      text: `🔋 ${r.name} — ${r.credits.toLocaleString()} Credits · ${parseFloat(r.price_eur).toFixed(2)} €`,
+      callback_data: `donate_refill_${r.id}_${channel.id}_${donorUserId}`
+    }]);
+    kb.push([{ text: "❌ Abbrechen", callback_data: `donate_cancel_${donorUserId}` }]);
+
+    await tg.call("sendMessage", {
+      chat_id: String(donorChatId),
+      text: `❤️ <b>Refill für „${chTitle}" spendieren</b>\n\nDieser Channel hat bereits ein aktives Paket. Refills stocken die Credits auf, ohne die Laufzeit zurückzusetzen — vielen Dank für deine Unterstützung!\n\nWähle einen Refill:`,
+      parse_mode: "HTML",
+      reply_markup: { inline_keyboard: kb }
+    });
+    return { ok: true, mode };
+  }
+
+  // mode === "package"
+  const { data: pkgs } = await supabase_db.from("channel_packages")
+    .select("id, name, credits, price_eur, duration_days, is_active")
+    .eq("is_active", true).order("price_eur", { ascending: true });
+  const active = (pkgs || []).filter(p => p.is_active !== false);
+  if (!active.length) return { ok: false, mode, reason: "no_packages" };
+
+  const kb = active.map(p => [{
+    text: `📦 ${p.name} — ${p.credits.toLocaleString()} Credits · ${parseFloat(p.price_eur).toFixed(2)} €`,
+    callback_data: `donate_pkg_${p.id}_${channel.id}_${donorUserId}`
+  }]);
+  kb.push([{ text: "❌ Abbrechen", callback_data: `donate_cancel_${donorUserId}` }]);
+
+  await tg.call("sendMessage", {
+    chat_id: String(donorChatId),
+    text: `❤️ <b>Credit-Paket für „${chTitle}" spendieren</b>\n\nDieser Channel hat noch kein laufendes Paket. Ein Paket schaltet KI-Funktionen für 30 Tage frei — vielen Dank für deine Unterstützung!\n\nWähle ein Paket:`,
+    parse_mode: "HTML",
+    reply_markup: { inline_keyboard: kb }
+  });
+  return { ok: true, mode };
+}
+
+
 function _detectFeedback(text) {
   if (!text || text.length < 5 || text.length > 500) return null;
   const usernameMatch = text.match(/@([a-zA-Z0-9_]+)/);
@@ -165,7 +242,7 @@ const commandHandler = {
         let donateChannel = null;
         try {
           const { data } = await supabase_db.from("bot_channels")
-            .select("id, title, is_active").eq("id", String(donateChanId)).maybeSingle();
+            .select("*").eq("id", String(donateChanId)).maybeSingle();
           donateChannel = data;
         } catch (_) {}
 
@@ -174,33 +251,44 @@ const commandHandler = {
           return;
         }
 
-        const { data: pkgs } = await supabase_db.from("channel_packages")
-          .select("id, name, credits, price_eur, duration_days, is_active")
-          .eq("is_active", true).order("price_eur", { ascending: true });
-        const activePkgs = (pkgs || []).filter(p => p.is_active !== false);
-
-        if (!activePkgs.length) {
-          await tg.send(chatId, "❌ Aktuell sind keine Pakete verfügbar.");
-          return;
+        const r = await sendDonationOptions(tg, supabase_db, chatId, from.id, donateChannel);
+        if (!r.ok) {
+          if (r.reason === "no_refills") {
+            await tg.send(chatId, "❌ Aktuell sind keine Refills verfügbar.");
+          } else {
+            await tg.send(chatId, "❌ Aktuell sind keine Pakete verfügbar.");
+          }
         }
-
-        const chTitle = donateChannel.title || `Channel ${donateChanId}`;
-        const pkgKb = activePkgs.map(p => [{
-          text: `📦 ${p.name} — ${p.credits.toLocaleString()} Credits · ${parseFloat(p.price_eur).toFixed(2)} €`,
-          callback_data: `donate_pkg_${p.id}_${donateChanId}_${from.id}`
-        }]);
-        pkgKb.push([{ text: "❌ Abbrechen", callback_data: `donate_cancel_${from.id}` }]);
-
-        await tg.call("sendMessage", {
-          chat_id: chatId,
-          text: `❤️ <b>Credit-Paket für „${chTitle}" spendieren</b>\n\nVielen Dank für deine Unterstützung! Wähle ein Paket:`,
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: pkgKb }
-        });
         return;
       }
 
-      if (/^\/(?:start|menu|settings|dashboard|help)(?:@\w+)?/i.test(text)) {
+      // ─── /help im Privatchat → Übersicht aller Admin-Befehle ──────────
+      if (/^\/help(?:@\w+)?$/i.test(text)) {
+        const helpText =
+          "📋 <b>Admin-Befehle</b>\n\n" +
+          "<b>🛠 Verwaltung (im DM hier):</b>\n" +
+          "<b>/menu</b> – Hauptmenü öffnen\n" +
+          "<b>/settings</b> – Channel-Einstellungen\n" +
+          "<b>/dashboard</b> – Channel-Übersicht\n" +
+          "<b>/buy</b> – Credit-Paket kaufen\n" +
+          "<b>/refill</b> – Credits nachladen\n\n" +
+          "<b>👥 Moderation (in deiner Gruppe):</b>\n" +
+          "<b>/ban [@user|ID|Reply] [Grund]</b> – User bannen\n" +
+          "<b>/unban [@user|ID|Reply]</b> – User entbannen\n" +
+          "<b>/mute [@user|ID|Reply] [Dauer] [Grund]</b> – User stummschalten\n" +
+          "<i>Dauer: 30s, 5m, 2h, 1d, permanent</i>\n" +
+          "<b>/unmute [@user|ID|Reply]</b> – Stummschaltung aufheben\n\n" +
+          "<b>🔍 Recherche (überall):</b>\n" +
+          "<b>/check @user</b> – Status & Feedbacks prüfen\n" +
+          "<b>/userinfo [ID|@user]</b> – User analysieren\n" +
+          "<b>/feedbacks</b> – Top 10 Verkäufer\n" +
+          "<b>/safeliste</b> · <b>/scamliste</b> – Listen ansehen\n" +
+          "<b>/ai &lt;Frage&gt;</b> – KI-Assistent befragen";
+        await tg.call("sendMessage", { chat_id: chatId, text: helpText, parse_mode: "HTML" });
+        return;
+      }
+
+      if (/^\/(?:start|menu|settings|dashboard)(?:@\w+)?/i.test(text)) {
         const { data: allMyChannels } = await supabase_db.from("bot_channels").select("id, title, type, is_approved, ai_enabled, bot_language, is_active").eq("added_by_user_id", String(from.id));
 
         if (!allMyChannels?.length) {
@@ -248,43 +336,30 @@ const commandHandler = {
         return;
       }
 
-      const { data: pkgs } = await supabase_db.from("channel_packages")
-        .select("id, name, credits, price_eur, duration_days, is_active")
-        .eq("is_active", true).order("price_eur", { ascending: true });
-
-      const activePkgs = (pkgs || []).filter(p => p.is_active !== false);
-      if (!activePkgs.length) {
-        await tg.send(chatId, "❌ Aktuell sind keine Credit-Pakete verfügbar.");
-        return;
-      }
-
-      const chTitle = ch.title || chat.title || `Channel ${chatId}`;
-      const pkgKb = activePkgs.map(p => [{
-        text: `📦 ${p.name} — ${p.credits.toLocaleString()} Credits · ${parseFloat(p.price_eur).toFixed(2)} €`,
-        callback_data: `donate_pkg_${p.id}_${chatId}_${from.id}`
-      }]);
-      pkgKb.push([{ text: "❌ Abbrechen", callback_data: `donate_cancel_${from.id}` }]);
-
-      const donorMsg = `❤️ <b>Credit-Paket für „${chTitle}" spendieren</b>\n\nDu möchtest dem Channel ein Paket schenken — vielen Dank!\n\nWähle ein Paket:`;
+      // Versuche, dem Spender direkt eine PN zu schicken. Klappt nur, wenn
+      // er den Bot vorher mindestens einmal angeschrieben hat.
       try {
-        await tg.call("sendMessage", {
-          chat_id: String(from.id),
-          text: donorMsg,
-          parse_mode: "HTML",
-          reply_markup: { inline_keyboard: pkgKb }
-        });
-        const groupMsg = await tg.send(chatId,
-          `❤️ ${from.first_name || "Spender:in"} möchte für diesen Channel spendieren — ich habe dir die Pakete privat geschickt.`,
+        const r = await sendDonationOptions(tg, supabase_db, from.id, from.id, ch);
+        if (!r.ok) {
+          await tg.send(chatId, r.reason === "no_refills"
+            ? "❌ Aktuell sind keine Refills verfügbar."
+            : "❌ Aktuell sind keine Credit-Pakete verfügbar.");
+          return;
+        }
+        const groupMsg = await tg.send(
+          chatId,
+          `❤️ ${from.first_name || "Spender:in"} möchte für diesen Channel spendieren — ich habe dir die ${r.mode === "refill" ? "Refill" : "Paket"}-Auswahl privat geschickt.`,
           { reply_to_message_id: msg.message_id }
         );
         if (groupMsg?.message_id) {
           void safelistService.trackBotMessage(chatId, groupMsg.message_id, "temp", 60 * 1000);
         }
       } catch (e) {
+        // Spender hat den Bot noch nicht angeschrieben → Deep-Link-Button.
         const botName = settings?.bot_name || "AdminHelper_Bot";
         await tg.call("sendMessage", {
           chat_id: chatId,
-          text: `❤️ <b>Spendieren möglich!</b>\n\n${from.first_name || "Du"}, schreib mir bitte einmal kurz privat (Klick auf den Button), dann kann ich dir die Pakete zur Auswahl schicken:`,
+          text: `❤️ <b>Spendieren möglich!</b>\n\n${from.first_name || "Du"}, schreib mir bitte einmal kurz privat (Klick auf den Button), dann kann ich dir die Auswahl schicken:`,
           parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [[
@@ -320,6 +395,7 @@ const commandHandler = {
         });
       } else {
         const helpText = `📋 <b>Verfügbare Befehle</b>\n\n` +
+          `<b>/donate</b> – ❤️ Dem Channel ein Credit-Paket spendieren\n` +
           (ch?.ai_enabled ? `<b>/ai [Frage]</b> – KI-Assistent befragen\n` : "") +
           (ch?.safelist_enabled ? `<b>/feedbacks @user</b> – Top 10 Verkäufer einsehen\n<b>/check @user</b> – Status & Feedbacks prüfen\n<b>/scamliste</b> – Scamliste ansehen\n<b>/safeliste</b> – Safelist ansehen\n` : "") +
           `<b>/userinfo [ID|@user]</b> – User-Info (5x/Tag kostenlos)`;
@@ -597,15 +673,61 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/ban(?:@\w+)?/i.test(text) && msg.reply_to_message && ch?.is_approved) {
+    if (/^\/ban(?:@\w+)?(?:\s|$)/i.test(text) && ch?.is_approved) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
-      const banTarget = msg.reply_to_message.from;
-      if (!banTarget?.id) return;
-      const banReason = text.replace(/^\/ban(?:@\w+)?\s*/i, "").trim() || "Kein Grund angegeben";
+      const lang = ch?.bot_language || "de";
+
+      // Drei Aufruf-Varianten:
+      //   1) /ban (Reply auf User)              [Grund optional am Ende]
+      //   2) /ban @username [Grund]
+      //   3) /ban USER_ID [Grund]
+      let banTargetId = null;
+      let banTargetName = null;
+      let banReason = "";
+
+      if (msg.reply_to_message?.from) {
+        const t2 = msg.reply_to_message.from;
+        banTargetId = t2.id;
+        banTargetName = t2.username ? "@" + t2.username : (t2.first_name || String(t2.id));
+        banReason = text.replace(/^\/ban(?:@\w+)?\s*/i, "").trim();
+      } else {
+        const m = text.match(/^\/ban(?:@\w+)?\s+(\S+)(?:\s+(.+))?$/i);
+        if (!m) {
+          const usageMsg = await tg.send(chatId, "ℹ️ Verwendung: <code>/ban @user [Grund]</code>, <code>/ban USER_ID [Grund]</code> oder als Reply auf eine Nachricht.");
+          if (usageMsg?.message_id) void safelistService.trackBotMessage(chatId, usageMsg.message_id, "temp", 15000);
+          return;
+        }
+        const ref = m[1];
+        banReason = (m[2] || "").trim();
+        const resolved = await blacklistService.resolveUserRef(supabase_db, chatId, ref);
+        banTargetId = resolved?.userId || (/^\d+$/.test(ref) ? ref : null);
+        banTargetName = resolved?.username ? "@" + resolved.username : (banTargetId ? `<code>${banTargetId}</code>` : ref);
+        if (!banTargetId) {
+          const errMsg = await tg.send(chatId, t("cmd_user_not_found", lang, { ref }));
+          if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 15000);
+          await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+          return;
+        }
+      }
+
+      const reasonShown = banReason ? banReason.substring(0, 200) : "Kein Grund angegeben";
       try {
-        await tg.call("banChatMember", { chat_id: chatId, user_id: banTarget.id, until_date: 0, revoke_messages: false });
-        const target = banTarget.username ? "@" + banTarget.username : (banTarget.first_name || String(banTarget.id));
-        const banMsg = await tg.send(chatId, `🚫 ${target} wurde gebannt.\nGrund: ${banReason.substring(0,100)}`);
+        await tg.call("banChatMember", { chat_id: chatId, user_id: parseInt(banTargetId), until_date: 0, revoke_messages: false });
+        try {
+          await supabase_db.from("channel_banned_users").upsert([{
+            channel_id: String(chatId),
+            user_id: String(banTargetId),
+            username: msg.reply_to_message?.from?.username || (banTargetName?.startsWith("@") ? banTargetName.slice(1) : null),
+            reason: reasonShown,
+            banned_at: new Date().toISOString()
+          }], { onConflict: "channel_id,user_id" });
+        } catch (_) {}
+        const adminName = from.username ? "@" + from.username : (from.first_name || "Admin");
+        const banMsg = await tg.call("sendMessage", {
+          chat_id: chatId,
+          text: `🚫 ${banTargetName} wurde gebannt.\n<b>Grund:</b> ${reasonShown}\n<i>Aktion durch ${adminName}</i>`,
+          parse_mode: "HTML"
+        });
         if (banMsg?.message_id) void safelistService.trackBotMessage(chatId, banMsg.message_id, "temp", 5 * 60 * 1000);
         await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
       } catch (e2) { logger.warn("[Ban]", e2.message); }
@@ -676,30 +798,62 @@ const commandHandler = {
       return;
     }
 
-    const muteMatch = text.match(/^\/mute(?:@\w+)?(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?/i);
-    const muteTarget = msg.reply_to_message?.from || null;
-    const muteByIdMatch = !msg.reply_to_message && text.match(/^\/mute(?:@\w+)?\s+(\d+)(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?/i);
-
-    if (((muteMatch && muteTarget) || muteByIdMatch) && ch?.is_approved) {
+    // /mute Aufruf-Varianten:
+    //   1) Als Reply:           /mute [Dauer] [Grund]
+    //   2) Per @username:       /mute @user [Dauer] [Grund]
+    //   3) Per ID:              /mute USER_ID [Dauer] [Grund]
+    if (/^\/mute(?:@\w+)?(?:\s|$)/i.test(text) && ch?.is_approved) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
-      let targetId, targetName, durationStr, muteReason;
-      if (muteByIdMatch) {
-        targetId = muteByIdMatch[1];
-        durationStr = muteByIdMatch[2] || "24h";
-        muteReason = muteByIdMatch[3] || "";
-        targetName = `<code>${targetId}</code>`;
+      const lang = ch?.bot_language || "de";
+
+      let targetId = null, targetName = null, durationStr = "24h", muteReason = "";
+
+      if (msg.reply_to_message?.from) {
+        // Variante 1: Reply
+        const t2 = msg.reply_to_message.from;
+        targetId = t2.id;
+        targetName = t2.username ? "@" + t2.username : (t2.first_name || String(t2.id));
+        const m1 = text.match(/^\/mute(?:@\w+)?(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?$/i);
+        durationStr = (m1 && m1[1]) || "24h";
+        muteReason = (m1 && m1[2]) || "";
       } else {
-        targetId = muteTarget.id;
-        targetName = muteTarget.username ? "@" + muteTarget.username : (muteTarget.first_name || String(muteTarget.id));
-        durationStr = muteMatch[1] || "24h";
-        muteReason = muteMatch[2] || "";
+        // Variante 2/3: erstes Token = Ref, optional Dauer, dann Grund
+        const m = text.match(/^\/mute(?:@\w+)?\s+(\S+)(?:\s+(\d+[smhd]|permanent))?(?:\s+(.+))?$/i);
+        if (!m) {
+          const usageMsg = await tg.send(chatId, "ℹ️ Verwendung: <code>/mute @user [Dauer] [Grund]</code>\nDauer: <code>30s · 5m · 2h · 1d · permanent</code>\nOder als Reply auf eine Nachricht.");
+          if (usageMsg?.message_id) void safelistService.trackBotMessage(chatId, usageMsg.message_id, "temp", 15000);
+          return;
+        }
+        const ref = m[1];
+        durationStr = m[2] || "24h";
+        muteReason = (m[3] || "").trim();
+        const resolved = await blacklistService.resolveUserRef(supabase_db, chatId, ref);
+        targetId = resolved?.userId || (/^\d+$/.test(ref) ? ref : null);
+        targetName = resolved?.username ? "@" + resolved.username : (targetId ? `<code>${targetId}</code>` : ref);
+        if (!targetId) {
+          const errMsg = await tg.send(chatId, t("cmd_user_not_found", lang, { ref }));
+          if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 15000);
+          await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
+          return;
+        }
       }
+
       const durationSeconds = blacklistService.parseDuration ? blacklistService.parseDuration(durationStr) : 86400;
       const untilDate = durationSeconds === -1 ? 0 : Math.floor(Date.now() / 1000) + durationSeconds;
       const displayDur = durationSeconds === -1 ? "permanent" : durationStr;
+      const reasonShown = muteReason ? muteReason.substring(0, 200) : null;
       try {
-        await tg.call("restrictChatMember", { chat_id: chatId, user_id: targetId, permissions: { can_send_messages: false, can_send_other_messages: false, can_add_web_page_previews: false }, until_date: untilDate });
-        const muteMsg = await tg.send(chatId, `🔇 ${targetName} wurde ${displayDur} stummgeschaltet.${muteReason ? "\nGrund: " + muteReason.substring(0,100) : ""}`);
+        await tg.call("restrictChatMember", {
+          chat_id: chatId, user_id: parseInt(targetId),
+          permissions: { can_send_messages: false, can_send_other_messages: false, can_send_audios: false, can_send_documents: false, can_send_photos: false, can_send_videos: false, can_send_video_notes: false, can_send_voice_notes: false, can_send_polls: false, can_add_web_page_previews: false },
+          until_date: untilDate
+        });
+        const adminName = from.username ? "@" + from.username : (from.first_name || "Admin");
+        const muteMsg = await tg.call("sendMessage", {
+          chat_id: chatId,
+          text: `🔇 ${targetName} wurde ${displayDur} stummgeschaltet.${reasonShown ? `\n<b>Grund:</b> ${reasonShown}` : ""}\n<i>Aktion durch ${adminName}</i>`,
+          parse_mode: "HTML"
+        });
         if (muteMsg?.message_id) void safelistService.trackBotMessage(chatId, muteMsg.message_id, "temp", 5 * 60 * 1000);
         await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
       } catch (e2) { logger.warn("[Mute]", e2.message); }

@@ -331,7 +331,8 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
         channel_id: chanId2, message: wizard.msgText || "", photo_file_id: wizard.fileId || null, file_type: wizard.fileType || null,
         cron_expr: null, interval_minutes: wizard.intervalMinutes || null, end_at: wizard.endAt || null, 
         next_run_at: wizard.nextRunAt || new Date().toISOString(), repeat: isRepeat,
-        is_active: true, pin_after_send: wizard.pinAfterSend || false, delete_previous: wizard.deletePrevious || false
+        is_active: true, pin_after_send: wizard.pinAfterSend || false, delete_previous: wizard.deletePrevious || false,
+        inline_buttons: (Array.isArray(wizard.inlineButtons) && wizard.inlineButtons.length) ? wizard.inlineButtons : null
       }]);
       
       if (insertError) {
@@ -517,6 +518,67 @@ if (data === "buy_cancel") {
         await tg.call("sendMessage", {
           chat_id: String(qUserId),
           text: `❤️ <b>Spende für „${chTitle}"</b>\n\n📦 ${pkg.name} — ${pkg.credits.toLocaleString()} Credits\n💰 Preis: ${parseFloat(pkg.price_eur).toFixed(2)} €\n\nNach erfolgreicher Bezahlung werden die Credits automatisch dem Channel gutgeschrieben — sie werden auf das bestehende Guthaben aufaddiert.\n\nKlick auf den Button zum Bezahlen:`,
+          parse_mode: "HTML",
+          reply_markup: { inline_keyboard: [[{ text: "💳 Jetzt spendieren", url: result.checkoutUrl }]] }
+        });
+      }
+    } catch (e) {
+      await tg.call("sendMessage", {
+        chat_id: String(qUserId),
+        text: `❌ Checkout fehlgeschlagen:\n<i>${e.message || String(e)}</i>`,
+        parse_mode: "HTML"
+      });
+    }
+    return;
+  }
+
+  // ─── DONATE: User aus Gruppe spendiert dem Channel einen Refill ─────
+  // callback_data Format: donate_refill_<refillId>_<channelId>_<donorUserId>
+  if (data.startsWith("donate_refill_")) {
+    await answerCb();
+    const dParts = data.match(/^donate_refill_(\d+)_(-?\d+)_(\d+)$/);
+    if (!dParts) return;
+    const dRefillId = parseInt(dParts[1]);
+    const dChanId = dParts[2];
+    const dDonorId = dParts[3];
+
+    if (String(qUserId) !== String(dDonorId)) {
+      return answerCb({ text: "❌ Dieser Button gehört nicht dir.", show_alert: true });
+    }
+
+    await tg.call("deleteMessage", { chat_id: qChatId, message_id: q.message?.message_id }).catch(() => {});
+
+    let refill = null;
+    try {
+      const { data: r } = await supabase_db.from("channel_refills").select("*").eq("id", dRefillId).single();
+      refill = r;
+    } catch (_) {}
+    if (!refill) {
+      await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Refill nicht gefunden." });
+      return;
+    }
+
+    let dChannel = null;
+    try {
+      const { data } = await supabase_db.from("bot_channels")
+        .select("id, title, is_active").eq("id", String(dChanId)).maybeSingle();
+      dChannel = data;
+    } catch (_) {}
+    if (!dChannel || dChannel.is_active === false) {
+      await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Channel nicht (mehr) verfügbar." });
+      return;
+    }
+
+    await tg.call("sendMessage", { chat_id: String(qUserId), text: "⏳ Erstelle Checkout…" });
+    try {
+      // Spender-Info als Meta mitgeben, damit der Webhook die Spende
+      // erkennen und ggf. dem Channel-Owner danken kann.
+      const result = await packageService.generateRefillUrl(refill, dChanId, { donorUserId: qUserId });
+      if (result?.checkoutUrl) {
+        const chTitle = dChannel.title || `Channel ${dChanId}`;
+        await tg.call("sendMessage", {
+          chat_id: String(qUserId),
+          text: `❤️ <b>Refill-Spende für „${chTitle}"</b>\n\n🔋 ${refill.name} — ${refill.credits.toLocaleString()} Credits\n💰 Preis: ${parseFloat(refill.price_eur).toFixed(2)} €\n\nDie Credits werden auf das bestehende Guthaben des Channels addiert. Die Laufzeit des aktuellen Pakets bleibt unverändert.\n\nKlick auf den Button zum Bezahlen:`,
           parse_mode: "HTML",
           reply_markup: { inline_keyboard: [[{ text: "💳 Jetzt spendieren", url: result.checkoutUrl }]] }
         });
