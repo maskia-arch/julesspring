@@ -386,7 +386,26 @@ const safelistService = {
       const r = resp.data?.result || {};
       return { id: r.id, first_name: r.first_name, last_name: r.last_name, username: r.username, bio: r.bio, fetched_at: new Date().toISOString() };
     } catch { return {}; }
+  },
+
+  /**
+   * Räumt channel_message_log auf — wird vom Server-Scheduler stündlich
+   * aufgerufen. Löscht Group-Messages älter als 48h, damit die Tabelle
+   * nicht ins Unermessliche wächst (300+ Nachrichten/Tag/Channel).
+   */
+  async pruneOldMessageLog() {
+    try {
+      // Bevorzugt: SQL-Funktion (effizient, einmaliger Roundtrip)
+      const { error } = await supabase.rpc("prune_channel_message_log");
+      if (!error) return;
+    } catch (_) {}
+    // Fallback: direktes DELETE über die JS-Schnittstelle
+    try {
+      const cutoff = new Date(Date.now() - 48 * 3600 * 1000).toISOString();
+      await supabase.from("channel_message_log").delete().lt("created_at", cutoff);
+    } catch (_) {}
   }
 };
 
 module.exports = safelistService;
+

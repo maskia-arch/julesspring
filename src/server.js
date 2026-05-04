@@ -82,7 +82,21 @@ const server = app.listen(port, () => {
         } catch (_) {}
       }, 60000);
 
-      logger.info('[Server] Scheduled messages, AutoClean & MsgAutoDelete: aktiv');
+      // Stündlicher Cleanup des channel_message_log (>48h) damit die Tabelle
+      // nicht ins Unermessliche wächst. Bei aktiven Gruppen kommen schnell
+      // hunderte Einträge pro Tag rein.
+      try {
+        const safelistService = require('./services/adminHelper/safelistService');
+        const messageLogPruner = async () => {
+          try { await safelistService.pruneOldMessageLog(); }
+          catch (e) { logger.warn(`[MessageLogPrune] ${e.message}`); }
+        };
+        // Erste Ausführung 2 Min nach Start, dann stündlich
+        setTimeout(messageLogPruner, 2 * 60 * 1000);
+        setInterval(messageLogPruner, 60 * 60 * 1000);
+      } catch (e) { logger.warn(`[MessageLogPrune init] ${e.message}`); }
+
+      logger.info('[Server] Scheduled messages, AutoClean, MsgAutoDelete & MessageLogPrune: aktiv');
     } catch(e) { logger.warn(e.message); }
 
     try {
@@ -181,7 +195,6 @@ async function setAutoCommands() {
       { command: 'help',      description: 'Alle Admin-Befehle anzeigen' },
       { command: 'check',     description: 'Feedback eines Users prüfen (/check @user)' },
       { command: 'scamliste', description: 'Scamliste anzeigen oder Scammer melden' },
-      { command: 'feedbacks', description: 'Ranking der Top-Verkäufer' },
       { command: 'safeliste', description: 'Verifizierte Mitglieder' },
       { command: 'userinfo',  description: 'User analysieren (5x/Tag kostenlos)' },
       { command: 'ai',        description: 'KI-Assistent befragen (/ai Frage)' },
@@ -197,7 +210,6 @@ async function setAutoCommands() {
       { command: 'donate',    description: '❤️ Credit-Paket für diese Gruppe spendieren' },
       { command: 'help',      description: 'Übersicht der Befehle' },
       { command: 'check',     description: 'Feedback eines Users prüfen (/check @user)' },
-      { command: 'feedbacks', description: 'Top-Verkäufer ansehen' },
       { command: 'safeliste', description: 'Verifizierte Mitglieder' },
       { command: 'scamliste', description: 'Scamliste ansehen' },
       { command: 'userinfo',  description: 'User analysieren (5x/Tag kostenlos)' },

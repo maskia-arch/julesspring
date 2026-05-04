@@ -1,66 +1,139 @@
+/**
+ * dailySummaryService.js v1.5.42
+ * ----------------------------------------------------------------------------
+ * Erstellt eine Tageszusammenfassung für eine Gruppe.
+ *
+ * v1.5.42-Änderungen:
+ *   • Datenquelle ist jetzt PRIMÄR `channel_message_log` (alle Group-
+ *     Messages, gesammelt im Webhook seit 1.5.42), mit `channel_chat_history`
+ *     als Fallback für Bestandsdaten.
+ *   • Prompt ist neu: Fokus auf das Wesentliche (Highlights statt Protokoll).
+ *     Statt 5-8 Stichpunkten gibt's jetzt höchstens 3-5 Kernaussagen, mit
+ *     klarer Struktur (Themen, Stimmung, wichtige Vorfälle).
+ * ----------------------------------------------------------------------------
+ */
+
 const axios = require("axios");
+
+async function _loadMessages(supabase_db, channelId, sinceISO) {
+  // Primär aus dem neuen channel_message_log (ALLE Group-Messages)
+  let messages = [];
+  try {
+    const { data } = await supabase_db
+      .from("channel_message_log")
+      .select("user_id, username, first_name, content, created_at")
+      .eq("channel_id", String(channelId))
+      .gte("created_at", sinceISO)
+      .order("created_at", { ascending: true })
+      .limit(500);
+    messages = data || [];
+  } catch (_) {}
+
+  // Fallback: alte AI-Konversationen (Backwards-Compat)
+  if (!messages.length) {
+    try {
+      const { data: hist } = await supabase_db
+        .from("channel_chat_history")
+        .select("user_id, content, created_at")
+        .eq("channel_id", String(channelId))
+        .eq("role", "user")
+        .gte("created_at", sinceISO)
+        .order("created_at", { ascending: true })
+        .limit(300);
+      messages = (hist || []).map(m => ({
+        user_id: m.user_id, username: null, first_name: null,
+        content: m.content, created_at: m.created_at
+      }));
+    } catch (_) {}
+  }
+
+  return messages;
+}
 
 async function createDailySummary(supabase_db, channelId) {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return null;
 
   const since = new Date(Date.now() - 86400000).toISOString();
-  let ctxMsgs = [], members = [];
+  const ctxMsgs = await _loadMessages(supabase_db, channelId, since);
 
-  try {
-    const { data: hist } = await supabase_db
-      .from("channel_chat_history")
-      .select("user_id, content, created_at")
-      .eq("channel_id", String(channelId))
-      .eq("role", "user")
-      .gte("created_at", since)
-      .order("created_at", { ascending: true })
-      .limit(300);
-    ctxMsgs = hist || [];
-  } catch (_) {}
-
+  // Mitglieder-Zähler (für Statistik)
+  let joins = 0, leaves = 0, activeMembers = 0;
   try {
     const { data: m } = await supabase_db
       .from("channel_members")
-      .select("is_deleted")
+      .select("is_deleted, joined_at, last_message_at")
       .eq("channel_id", String(channelId));
-    members = m || [];
+    if (m) {
+      const dayAgo = Date.now() - 86400000;
+      m.forEach(row => {
+        if (!row.is_deleted) {
+          if (row.joined_at && new Date(row.joined_at).getTime() > dayAgo) joins++;
+          if (row.last_message_at && new Date(row.last_message_at).getTime() > dayAgo) activeMembers++;
+        } else {
+          leaves++;
+        }
+      });
+    }
   } catch (_) {}
-
-  const joins = members.filter(m => !m.is_deleted).length;
-  const leaves = members.filter(m => m.is_deleted).length;
 
   if (!ctxMsgs.length) {
     return {
-      text: `📰 <b>Tageszusammenfassung</b>\n\nKeine User-Nachrichten in den letzten 24h.\n\n👥 Eintritte: ${joins} · Austritte: ${leaves}`,
+      text: `📰 <b>Tageszusammenfassung</b>\n\nIn den letzten 24h gab es keine erfassten Nachrichten in dieser Gruppe.\n\n👥 Eintritte: ${joins} · Austritte: ${leaves}`,
       outTokens: 0, inTokens: 0, usd: 0
     };
   }
 
-  let userNames = {};
-  try {
-    const { data: memberList } = await supabase_db.from("channel_members").select("user_id, username, first_name").eq("channel_id", String(channelId));
-    (memberList || []).forEach(m => {
-      userNames[String(m.user_id)] = m.username ? "@" + m.username : (m.first_name || String(m.user_id));
-    });
-  } catch (_) {}
+  // Username-Map für schöneren Kontext (anonymisiert vor LLM)
+  const userIdToAlias = {};
+  let aliasCounter = 1;
+  ctxMsgs.forEach(m => {
+    const key = String(m.user_id);
+    if (!userIdToAlias[key]) {
+      userIdToAlias[key] = `User${aliasCounter++}`;
+    }
+  });
 
   const lines = ctxMsgs.map(m => {
     const ts = new Date(m.created_at).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
-    const who = userNames[String(m.user_id)] || String(m.user_id);
-    return `[${ts}] ${who}: ${(m.content || "").substring(0, 200)}`;
-  }).join("\n").substring(0, 5000);
+    const alias = userIdToAlias[String(m.user_id)] || "User?";
+    return `[${ts}] ${alias}: ${(m.content || "").substring(0, 200)}`;
+  }).join("\n").substring(0, 6000);
+
+  // Aktive Teilnehmer-Anzahl (eindeutige User in den 24h)
+  const uniqueUsers = Object.keys(userIdToAlias).length;
 
   try {
     const resp = await axios.post(
       "https://api.openai.com/v1/chat/completions",
       {
         model: "gpt-4o-mini",
-        max_tokens: 5000,
+        max_tokens: 800,
         temperature: 0.3,
         messages: [
-          { role: "system", content: "Du bist ein Assistent der Telegram-Gruppen-Tagesberichte erstellt. Fasse die Aktivitäten in 5-8 prägnanten Stichpunkten zusammen. Zensiere Beleidigungen oder unangemessene Inhalte mit [***]. Verwende keine echten Usernamen. Schreibe auf Deutsch." },
-          { role: "user", content: `Erstelle einen Tagesbericht für diesen Telegram-Channel.\n\nNachrichten der letzten 24h:\n${lines}\n\nMitglieder-Statistik: ${joins} aktiv, ${leaves} ausgetreten.` }
+          {
+            role: "system",
+            content:
+              "Du erstellst Tageshighlights für eine Telegram-Gruppe. " +
+              "Ziel: Der Admin will in 30 Sekunden wissen, was wichtig war.\n\n" +
+              "REGELN:\n" +
+              "1. Maximal 4-6 Kernpunkte als ⚡-Bullets — keine Plauder-Liste.\n" +
+              "2. Fokus auf: Themen, Vorfälle, Trends, häufige Fragen, Stimmung.\n" +
+              "3. KEINE Protokollform ('Um 14:32 sagte X dass Y'). Stattdessen: " +
+              "verdichten zur Aussage ('Wiederholte Beschwerden über Lieferzeiten').\n" +
+              "4. Wenn alles ruhig war: 1-2 Sätze und kein Drumherum.\n" +
+              "5. Beleidigungen/Vulgärsprache mit [***] zensieren.\n" +
+              "6. Keine echten Usernames — die User sind ohnehin anonymisiert (User1, User2…).\n" +
+              "7. Kein Vorwort, kein Nachwort, keine Floskel. Direkt rein.\n" +
+              "8. Auf Deutsch. Verwende ⚡ als Bullet-Symbol."
+          },
+          {
+            role: "user",
+            content:
+              `Erstelle die Tageshighlights für diese Telegram-Gruppe.\n\n` +
+              `Letzte 24h: ${ctxMsgs.length} Nachrichten von ${uniqueUsers} aktiven Usern.\n\n` +
+              `Inhalt:\n${lines}`
+          }
         ]
       },
       { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, timeout: 45000 }
@@ -71,8 +144,10 @@ async function createDailySummary(supabase_db, channelId) {
     const inTokens = usage.prompt_tokens || 0;
     const summaryTxt = resp.data?.choices?.[0]?.message?.content?.trim() || "(Keine Zusammenfassung)";
 
+    const stats = `\n\n👥 ${activeMembers} aktive · 📈 +${joins} · 📉 -${leaves} · 💬 ${ctxMsgs.length} Nachrichten`;
+
     return {
-      text: `📰 <b>Tageszusammenfassung</b>\n\n${summaryTxt}\n\n👥 ${joins} aktive Mitglieder · ${leaves} ausgetreten`,
+      text: `📰 <b>Tageshighlights</b>\n\n${summaryTxt}${stats}`,
       outTokens, inTokens, usd: inTokens * 0.00000015 + outTokens * 0.0000006
     };
   } catch (e) { return null; }

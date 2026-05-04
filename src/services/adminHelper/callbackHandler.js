@@ -148,28 +148,82 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
   if (data.startsWith("uinfo_sangmata_")) {
     const targetId = data.split("_")[2];
     await answerCb();
-    
-    const botName = "SangMata_BOT";
-    const cmdText = `<code>/allhistory ${targetId}</code>`;
-    
-    await tg.call("sendMessage", { 
-      chat_id: qChatId, 
-      text: `🔍 <b>SangMata Namenshistorie</b>\n\nKopiere diesen Befehl (durch Antippen) und sende ihn direkt an den SangMata Bot:\n\n${cmdText}`, 
+
+    // Zeige bisher importierte SangMata-Berichte zu dieser ID, falls vorhanden.
+    let imports = [];
+    try {
+      const { data } = await supabase_db.from("sangmata_imports")
+        .select("raw_text, imported_at, imported_by")
+        .eq("user_id", targetId)
+        .order("imported_at", { ascending: false })
+        .limit(3);
+      imports = data || [];
+    } catch (_) {}
+
+    let msgText;
+    if (imports.length) {
+      msgText = `📥 <b>SangMata-Imports für <code>${targetId}</code></b>\n\n`;
+      imports.forEach((imp, i) => {
+        const ts = new Date(imp.imported_at).toLocaleString("de-DE");
+        const snippet = imp.raw_text.substring(0, 400).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        msgText += `<b>#${i + 1}</b> — ${ts}\n<i>${snippet}${imp.raw_text.length > 400 ? "…" : ""}</i>\n\n`;
+      });
+      msgText += `<i>💡 Mehr SangMata-Berichte zu dieser ID? Forwarde sie aus @SangMata_BOT direkt an mich.</i>`;
+    } else {
+      msgText =
+        `🔍 <b>SangMata Namenshistorie</b>\n\n` +
+        `Es liegen mir noch keine SangMata-Berichte zu dieser Telegram-ID vor.\n\n` +
+        `<b>So holst du dir die Namenshistorie:</b>\n` +
+        `1️⃣ Kopiere folgenden Befehl: <code>/allhistory ${targetId}</code>\n` +
+        `2️⃣ Sende ihn an @SangMata_BOT.\n` +
+        `3️⃣ Leite die Antwort von SangMata an mich (im DM) weiter — ich speichere sie automatisch.`;
+    }
+
+    const sentMsg = await tg.call("sendMessage", {
+      chat_id: qChatId,
+      text: msgText,
       parse_mode: "HTML",
-      reply_markup: { inline_keyboard: [[{ text: "💬 Zu @SangMata_BOT wechseln", url: `https://t.me/${botName}` }]] }
+      reply_markup: { inline_keyboard: [[{ text: "💬 Zu @SangMata_BOT", url: `https://t.me/SangMata_BOT` }]] }
     });
+    if (sentMsg?.message_id) {
+      try {
+        await supabase_db.from("bot_messages").insert([{
+          channel_id: String(qChatId), message_id: sentMsg.message_id,
+          msg_type: "userinfo_result",
+          delete_after: new Date(Date.now() + 5 * 60 * 1000).toISOString()
+        }]);
+      } catch (_) {}
+    }
     return;
   }
 
   if (data.startsWith("uinfo_names_")) {
     const targetId = data.split("_")[2];
-    const { data: history } = await supabase_db.from("user_name_history").select("*").eq("user_id", targetId).order("detected_at", { ascending: false }).limit(10);
+    const { data: history } = await supabase_db.from("user_name_history").select("*").eq("user_id", targetId).order("detected_at", { ascending: false }).limit(15);
     if (!history?.length) {
       return answerCb({ text: "❌ Keine Namenshistorie gefunden.", show_alert: true });
     }
     await answerCb();
-    const list = history.map(h => `• ${new Date(h.detected_at).toLocaleDateString("de-DE")}: ${h.first_name||""} ${h.last_name||""} ${h.username?"(@"+h.username+")":""}`).join("\n");
-    await tg.call("sendMessage", { chat_id: qChatId, text: `📜 <b>Namenshistorie für <code>${targetId}</code></b>\n\n${list}`, parse_mode: "HTML" });
+    const list = history.map(h => {
+      const dt = new Date(h.detected_at).toLocaleDateString("de-DE");
+      const name = `${h.first_name || ""} ${h.last_name || ""}`.trim();
+      const uname = h.username ? "@" + h.username : "";
+      return `• ${dt}: ${name || "(ohne Name)"} ${uname}`;
+    }).join("\n");
+    const sentMsg = await tg.call("sendMessage", {
+      chat_id: qChatId,
+      text: `📜 <b>Namenshistorie für <code>${targetId}</code></b>\n\n${list}`,
+      parse_mode: "HTML"
+    });
+    if (sentMsg?.message_id) {
+      try {
+        await supabase_db.from("bot_messages").insert([{
+          channel_id: String(qChatId), message_id: sentMsg.message_id,
+          msg_type: "userinfo_result",
+          delete_after: new Date(Date.now() + 5 * 60 * 1000).toISOString()
+        }]);
+      } catch (_) {}
+    }
     return;
   }
 
@@ -332,8 +386,7 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
         cron_expr: null, interval_minutes: wizard.intervalMinutes || null, end_at: wizard.endAt || null, 
         next_run_at: wizard.nextRunAt || new Date().toISOString(), repeat: isRepeat,
         is_active: true, pin_after_send: wizard.pinAfterSend || false, delete_previous: wizard.deletePrevious || false,
-        inline_buttons: (Array.isArray(wizard.inlineButtons) && wizard.inlineButtons.length) ? wizard.inlineButtons : null,
-        entities: (Array.isArray(wizard.msgEntities) && wizard.msgEntities.length) ? wizard.msgEntities : null
+        inline_buttons: (Array.isArray(wizard.inlineButtons) && wizard.inlineButtons.length) ? wizard.inlineButtons : null
       }]);
       
       if (insertError) {
@@ -345,33 +398,15 @@ exports.handle = async function handle(tg, supabase_db, q, token, settings) {
       if (wizard.intervalMinutes) {
         repeatLabel = wizard.intervalMinutes >= 60 ? `alle ${wizard.intervalMinutes/60}h` : `alle ${wizard.intervalMinutes}m`;
       }
-
-      // Hinweise zu erhaltenen Features
-      const featureBits = [];
-      if (Array.isArray(wizard.msgEntities) && wizard.msgEntities.length) {
-        const customEmojiCount = wizard.msgEntities.filter(e => e.type === "custom_emoji").length;
-        if (customEmojiCount > 0) {
-          featureBits.push(`✨ ${customEmojiCount} Premium-Emoji${customEmojiCount === 1 ? "" : "s"} erkannt`);
-        } else {
-          featureBits.push(`📐 Formatierung übernommen`);
-        }
-      }
-      if (Array.isArray(wizard.inlineButtons) && wizard.inlineButtons.length) {
-        featureBits.push(`🔘 ${wizard.inlineButtons.flat().length} Inline-Button${wizard.inlineButtons.flat().length === 1 ? "" : "s"}`);
-      }
-      const featureLine = featureBits.length ? `\n${featureBits.join(" · ")}` : "";
-
-      const _esc = (s) => String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
-      const confirmText = `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${_esc((wizard.msgText||"").substring(0,80))}${wizard.fileId ? "\n📎 Medien: ✅" : ""}${featureLine}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`;
-
+      
       await tg.call("editMessageText", {
         chat_id: String(qUserId),
         message_id: q.message?.message_id,
-        text: confirmText,
+        text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`,
         parse_mode: "HTML",
         reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück zu Wiederholungen", callback_data: `cfg_repeat_${chanId2}` }]] }
       }).catch(async () => {
-        await tg.call("sendMessage", { chat_id: String(qUserId), text: confirmText, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück zu Wiederholungen", callback_data: `cfg_repeat_${chanId2}` }]] } });
+        await tg.call("sendMessage", { chat_id: String(qUserId), text: `✅ <b>Geplante Nachricht gespeichert!</b>\n\n📝 Text: ${(wizard.msgText||"").substring(0,80)}${wizard.fileId ? "\n📎 Medien: ✅" : ""}\n📅 Start: ${dt}\n🔁 Wiederholung: ${repeatLabel}`, parse_mode: "HTML", reply_markup: { inline_keyboard: [[{ text: "◀️ Zurück zu Wiederholungen", callback_data: `cfg_repeat_${chanId2}` }]] } });
       });
     } catch (e2) {
       await tg.call("sendMessage", { chat_id: String(qUserId), text: "❌ Fehler beim Speichern der geplanten Nachricht:\n" + e2.message });
