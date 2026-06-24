@@ -1,0 +1,351 @@
+/**
+ * packageService.js  v1.4.39
+ *
+ * CORRECT Sellauth Checkout API (from official docs):
+ *   POST /v1/shops/{shopId}/checkout
+ *   Body: { cart: [{ productId, variantId, quantity }], affiliate: "<channelId>" }
+ *   Response: { success: true, invoice_id: 632, invoice_url: "https://shop/checkout/..." }
+ *
+ * NOTE: Requires Sellauth Business Plan subscription
+ * channelId tracked via: affiliate field (≤16 chars) + our purchase_log table
+ *
+ * Webhook: POST to our endpoint with { event: "NOTIFICATION.SHOP_INVOICE_CREATED", data: { invoice_id } }
+ * We look up invoice_id in channel_purchases → activate credits
+ */
+const axios    = require("axios");
+const supabase = require("../config/supabase");
+const logger   = require("../utils/logger");
+
+const SELLAUTH_API = "https://api.sellauth.com/v1";
+
+function _saClient(apiKey) {
+  return axios.create({
+    baseURL: SELLAUTH_API, timeout: 15000,
+    headers: {
+      Authorization:  `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      Accept:         "application/json"
+    }
+  });
+}
+
+async function _loadCreds() {
+  let apiKey = null, shopId = null, shopUrl = null;
+  try {
+    const r = await supabase.from("settings")
+      .select("sellauth_api_key, sellauth_shop_id, sellauth_shop_url")
+      .single();
+    if (r.data) {
+      apiKey  = r.data.sellauth_api_key  || null;
+      shopId  = r.data.sellauth_shop_id  || null;
+      shopUrl = r.data.sellauth_shop_url || null;
+    }
+  } catch (_) {}
+  apiKey  = apiKey  || process.env.SELLAUTH_API_KEY  || null;
+  shopId  = shopId  || process.env.SELLAUTH_SHOP_ID  || null;
+  shopUrl = shopUrl || process.env.SELLAUTH_SHOP_URL || null;
+  return { apiKey, shopId, shopUrl };
+}
+
+async function _createCheckoutSession(productId, variantId, channelId, creds) {
+  const { apiKey, shopId } = creds;
+
+  if (!apiKey)  throw new Error("SELLAUTH_API_KEY fehlt in Render Env oder Dashboard-Einstellungen.");
+  if (!shopId)  throw new Error("SELLAUTH_SHOP_ID fehlt in Render Env oder Dashboard-Einstellungen.");
+
+  const pId = parseInt(String(productId), 10);
+  const vId = parseInt(String(variantId), 10);
+  if (isNaN(pId)) throw new Error(`Ungültige Product-ID: "${productId}"`);
+  if (isNaN(vId)) throw new Error(`Ungültige Variant-ID: "${variantId}"`);
+
+  // affiliate: encode channelId (max 16 chars per Sellauth docs)
+  // channelId like -1003617992232 = 14 chars ✓
+  const affiliateStr = String(channelId).substring(0, 16);
+
+  const body = {
+    cart: [{
+      productId: pId,
+      variantId: vId,
+      quantity: 1
+    }],
+    affiliate: affiliateStr
+  };
+
+  logger.info(`[Packages] POST /shops/${shopId}/checkout cart=[${pId}/${vId}] affiliate="${affiliateStr}"`);
+
+  let resp;
+  try {
+    resp = await _saClient(apiKey).post(`/shops/${shopId}/checkout`, body);
+  } catch (axErr) {
+    const status = axErr.response?.status;
+    const data   = JSON.stringify(axErr.response?.data || axErr.message);
+    logger.error(`[Packages] Checkout ${status}: ${data}`);
+
+    if (status === 403) {
+      throw new Error("Sellauth Business Plan erforderlich für Checkout-API. Bitte Plan upgraden auf sellauth.com.");
+    }
+    if (status === 422) {
+      throw new Error(`Sellauth Validierungsfehler: ${data}`);
+    }
+    throw new Error(`Sellauth ${status || "Netzwerkfehler"}: ${data}`);
+  }
+
+  const result = resp.data;
+  logger.info(`[Packages] ✅ Checkout created: invoice_id=${result.invoice_id} url=${result.invoice_url}`);
+
+  if (!result.invoice_url) {
+    throw new Error(`Sellauth returned no invoice_url: ${JSON.stringify(result).substring(0, 200)}`);
+  }
+
+  return {
+    checkoutUrl: result.invoice_url,
+    invoiceId:   String(result.invoice_id),
+    url:         result.url || null  // gateway-specific (e.g. Stripe URL)
+  };
+}
+
+const packageService = {
+
+  async generateCheckoutUrl(pkg, channelId) {
+    if (!pkg.sellauth_variant_id) throw new Error(`Paket "${pkg.name}": Variant-ID fehlt.`);
+    if (!pkg.sellauth_product_id) throw new Error(`Paket "${pkg.name}": Product-ID fehlt.`);
+
+    // v1.4.47: Block if an active package already exists for this channel
+    try {
+      const { data: active } = await supabase.rpc("get_active_package", { p_channel_id: String(channelId) });
+      if (active && active.length > 0) {
+        const a = active[0];
+        const expStr = a.expires_at ? new Date(a.expires_at).toLocaleDateString("de-DE") : "noch nicht aktiviert";
+        throw new Error(`Dieser Channel hat bereits ein aktives Paket (läuft ${expStr}). Für mehr Credits kannst du stattdessen ein Refill-Paket kaufen.`);
+      }
+    } catch (e) {
+      if (e.message?.startsWith("Dieser Channel")) throw e;
+      // RPC not available → continue (migrate before deploy)
+    }
+
+    const creds = await _loadCreds();
+    const result = await _createCheckoutSession(
+      pkg.sellauth_product_id, pkg.sellauth_variant_id, channelId, creds
+    );
+    try {
+      await supabase.from("channel_purchases").insert([{
+        channel_id:          String(channelId),
+        package_id:          pkg.id,
+        sellauth_invoice_id: result.invoiceId,
+        credits_added:       pkg.credits,
+        duration_days:       pkg.duration_days || 30,
+        expires_at:          new Date(Date.now() + (pkg.duration_days || 30) * 86400000).toISOString(),
+        status:              "pending",
+        kind:                "package",
+        meta:                { package_name: pkg.name, price_eur: pkg.price_eur }
+      }]);
+    } catch (e) { logger.warn("[Packages] purchase log:", e.message); }
+    return result;
+  },
+/**
+   * Donation Flow — Credits stapeln ohne "aktives Paket"-Block
+   * kind="refill" → Credits werden auf bestehendes Guthaben addiert
+   * activated_at=null → 30-Tage-Counter wird NICHT zurückgesetzt
+   */
+  async generateDonationUrl(pkg, channelId, donorUserId) {
+    if (!pkg.sellauth_variant_id) throw new Error(`Paket "${pkg.name}": Variant-ID fehlt.`);
+    if (!pkg.sellauth_product_id) throw new Error(`Paket "${pkg.name}": Product-ID fehlt.`);
+
+    const creds = await _loadCreds();
+    const result = await _createCheckoutSession(
+      pkg.sellauth_product_id, pkg.sellauth_variant_id, channelId, creds
+    );
+
+    try {
+      await supabase.from("channel_purchases").insert([{
+        channel_id:          String(channelId),
+        package_id:          pkg.id,
+        sellauth_invoice_id: result.invoiceId,
+        credits_added:       pkg.credits,
+        duration_days:       30,
+        expires_at:          new Date(Date.now() + 30 * 86400000).toISOString(), // +30 Tage
+        status:              "pending",
+        kind:                "refill",
+        meta: {
+          type:          "refill",
+          source:        "donation",
+          package_name:  pkg.name,
+          price_eur:     pkg.price_eur,
+          donor_user_id: donorUserId ? String(donorUserId) : null
+        }
+      }]);
+    } catch (e) { logger.warn("[Packages] donation log:", e.message); }
+
+    return result;
+  },
+  /**
+   * Standard-Refill (oder Refill-Spende durch einen Dritten).
+   *
+   * @param {object} refill   - Zeile aus channel_refills
+   * @param {string} channelId
+   * @param {object} [extra]  - { donorUserId?: string|number }
+   *                            Wenn gesetzt, wird der Refill als Spende
+   *                            markiert und der Channel-Owner kann später
+   *                            informiert werden.
+   */
+  async generateRefillUrl(refill, channelId, extra = {}) {
+    if (!refill.sellauth_variant_id) throw new Error(`Refill "${refill.name}": Variant-ID fehlt.`);
+    if (!refill.sellauth_product_id) throw new Error(`Refill "${refill.name}": Product-ID fehlt.`);
+    const creds = await _loadCreds();
+    const result = await _createCheckoutSession(
+      refill.sellauth_product_id, refill.sellauth_variant_id, channelId, creds
+    );
+    const meta = { type: "refill", refill_name: refill.name, price_eur: refill.price_eur };
+    if (extra.donorUserId) {
+      meta.source = "donation";
+      meta.donor_user_id = String(extra.donorUserId);
+    }
+    try {
+      await supabase.from("channel_purchases").insert([{
+        channel_id:          String(channelId),
+        package_id:          null,
+        sellauth_invoice_id: result.invoiceId,
+        credits_added:       refill.credits,
+        duration_days:       30,
+        expires_at:          new Date(Date.now() + 30 * 86400000).toISOString(), // +30 Tage
+        status:              "pending",
+        kind:                "refill",
+        meta
+      }]);
+    } catch (e) { logger.warn("[Packages] refill log:", e.message); }
+    return result;
+  },
+
+  // ── Webhook handler ────────────────────────────────────────────────────────
+  // Sellauth sends: { event: "NOTIFICATION.SHOP_INVOICE_CREATED", data: { invoice_id: 1218 } }
+  // After payment:  { event: "NOTIFICATION.SHOP_INVOICE_COMPLETED", data: { invoice_id: 1218 } }
+  async handleWebhook(payload) {
+    const event     = payload.event || payload.type || "";
+    const invoiceId = String(payload.data?.invoice_id || payload.data?.id || payload.invoice?.id || payload.id || "");
+
+    // Only process completed payment events
+    const isCompleted =
+      event.includes("COMPLETED") ||
+      event === "invoice.completed" ||
+      event === "order.completed" ||
+      event === "completed" ||
+      payload.data?.status === "completed" ||
+      payload.invoice?.status === "completed" ||
+      payload.status === "completed";
+
+    if (!isCompleted) {
+      logger.info(`[Packages] Webhook event "${event}" not a completion — skipping`);
+      return { handled: false };
+    }
+
+    if (!invoiceId) {
+      logger.warn("[Packages] Webhook: no invoice_id found in payload", JSON.stringify(payload).substring(0, 200));
+      return { handled: false };
+    }
+
+    // Find our pending purchase by invoice_id (numeric or string)
+    let purchase = null;
+    try {
+      const r = await supabase.from("channel_purchases")
+        .select("*, channel_packages(*)")
+        .eq("sellauth_invoice_id", invoiceId).maybeSingle();
+      purchase = r.data;
+    } catch (_) {}
+
+    // Fallback: try affiliate field (channelId stored there)
+    let channelId = purchase?.channel_id;
+    if (!channelId) {
+      // Try to get channelId from invoice affiliate field
+      const affiliateInPayload = payload.data?.affiliate || payload.affiliate || null;
+      if (affiliateInPayload) channelId = affiliateInPayload;
+    }
+
+    const credits = purchase?.credits_added || 0;
+
+    if (!channelId || !credits) {
+      logger.warn("[Packages] Webhook: cannot resolve channelId or credits", { invoiceId, channelId, credits });
+      return { handled: false };
+    }
+
+    const isRefill = (purchase?.meta?.type === "refill");
+
+    let ch = null;
+    try {
+      const r2 = await supabase.from("bot_channels")
+        .select("token_used,token_limit,added_by_user_id,title,credits_expire_at")
+        .eq("id", String(channelId)).maybeSingle();
+      ch = r2.data;
+    } catch (_) {}
+    if (!ch) { logger.warn("[Packages] Channel not found:", channelId); return { handled: false }; }
+
+    try {
+      // Determine kind: prefer explicit column, fallback to meta.type / package_id
+      const purchaseKind = purchase?.kind
+        || (purchase?.meta?.type === "refill" ? "refill" : "package");
+      const days = purchase?.channel_packages?.duration_days || purchase?.duration_days || 30;
+
+      const update = {
+        status:        "completed",
+        kind:          purchaseKind,
+        duration_days: days,
+        credits_used:  0,
+        forfeited:     false
+      };
+
+      if (purchaseKind === "package") {
+        // Package: 30-Tage-Countdown startet SOFORT beim Kauf
+        update.activated_at = new Date().toISOString();
+      } else {
+        // Refill: verlängert Laufzeit um 30 Tage ab HEUTE
+        // credits_expire_at = MAX(bestehend, heute + 30 Tage)
+        const thirtyDaysFromNow = new Date(Date.now() + 30 * 86400000);
+        const existing          = ch?.credits_expire_at ? new Date(ch.credits_expire_at) : null;
+        const newExpiry         = existing && existing > thirtyDaysFromNow ? existing : thirtyDaysFromNow;
+
+        try {
+          await supabase.from("bot_channels")
+            .update({ credits_expire_at: newExpiry.toISOString() })
+            .eq("id", String(channelId));
+          logger.info(`[Packages] Refill: credits_expire_at → ${newExpiry.toISOString()} für Channel ${channelId}`);
+        } catch (e) { logger.warn("[Packages] expire update:", e.message); }
+
+        update.activated_at = new Date().toISOString();
+      }
+
+      if (purchase?.id) {
+        try {
+          await supabase.from("channel_purchases").update(update).eq("id", purchase.id);
+        } catch (e) { logger.warn("[Packages] purchase status update:", e.message); }
+      }
+
+      // Recompute aggregates into bot_channels
+      try {
+        await supabase.rpc("recompute_channel_budget", { p_channel_id: String(channelId) });
+      } catch (e) { logger.warn("[Packages] recompute_channel_budget:", e.message); }
+
+      // Read refreshed channel for admin notification
+      let finalExpiresAt = null;
+      try {
+        const { data: fresh } = await supabase.from("bot_channels")
+          .select("credits_expire_at, token_limit, token_used").eq("id", String(channelId)).maybeSingle();
+        finalExpiresAt = fresh?.credits_expire_at || null;
+        logger.info(`[Packages] ${purchaseKind === "refill" ? "Refill" : "Package"} ✅ ${credits} credits added to channel ${channelId} (limit:${fresh?.token_limit} used:${fresh?.token_used})`);
+      } catch (_) {}
+
+      return {
+        handled:   true,
+        channelId,
+        credits,
+        isRefill:  purchaseKind === "refill",
+        adminId:   ch.added_by_user_id,
+        title:     ch.title,
+        expiresAt: finalExpiresAt
+      };
+    } catch (e) {
+      logger.error("[Packages] Booking error:", e.message);
+      return { handled: false };
+    }
+  }
+};
+
+module.exports = packageService;

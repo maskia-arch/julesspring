@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <title>AI AdminHelper</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="manifest" href="/manifest.json">
+    <meta name="theme-color" content="#0d0d0d">
+    <link rel="apple-touch-icon" href="/icon-192.png">
+<style>
+    /* ── AdminHelper Dashboard (v2.0.0) ──────────────────────────────────── */
+    .kpi-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
+    .section-title { font-size:1.05rem; font-weight:800; margin:4px 0 12px; color:#e2e8f0; }
+    .sub-title { font-size:0.8rem; font-weight:700; color:#94a3b8; text-transform:uppercase; letter-spacing:0.05em; margin:14px 0 8px; }
+    .ah-tabbar { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+    .ah-tabbar .tab-btn { font-size:0.78rem; padding:7px 12px; border-radius:7px; border:1px solid #252525; background:#171717; color:#94a3b8; cursor:pointer; min-height:34px; }
+    .ah-tabbar .tab-btn.active { background:#1e3a5f; color:#93c5fd; border-color:#2563eb; font-weight:700; }
+    .ah-filter { width:100%; padding:9px; background:#1a1a1a; border:1px solid #333; border-radius:8px; color:#e2e8f0; margin-bottom:12px; font-size:0.85rem; }
+    .ah-cols { display:grid; grid-template-columns:1fr; gap:14px; }
+    @media (min-width:760px){ .ah-cols { grid-template-columns:1fr 1fr; } }
+    /* KPI-Leiste mobil: feste Höhe entfernen, 3 Spalten → 2 Reihen passen sauber */
+    .stats-bar { height:auto !important; min-height:0 !important; grid-template-columns:repeat(3,1fr) !important; }
+    .stat-card { cursor:default; padding:7px 8px !important; min-width:0; border-bottom:1px solid var(--border,#222); }
+    .stat-card:nth-child(3n) { border-right:none; }
+    .stat-card:nth-last-child(-n+3) { border-bottom:none; }
+    .stat-val { font-size:0.95rem !important; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    .stat-label { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+    @media (min-width:640px){ .stats-bar { grid-template-columns:repeat(6,1fr) !important; } .stat-card:nth-child(3n){ border-right:1px solid var(--border,#222);} .stat-card{ border-bottom:none;} }
+    .tab-pane { display:none; }
+    .tab-pane.active { display:block; }
+    .app-section { display:none; }
+    /* Touch-Targets in den Tab-Leisten etwas größer / scrollbar */
+    .ah-tabbar { overflow-x:auto; -webkit-overflow-scrolling:touch; flex-wrap:nowrap; }
+    .ah-tabbar::-webkit-scrollbar { display:none; }
+    .section-title { display:flex; align-items:center; gap:6px; }
+</style>
+</head>
+<body class="app-adminhelper">
+
+<!-- LOGIN -->
+<div id="login-overlay">
+    <div class="login-box">
+        <div style="font-size:2.2rem;margin-bottom:0.4rem;">🛡</div>
+        <h2>AI AdminHelper</h2>
+        <input type="text"     id="username" placeholder="Benutzername" autocomplete="username"     onkeydown="if(event.key==='Enter')handleLogin()">
+        <input type="password" id="password" placeholder="Passwort"     autocomplete="current-password" onkeydown="if(event.key==='Enter')handleLogin()">
+        <button onclick="handleLogin()">Anmelden</button>
+        <p id="login-error" style="color:#ff6b6b;font-size:0.85rem;margin-top:8px;display:none;"></p>
+    </div>
+</div>
+
+<!-- APP -->
+<div id="admin-app">
+
+    <!-- TOP NAVBAR -->
+    <nav class="navbar">
+        <div class="nav-logo">🛡 <span id="version-tag" class="version-tag"></span></div>
+        <button onclick="hardRefresh()" title="Daten neu laden" id="refresh-btn" style="background:none;border:1px solid #2e2e2e;color:#94a3b8;padding:5px 9px;border-radius:7px;cursor:pointer;font-size:0.85rem;margin-right:4px;">↺</button>
+        <div class="nav-links">
+            <button class="nav-btn" onclick="showSection('channels')"   id="nav-channels">📢 Channels</button>
+            <button class="nav-btn" onclick="showSection('overview')"   id="nav-overview">📊 Übersicht</button>
+            <button class="nav-btn" onclick="showSection('moderation')" id="nav-moderation">🛡 Moderation <span id="mod-badge" class="badge" style="display:none;">0</span></button>
+            <button class="nav-btn" onclick="showSection('engagement')" id="nav-engagement">🏆 Engagement</button>
+            <button class="nav-btn" onclick="showSection('geplant')"    id="nav-geplant">⏰ Geplant</button>
+            <button class="nav-btn" onclick="showSection('settings')"   id="nav-settings">⚙️</button>
+            <button class="nav-btn nav-logout" onclick="handleLogout()">↩</button>
+        </div>
+    </nav>
+
+    <!-- KPI-LEISTE -->
+    <div class="stats-bar">
+        <div class="stat-card"><div class="stat-label">Channels</div><div class="stat-val" id="s-channels">–</div></div>
+        <div class="stat-card"><div class="stat-label">KI aktiv</div><div class="stat-val" id="s-active">–</div></div>
+        <div class="stat-card"><div class="stat-label">Mitglieder</div><div class="stat-val" id="s-members">–</div></div>
+        <div class="stat-card"><div class="stat-label">Scam</div><div class="stat-val" id="s-scam">–</div></div>
+        <div class="stat-card"><div class="stat-label">Reviews</div><div class="stat-val" id="s-pending">–</div></div>
+        <div class="stat-card"><div class="stat-label">Credits</div><div class="stat-val" id="s-credits">–</div><div class="stat-sub" id="s-credits-sub"></div></div>
+    </div>
+
+    <!-- CONTENT -->
+    <div id="app-content">
+
+        <!-- ══ ÜBERSICHT ══════════════════════════════════════════════════ -->
+        <section id="overview-section" class="app-section">
+            <h2 class="section-title">📊 Übersicht</h2>
+            <div id="overview-kpi" class="kpi-grid"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+            <div class="ah-cols" style="margin-top:18px;">
+                <div>
+                    <div class="sub-title">🔥 Top-Channels (Credits)</div>
+                    <div id="overview-top"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                </div>
+                <div>
+                    <div class="sub-title">📡 Letzte Aktivität</div>
+                    <div id="overview-feed" style="background:#0d0d0d;border:1px solid #1a1a1a;border-radius:10px;overflow:hidden;"><p style="color:#555;font-size:0.85rem;padding:10px;">Lädt…</p></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- ══ CHANNELS ═══════════════════════════════════════════════════ -->
+        <section id="channels-section" class="app-section">
+            <h2 class="section-title">📢 Channels &amp; Gruppen</h2>
+            <div class="card">
+                <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Channels &amp; Gruppen, in denen der Bot Admin ist. Tippe eine Karte an für Verwaltung, KI, Credits, Scamliste &amp; geplante Nachrichten.</p>
+                <div id="channel-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                <button onclick="scanAndLoadChannels()" class="btn btn-secondary btn-sm" style="margin-top:8px;">🔍 Scannen &amp; Aktualisieren</button>
+            </div>
+            <div class="card" style="margin-top:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <h3 class="card-title" style="margin:0;">🔗 Channel-Gruppen</h3>
+                    <button onclick="createChannelGroupUI()" class="btn btn-secondary btn-sm">+ Neu</button>
+                </div>
+                <p style="font-size:0.78rem;color:#888;margin-bottom:8px;">Verknüpfte Channels teilen Datenbank &amp; System-Prompt.</p>
+                <div id="channel-groups-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+            </div>
+        </section>
+
+        <!-- ══ MODERATION ═════════════════════════════════════════════════ -->
+        <section id="moderation-section" class="app-section">
+            <h2 class="section-title">🛡 Moderation</h2>
+            <select id="mod-channel-filter" class="ah-filter" onchange="loadModeration(_modTab)"></select>
+            <div class="ah-tabbar">
+                <button class="tab-btn mod-tab-btn active" id="modtab-pending"   onclick="loadModeration('pending',this)">⚠️ Reviews</button>
+                <button class="tab-btn mod-tab-btn"        id="modtab-scam"      onclick="loadModeration('scam',this)">⛔ Scamliste</button>
+                <button class="tab-btn mod-tab-btn"        id="modtab-banned"    onclick="loadModeration('banned',this)">🚫 Gebannt</button>
+                <button class="tab-btn mod-tab-btn"        id="modtab-spam"      onclick="loadModeration('spam',this)">🔇 Spam</button>
+                <button class="tab-btn mod-tab-btn"        id="modtab-reports"   onclick="loadModeration('reports',this)">🗣 @admin</button>
+                <button class="tab-btn mod-tab-btn"        id="modtab-blacklist" onclick="loadModeration('blacklist',this)">🔠 Wörter</button>
+            </div>
+            <div id="mod-content"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+        </section>
+
+        <!-- ══ ENGAGEMENT ═════════════════════════════════════════════════ -->
+        <section id="engagement-section" class="app-section">
+            <h2 class="section-title">🏆 Engagement</h2>
+            <select id="eng-channel-filter" class="ah-filter" onchange="loadEngagement(_engTab)"></select>
+            <div class="ah-tabbar">
+                <button class="tab-btn eng-tab-btn active" id="engtab-diss"      onclick="loadEngagement('diss',this)">⚔️ Diss-Battle</button>
+                <button class="tab-btn eng-tab-btn"        id="engtab-activity"  onclick="loadEngagement('activity',this)">📈 Aktivität</button>
+                <button class="tab-btn eng-tab-btn"        id="engtab-summaries" onclick="loadEngagement('summaries',this)">📰 Zusammenfassungen</button>
+            </div>
+            <div id="eng-content"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+        </section>
+
+        <!-- ══ GEPLANTE NACHRICHTEN ═══════════════════════════════════════ -->
+        <section id="geplant-section" class="app-section">
+            <h2 class="section-title">⏰ Geplante Nachrichten</h2>
+            <div class="card">
+                <h3 class="card-title">➕ Neue Nachricht planen</h3>
+                <label style="font-size:0.72rem;color:#94a3b8;display:block;margin-bottom:3px;">Channel</label>
+                <select id="sched-channel" class="ah-filter" style="margin-bottom:8px;"></select>
+                <textarea id="sched-message" rows="3" placeholder="Nachrichtentext…" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:8px;"></textarea>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+                    <div>
+                        <label style="font-size:0.72rem;color:#94a3b8;display:block;margin-bottom:3px;">Zeitpunkt</label>
+                        <input type="datetime-local" id="sched-when" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                    </div>
+                    <div>
+                        <label style="font-size:0.72rem;color:#94a3b8;display:block;margin-bottom:3px;">Wiederholung</label>
+                        <select id="sched-repeat" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                            <option value="">Einmalig</option>
+                            <option value="hourly">Stündlich</option>
+                            <option value="daily">Täglich</option>
+                            <option value="weekly">Wöchentlich</option>
+                        </select>
+                    </div>
+                </div>
+                <button onclick="createScheduledMsg()" class="btn btn-success btn-full">💾 Planen</button>
+            </div>
+            <div class="card" style="margin-top:12px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                    <h3 class="card-title" style="margin:0;">📋 Aktive Planungen</h3>
+                    <button onclick="loadGeplant()" class="btn btn-secondary btn-sm">↺</button>
+                </div>
+                <select id="geplant-filter" class="ah-filter" onchange="loadGeplant()"></select>
+                <div id="geplant-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+            </div>
+        </section>
+
+        <!-- ══ EINSTELLUNGEN ══════════════════════════════════════════════ -->
+        <section id="settings-section" class="app-section">
+            <h2 class="section-title">⚙️ Einstellungen</h2>
+            <div class="ah-tabbar">
+                <button class="tab-btn set-tab-btn active" id="settab-smalltalk" onclick="showSettingsTab('smalltalk-cfg',this)">💬 Bot / KI</button>
+                <button class="tab-btn set-tab-btn"        id="settab-pakete"    onclick="showSettingsTab('pakete-cfg',this)">📦 Pakete</button>
+                <button class="tab-btn set-tab-btn"        id="settab-userinfo"  onclick="showSettingsTab('userinfo-cfg',this)">🔍 UserInfo Pro</button>
+                <button class="tab-btn set-tab-btn"        id="settab-sellauth"  onclick="showSettingsTab('sellauth-cfg',this)">🛒 Sellauth</button>
+                <button class="tab-btn set-tab-btn"        id="settab-push"      onclick="showSettingsTab('push-cfg',this)">🔔 Push</button>
+            </div>
+
+            <!-- Bot / Smalltalk -->
+            <div id="settings-tab-smalltalk-cfg" class="tab-pane active">
+                <div class="card">
+                    <h3 class="card-title">💬 KI-Assistent (Channel-Bot)</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Persönlichkeit &amp; Modell des Bots für <b>/ai</b>-Befehle in Channels.</p>
+                    <div class="form-group"><label>System-Prompt</label>
+                        <textarea id="smalltalk-system-prompt" rows="5" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.8rem;resize:vertical;" placeholder="Du bist ein freundlicher KI-Assistent…"></textarea>
+                    </div>
+                    <div class="form-group"><label>Modell</label>
+                        <select id="smalltalk-model" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                            <option value="autoacts-fast">AutoActsAi Fast — DeepSeek V4 Flash</option>
+                            <option value="autoacts-think">AutoActsAi Think — DeepSeek V4 Flash (Thinking)</option>
+                            <option value="openai">OpenAI — GPT 5.4 Nano</option>
+                            <option value="grok">Grok AI</option>
+                        </select>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                        <div class="form-group"><label>Max Tokens</label>
+                            <input type="number" id="smalltalk-max-tokens" min="50" max="400" value="200" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        </div>
+                        <div class="form-group"><label>Temperature</label>
+                            <input type="number" id="smalltalk-temperature" min="0" max="1" step="0.1" value="0.8" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        </div>
+                    </div>
+                    <div class="form-group"><label>Bot Token</label>
+                        <p style="font-size:0.8rem;color:#888;margin:4px 0 6px;">Der Bot-Token wird aus der Server-Umgebungsvariable <b>SMALLTALK_BOT_TOKEN</b> (in Render) gelesen und ist hier aus Sicherheitsgründen nicht editierbar.</p>
+                        <div id="smalltalk-bot-status" style="margin-bottom:4px;"></div>
+                        <button onclick="loadSmallTalkStatus()" class="btn btn-secondary btn-sm" style="margin-top:4px;">🔍 Verbindung testen</button>
+                    </div>
+                    <div class="form-group">
+                        <label><input type="checkbox" id="smalltalk-require-approval" style="margin-right:6px;"> Manuelle Freischaltung neuer Channels erforderlich</label>
+                    </div>
+                    <div class="form-group"><label>Smalltalk KB-Kategorie</label>
+                        <select id="smalltalk-kb-category" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                            <option value="">– Keine –</option>
+                        </select>
+                    </div>
+                    <button onclick="saveSmallTalkSettings()" class="btn btn-success btn-full">💾 Speichern</button>
+                </div>
+                <div class="card" style="margin-top:12px;">
+                    <h3 class="card-title">✈️ Telegram Webhook</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:8px;">Der Webhook wird beim Serverstart automatisch gesetzt. Auf Render genügt die automatische <b>RENDER_EXTERNAL_URL</b>; alternativ <b>APP_URL</b> setzen oder die App-URL hier hinterlegen.</p>
+                    <div class="form-group">
+                        <label>App-URL (Render.com)</label>
+                        <input type="text" id="webhook-app-url" placeholder="https://dein-bot.onrender.com" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-secondary btn-sm">💾 App-URL speichern</button>
+                </div>
+            </div>
+
+            <!-- Pakete -->
+            <div id="settings-tab-pakete-cfg" class="tab-pane">
+                <div class="card" style="margin-bottom:12px;">
+                    <h3 class="card-title">🛠 Channel-Verwaltung</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">Credits manuell vergeben, Pakete buchen oder Laufzeit anpassen.</p>
+                    <div id="channel-admin-list-pkg"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                    <div id="ch-edit-form-pkg" style="display:none;margin-top:12px;background:#0d1117;border:1px solid #1e3a5f;border-radius:6px;padding:12px;">
+                        <div style="font-weight:700;color:#60a5fa;margin-bottom:8px;">✏️ <span id="ch-edit-name-pkg"></span></div>
+                        <input type="hidden" id="ch-edit-id-pkg">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                            <input type="number" id="ch-edit-credits-pkg" placeholder="Neues Credit-Limit" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                            <input type="date" id="ch-edit-expires-pkg" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        </div>
+                        <div style="display:flex;gap:12px;margin-bottom:8px;font-size:0.82rem;">
+                            <label style="display:flex;align-items:center;gap:4px;"><input type="checkbox" id="ch-edit-ai-pkg"> KI aktiviert</label>
+                            <label style="display:flex;align-items:center;gap:4px;"><input type="checkbox" id="ch-edit-reset-pkg"> Verbrauch zurücksetzen</label>
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            <button onclick="saveChannelEditPkg()" class="btn btn-success btn-sm" style="flex:1;">💾 Speichern</button>
+                            <button onclick="document.getElementById('ch-edit-form-pkg').style.display='none'" class="btn btn-secondary btn-sm">Abbrechen</button>
+                        </div>
+                    </div>
+                    <div id="ch-pkg-form-pkg" style="display:none;margin-top:12px;background:#0d1117;border:1px solid #14532d;border-radius:6px;padding:12px;">
+                        <div style="font-weight:700;color:#4ade80;margin-bottom:8px;">📦 Paket buchen für <span id="ch-pkg-name-pkg"></span></div>
+                        <input type="hidden" id="ch-pkg-id-pkg">
+                        <select id="ch-pkg-select-pkg" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:8px;"></select>
+                        <div style="display:flex;gap:8px;">
+                            <button onclick="savePackageBookPkg()" class="btn btn-success btn-sm" style="flex:1;">✅ Manuell buchen</button>
+                            <button onclick="document.getElementById('ch-pkg-form-pkg').style.display='none'" class="btn btn-secondary btn-sm">Abbrechen</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card" style="margin-bottom:12px;">
+                    <h3 class="card-title">📦 Channel-Pakete</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">Sellauth Checkout-Pakete. Benötigt Sellauth Business Plan.</p>
+                    <div style="background:#0d1117;border:1px solid #1e3a5f;border-radius:6px;padding:10px;margin-bottom:12px;font-size:0.78rem;">
+                        <div style="color:#60a5fa;font-weight:700;margin-bottom:4px;">📡 Webhook URL</div>
+                        <div style="font-family:monospace;color:#94a3b8;word-break:break-all;" id="webhook-url-display2">Lädt…</div>
+                        <div style="color:#555;margin-top:4px;">Sellauth → Settings → Webhooks → eintragen</div>
+                    </div>
+                    <div id="packages-list-pkg"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                    <div id="package-edit-form-pkg" style="margin-top:12px;display:none;background:#0d1117;border:1px solid #1e3a5f;border-radius:6px;padding:12px;">
+                        <input type="hidden" id="pkg-id-pkg">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                            <input type="text"   id="pkg-name-pkg"    placeholder="Name (z.B. Pro)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                            <input type="number" id="pkg-price-pkg"   placeholder="Preis (€)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                            <input type="number" id="pkg-credits-pkg" placeholder="Credits" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                            <input type="text"   id="pkg-desc-pkg"    placeholder="Beschreibung" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                            <input type="text" id="pkg-product-id-pkg" placeholder="Sellauth Product-ID" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                            <input type="text" id="pkg-variant-id-pkg"  placeholder="Sellauth Variant-ID" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        </div>
+                        <input type="number" id="pkg-days-pkg" value="30" placeholder="Laufzeit (Tage)" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:8px;">
+                        <div style="background:#111;border-radius:6px;padding:8px;margin-bottom:8px;">
+                            <div style="font-size:0.75rem;color:#60a5fa;margin-bottom:4px;">🔍 Varianten aus Sellauth laden (Product-ID eingeben + klicken)</div>
+                            <select id="pkg-variant-lookup-pkg" style="width:100%;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;"></select>
+                            <button onclick="loadVariantsPkg()" style="width:100%;margin-top:4px;padding:6px;background:#1e3a5f;color:#60a5fa;border:none;border-radius:4px;cursor:pointer;font-size:0.75rem;">🔄 Varianten laden</button>
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            <button onclick="savePackagePkg()" class="btn btn-success btn-sm" style="flex:1;">💾 Speichern</button>
+                            <button onclick="hidePackageFormPkg()" class="btn btn-secondary btn-sm">Abbrechen</button>
+                        </div>
+                    </div>
+                    <button onclick="showPackageFormPkg()" class="btn btn-secondary btn-sm" style="width:100%;margin-top:10px;">➕ Paket anlegen</button>
+                </div>
+
+                <div class="card">
+                    <h3 class="card-title">🔋 Refill-Optionen</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">Credit-Nachladung ohne Laufzeitverlängerung.</p>
+                    <div id="refills-list-pkg"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                    <div id="refill-edit-form-pkg" style="margin-top:12px;display:none;background:#0d1117;border:1px solid #14532d;border-radius:6px;padding:12px;">
+                        <input type="hidden" id="rf-id-pkg">
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                            <input type="text"   id="rf-name-pkg"       placeholder="Name" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                            <input type="number" id="rf-price-pkg"      placeholder="Preis (€)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                            <input type="number" id="rf-credits-pkg"    placeholder="Credits" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                            <input type="text"   id="rf-desc-pkg"       placeholder="Beschreibung" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        </div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                            <input type="text" id="rf-product-id-pkg" placeholder="Product-ID" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                            <input type="text" id="rf-variant-id-pkg"  placeholder="Variant-ID" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        </div>
+                        <div style="background:#111;border-radius:6px;padding:8px;margin-bottom:8px;">
+                            <div style="font-size:0.75rem;color:#4ade80;margin-bottom:4px;">🔍 Varianten aus Sellauth laden</div>
+                            <select id="rf-variant-lookup-pkg" style="width:100%;padding:6px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;"></select>
+                            <button onclick="loadVariantsRefillPkg()" style="width:100%;margin-top:4px;padding:6px;background:#14532d;color:#4ade80;border:none;border-radius:4px;cursor:pointer;font-size:0.75rem;">🔄 Varianten laden</button>
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            <button onclick="saveRefillPkg()" class="btn btn-success btn-sm" style="flex:1;">💾 Speichern</button>
+                            <button onclick="hideRefillFormPkg()" class="btn btn-secondary btn-sm">Abbrechen</button>
+                        </div>
+                    </div>
+                    <button onclick="showRefillFormPkg()" class="btn btn-secondary btn-sm" style="width:100%;margin-top:10px;">➕ Refill anlegen</button>
+                </div>
+            </div>
+
+            <!-- UserInfo Pro (repariert) -->
+            <div id="settings-tab-userinfo-cfg" class="tab-pane">
+                <div class="card">
+                    <h3 class="card-title">🔍 UserInfo Pro</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Nutzer mit unbegrenzten <b>/userinfo</b>-Abfragen. Kostenlose User: 5 Abfragen/Tag bot-übergreifend.</p>
+                    <div class="form-group">
+                        <label>Telegram ID *</label>
+                        <input type="number" id="ui-pro-id" placeholder="z.B. 123456789" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:6px;">
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                        <input type="text" id="ui-pro-username" placeholder="@username (optional)" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <input type="text" id="ui-pro-note" placeholder="Notiz / Kundennummer" style="padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                    </div>
+                    <input type="date" id="ui-pro-expires" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;margin-bottom:10px;" title="Ablaufdatum (leer = unbegrenzt)">
+                    <button onclick="addProUser()" class="btn btn-success btn-full">➕ Pro-Nutzer hinzufügen</button>
+                </div>
+                <div class="card" style="margin-top:12px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                        <h3 class="card-title" style="margin:0;">📋 Pro-Nutzer</h3>
+                        <button onclick="loadProUsers()" class="btn btn-secondary btn-sm">↺</button>
+                    </div>
+                    <div id="userinfo-pro-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
+                </div>
+            </div>
+
+            <!-- Sellauth -->
+            <div id="settings-tab-sellauth-cfg" class="tab-pane">
+                <div class="card">
+                    <h3 class="card-title">🛒 Sellauth Zugangsdaten</h3>
+                    <div class="form-group">
+                        <label>API Key</label>
+                        <input type="password" id="sellauth-api-key" placeholder="sa_..." autocomplete="off" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                        <p class="hint">Dashboard → Account → API Access</p>
+                    </div>
+                    <div class="form-group">
+                        <label>Shop ID</label>
+                        <input type="text" id="sellauth-shop-id" placeholder="12345" autocomplete="off" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                    </div>
+                    <div class="form-group">
+                        <label>Shop URL</label>
+                        <input type="text" id="sellauth-shop-url" placeholder="https://valueshop25.sellauth.com" autocomplete="off" style="width:100%;padding:8px;background:#1a1a1a;border:1px solid #333;border-radius:6px;color:#e2e8f0;">
+                    </div>
+                    <button onclick="saveSettings()" class="btn btn-success btn-full">💾 Speichern</button>
+                </div>
+            </div>
+
+            <!-- Push -->
+            <div id="settings-tab-push-cfg" class="tab-pane">
+                <div class="card" style="border-color:#1e3a5f;">
+                    <h3 class="card-title">🔔 Push-Benachrichtigungen</h3>
+                    <p style="font-size:0.8rem;color:#888;margin-bottom:10px;">Erhalte Meldungen (z.B. neue @admin-Reports), auch wenn das Dashboard geschlossen ist.</p>
+                    <div id="push-status"><p style="color:#666;font-size:0.875rem;">Wird geladen...</p></div>
+                </div>
+            </div>
+        </section>
+
+    </div>
+</div>
+
+<script src="js/api.js?v=200"></script>
+<script src="js/dashboard.js?v=200"></script>
+<script>
+    /* AI AdminHelper Dashboard v2.0.0 */
+    window.__APP_TYPE__ = 'adminhelper';
+
+    function showSection(id) {
+        document.querySelectorAll('.app-section').forEach(function(s) { s.style.display = 'none'; });
+        document.querySelectorAll('.nav-btn').forEach(function(b) { b.classList.remove('active'); });
+        var sec = document.getElementById(id + '-section');
+        if (sec) sec.style.display = 'block';
+        var btn = document.getElementById('nav-' + id);
+        if (btn) btn.classList.add('active');
+        try {
+            if (id === 'overview')   { if (typeof loadOverview   === 'function') loadOverview(); }
+            if (id === 'channels')   { if (typeof loadChannels   === 'function') loadChannels(); }
+            if (id === 'moderation') { if (typeof loadModeration === 'function') loadModeration(window._modTab || 'pending'); }
+            if (id === 'engagement') { if (typeof loadEngagement === 'function') loadEngagement(window._engTab || 'diss'); }
+            if (id === 'geplant')    { if (typeof loadGeplant    === 'function') loadGeplant(); }
+            if (id === 'settings')   {
+                if (typeof loadSettings === 'function') loadSettings();
+                if (typeof loadChannels === 'function') loadChannels();
+                if (typeof _initPaketeTab === 'function') _initPaketeTab();
+                if (typeof loadProUsers === 'function') loadProUsers();
+                if (typeof loadChannelGroups === 'function') loadChannelGroups();
+                if (typeof loadSmallTalkStatus === 'function') loadSmallTalkStatus();
+            }
+        } catch(e) { console.warn('[showSection]', id, e.message); }
+    }
+
+    function showSettingsTab(tab, btn) {
+        document.querySelectorAll('#settings-section .tab-pane').forEach(function(p) { p.classList.remove('active'); });
+        document.querySelectorAll('#settings-section .set-tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        var el = document.getElementById('settings-tab-' + tab);
+        if (el) el.classList.add('active');
+        if (btn) btn.classList.add('active');
+        try {
+            if (tab === 'pakete-cfg'   && typeof _initPaketeTab === 'function') _initPaketeTab();
+            if (tab === 'userinfo-cfg' && typeof loadProUsers === 'function') loadProUsers();
+            if (tab === 'smalltalk-cfg') {
+                if (typeof loadSmallTalkStatus === 'function') loadSmallTalkStatus();
+                if (window.api && api.request) api.request('/settings').then(function(s){ if (s && typeof loadSmallTalkSettings === 'function') loadSmallTalkSettings(s); }).catch(function(){});
+            }
+        } catch(e) { console.warn('[showSettingsTab]', tab, e.message); }
+    }
+
+    async function handleLogin() {
+        var user = document.getElementById('username').value.trim();
+        var pass = document.getElementById('password').value;
+        var err  = document.getElementById('login-error');
+        err.style.display = 'none';
+        try {
+            var r = await fetch('/api/admin/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({username:user,password:pass}) });
+            var d = await r.json();
+            if (r.ok && d.token) {
+                localStorage.setItem('admin_token', d.token);
+                document.getElementById('login-overlay').style.display = 'none';
+                document.getElementById('admin-app').style.display     = 'flex';
+                if (typeof initDashboard === 'function') initDashboard();
+                showSection('channels');
+            } else { err.style.display = 'block'; err.textContent = d.error || 'Zugriff verweigert'; }
+        } catch(e) { err.style.display='block'; err.textContent='Verbindung fehlgeschlagen'; }
+    }
+
+    function handleLogout() { localStorage.removeItem('admin_token'); window.location.reload(); }
+
+    if (localStorage.getItem('admin_token')) {
+        document.getElementById('login-overlay').style.display = 'none';
+        document.getElementById('admin-app').style.display     = 'flex';
+        showSection('channels');
+        setTimeout(function() { if (typeof initDashboard === 'function') initDashboard(); }, 50);
+    }
+</script>
+</body>
+</html>

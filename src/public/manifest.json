@@ -1,0 +1,15 @@
+{
+  "name": "AI Assistant Admin",
+  "short_name": "AI Admin",
+  "description": "Admin Dashboard für AI Support Assistent",
+  "start_url": "/admin",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#0d0d0d",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/icon-72.png",  "sizes": "72x72",   "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

@@ -1,0 +1,449 @@
+const axios = require("axios");
+const supabase = require("../../config/supabase");
+const safelistService = require("./safelistService");
+const { markdownToHtml, splitHtmlMessage } = require("../../utils/telegramFormatter");
+
+const DICT = {
+  de: {
+    admin_menu: "⚙️ <b>Admin-Menü</b>\nWähle eine Funktion:",
+    clean: "🧹 Gelöschte Accounts entfernen",
+    pin: "📌 Nachricht pinnen",
+    count: "📋 Mitglieder-Anzahl",
+    del_last: "🗑 Letzte Nachricht löschen",
+    sched: "⏰ Geplante Nachrichten",
+    safe: "🛡 Safelist verwalten",
+    no_admin: "❌ Nur für Admins.",
+    clean_res: "🧹 Ergebnis: {checked} Mitglieder geprüft, {removed} gelöschte Accounts entfernt.",
+    count_res: "👥 Aktuelle Mitgliederzahl: <b>{count}</b>",
+    pin_ok: "📌 Nachricht angeheftet!",
+    pin_err: "Antworte auf die Nachricht die gepinnt werden soll mit /pin",
+    sched_none: "⏰ Keine geplanten Nachrichten.\n\nNutze das Dashboard um Nachrichten zu planen.",
+    sched_list: "⏰ <b>Geplante Nachrichten:</b>\n{list}"
+  },
+  en: {
+    admin_menu: "⚙️ <b>Admin Menu</b>\nSelect a function:",
+    clean: "🧹 Remove deleted accounts",
+    pin: "📌 Pin message",
+    count: "📋 Member count",
+    del_last: "🗑 Delete last message",
+    sched: "⏰ Scheduled messages",
+    safe: "🛡 Manage Safelist",
+    no_admin: "❌ Admins only.",
+    clean_res: "🧹 Result: {checked} members checked, {removed} deleted accounts removed.",
+    count_res: "👥 Current member count: <b>{count}</b>",
+    pin_ok: "📌 Message pinned!",
+    pin_err: "Reply to the message you want to pin with /pin",
+    sched_none: "⏰ No scheduled messages.\n\nUse the dashboard to schedule messages.",
+    sched_list: "⏰ <b>Scheduled messages:</b>\n{list}"
+  }
+};
+
+function t(key, lang) {
+  const l = DICT[lang] ? lang : (DICT["en"] ? "en" : "de");
+  return DICT[l]?.[key] || DICT["de"][key] || key;
+}
+
+function tgApi(token) {
+  const base = `https://api.telegram.org/bot${token}`;
+  return {
+    async call(method, params = {}) {
+      const r = await axios.post(`${base}/${method}`, params, { timeout: 10000 });
+      return r.data?.result;
+    },
+
+    // send(): AI-Antworten und Bot-Nachrichten — konvertiert Markdown→HTML
+    // und splittet automatisch bei langen Texten (>4000 Zeichen).
+    async send(chatId, text, extra = {}) {
+      const html   = markdownToHtml(String(text || ''));
+      const chunks = splitHtmlMessage(html, 4000);
+      if (chunks.length === 0) return null;
+      let lastMsg = null;
+      for (let i = 0; i < chunks.length; i++) {
+        try {
+          lastMsg = await this.call("sendMessage", {
+            chat_id: chatId,
+            text: chunks[i],
+            parse_mode: "HTML",
+            disable_web_page_preview: true,
+            ...extra
+          });
+        } catch (e) {
+          // Fallback: ohne parse_mode (für den Fall invalider Entities)
+          const plain = chunks[i].replace(/<[^>]+>/g, '');
+          lastMsg = await this.call("sendMessage", {
+            chat_id: chatId, text: plain, ...extra
+          }).catch(() => null);
+        }
+        if (chunks.length > 1 && i < chunks.length - 1) {
+          await new Promise(r => setTimeout(r, 300));
+        }
+      }
+      return lastMsg;
+    },
+    async sendPhoto(chatId, photo, caption, extra = {}) { return this.call("sendPhoto", { chat_id: chatId, photo, caption, parse_mode: "HTML", ...extra }); },
+    async sendVideo(chatId, video, caption, extra = {}) { return this.call("sendVideo", { chat_id: chatId, video, caption, parse_mode: "HTML", ...extra }); },
+    async sendAnimation(chatId, animation, caption, extra = {}) { return this.call("sendAnimation", { chat_id: chatId, animation, caption, parse_mode: "HTML", ...extra }); },
+    async kick(chatId, userId) { return this.call("banChatMember", { chat_id: chatId, user_id: userId, revoke_messages: false }); },
+    async unban(chatId, userId) { return this.call("unbanChatMember", { chat_id: chatId, user_id: userId, only_if_banned: true }); },
+    async getMember(chatId, userId) { return this.call("getChatMember", { chat_id: chatId, user_id: userId }); },
+    async getAdmins(chatId) { return this.call("getChatAdministrators", { chat_id: chatId }) || []; },
+    async deleteMessage(chatId, msgId) { return this.call("deleteMessage", { chat_id: chatId, message_id: msgId }); },
+    async pinMessage(chatId, msgId, disableNotif = false) { return this.call("pinChatMessage", { chat_id: chatId, message_id: msgId, disable_notification: disableNotif }); },
+    async restrictMember(chatId, userId, permissions, until = 0) { return this.call("restrictChatMember", { chat_id: chatId, user_id: userId, permissions, until_date: until }); },
+    async isUserAdmin(chatId, userId) {
+      try {
+        const admins = await this.getAdmins(chatId);
+        return admins.some(a => String(a.user?.id) === String(userId));
+      } catch (e) {
+        return false;
+      }
+    }
+  };
+}
+
+const tgAdminHelper = {
+  async trackMember(channelId, user) {
+    if (!user?.id) return;
+    try {
+      const { data: ext } = await supabase.from("channel_members").select("username, first_name").eq("channel_id", channelId).eq("user_id", user.id).maybeSingle();
+      if (ext && (ext.username !== user.username || ext.first_name !== user.first_name)) {
+        await supabase.from("user_name_history").insert([{ user_id: user.id, username: user.username, first_name: user.first_name, last_name: user.last_name }]);
+      } else if (!ext) {
+        await supabase.from("user_name_history").insert([{ user_id: user.id, username: user.username, first_name: user.first_name, last_name: user.last_name }]);
+      }
+      await supabase.from("channel_members").upsert([{
+        channel_id: channelId, user_id: user.id, username: user.username || null, first_name: user.first_name || null, last_seen: new Date(), is_deleted: false
+      }], { onConflict: "channel_id,user_id" });
+    } catch (e) {}
+  },
+
+  async trackLeft(channelId, userId) {
+    try { await supabase.from("channel_members").delete().eq("channel_id", channelId).eq("user_id", userId); } catch (_) {}
+  },
+
+  async cleanDeletedAccounts(token, channelId) {
+    const tg = tgApi(token);
+    const { data: members } = await supabase.from("channel_members").select("user_id, first_name, username").eq("channel_id", channelId).eq("is_deleted", false).limit(200);
+    if (!members?.length) return { removed: 0, checked: 0 };
+    let removed = 0, checked = 0;
+    for (const m of members) {
+      try {
+        const cm = await tg.getMember(channelId, m.user_id);
+        checked++;
+        const isDeleted = !cm?.user?.first_name && !cm?.user?.username && cm?.status !== "left" && cm?.status !== "kicked";
+        if (isDeleted || cm?.user?.is_deleted) {
+          await tg.kick(channelId, m.user_id); await tg.unban(channelId, m.user_id);
+          await supabase.from("channel_members").update({ is_deleted: true }).eq("channel_id", channelId).eq("user_id", m.user_id);
+          removed++; await new Promise(r => setTimeout(r, 300));
+        }
+      } catch { }
+    }
+    return { removed, checked };
+  },
+
+  async sendAdminMenu(token, chatId, msgId = null, userLang = "de") {
+    const tg = tgApi(token);
+    const keyboard = {
+      inline_keyboard: [
+        [{ text: t("clean", userLang), callback_data: "admin_clean" }],
+        [{ text: t("pin", userLang), callback_data: "admin_pin_last" }],
+        [{ text: t("count", userLang), callback_data: "admin_count" }],
+        [{ text: t("del_last", userLang), callback_data: "admin_del_last" }],
+        [{ text: t("sched", userLang), callback_data: "admin_schedule" }],
+        [{ text: t("safe", userLang), callback_data: "admin_safelist" }]
+      ]
+    };
+    return tg.send(chatId, t("admin_menu", userLang), { reply_markup: keyboard, ...(msgId ? { reply_to_message_id: msgId } : {}) });
+  },
+
+  async handleCallback(token, query, channel) {
+    const tg = tgApi(token);
+    const data = query.data;
+    const chatId = query.message?.chat?.id;
+    const userId = query.from?.id;
+    const targetChatId = query.extractedChannelId || chatId;
+    const baseData = query.extractedChannelId ? data.replace('_' + query.extractedChannelId, '') : data;
+    const lang = channel?.bot_language || query.from?.language_code?.substring(0, 2) || "de";
+
+    const isAdmin = await tg.isUserAdmin(targetChatId, userId);
+    if (!isAdmin) {
+      await tg.call("answerCallbackQuery", { callback_query_id: query.id, text: t("no_admin", lang) });
+      return;
+    }
+
+    await tg.call("answerCallbackQuery", { callback_query_id: query.id });
+
+    if (baseData.startsWith("safelist_del_") || baseData.startsWith("del_safelist_")) {
+      const idToDel = baseData.split("_").pop();
+      if (safelistService && safelistService.removeFromSafelist) {
+        await safelistService.removeFromSafelist(String(targetChatId), idToDel);
+        await safelistService.sendSafelistMenu(token, targetChatId, chatId, query.message.message_id);
+      }
+      return;
+    }
+
+    switch (baseData) {
+      case "admin_clean": {
+        const { removed, checked } = await this.cleanDeletedAccounts(token, String(targetChatId));
+        await tg.send(chatId, t("clean_res", lang).replace("{checked}", checked).replace("{removed}", removed));
+        break;
+      }
+      case "admin_count": {
+        const count = await tg.call("getChatMembersCount", { chat_id: targetChatId }).catch(() => "?");
+        await tg.send(chatId, t("count_res", lang).replace("{count}", count));
+        break;
+      }
+      case "admin_pin_last": {
+        if (targetChatId !== chatId) {
+          await tg.send(chatId, "❌ Diese Funktion ist nur direkt im Channel/in der Gruppe als Reply auf eine Nachricht verfügbar.");
+          break;
+        }
+        const msgToPin = query.message?.reply_to_message?.message_id;
+        if (msgToPin) {
+          await tg.pinMessage(chatId, msgToPin);
+          await tg.send(chatId, t("pin_ok", lang));
+        } else {
+          await tg.send(chatId, t("pin_err", lang));
+        }
+        break;
+      }
+      case "admin_del_last": {
+        if (targetChatId !== chatId) {
+          await tg.send(chatId, "❌ Diese Funktion ist nur direkt im Channel/in der Gruppe verfügbar.");
+          break;
+        }
+        const delId = query.message?.message_id - 1;
+        if (delId) await tg.deleteMessage(chatId, delId).catch(() => {});
+        await tg.deleteMessage(chatId, query.message.message_id).catch(() => {});
+        break;
+      }
+      case "admin_schedule": {
+        const { data: msgs } = await supabase.from("scheduled_messages").select("id, message, next_run_at, repeat").eq("channel_id", String(targetChatId)).eq("is_active", true);
+        if (!msgs?.length) {
+          await tg.send(chatId, t("sched_none", lang));
+        } else {
+          const list = msgs.map(m => `• ${m.message.substring(0, 50)}… → ${m.next_run_at ? new Date(m.next_run_at).toLocaleString(lang === "en" ? "en-US" : "de-DE") : "einmalig"}`).join("\n");
+          await tg.send(chatId, t("sched_list", lang).replace("{list}", list));
+        }
+        break;
+      }
+      case "admin_safelist": {
+        if (safelistService && safelistService.sendSafelistMenu) { 
+          await safelistService.sendSafelistMenu(token, targetChatId, chatId, query.message.message_id); 
+        }
+        break;
+      }
+      case "admin_menu": {
+        const suffix = query.extractedChannelId ? `_${query.extractedChannelId}` : "";
+        await tg.call("editMessageText", {
+          chat_id: chatId, message_id: query.message.message_id, text: t("admin_menu", lang), parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: t("clean", lang), callback_data: "admin_clean" + suffix }],
+              [{ text: t("pin", lang), callback_data: "admin_pin_last" + suffix }],
+              [{ text: t("count", lang), callback_data: "admin_count" + suffix }],
+              [{ text: t("del_last", lang), callback_data: "admin_del_last" + suffix }],
+              [{ text: t("sched", lang), callback_data: "admin_schedule" + suffix }],
+              [{ text: t("safe", lang), callback_data: "admin_safelist" + suffix }]
+            ]
+          }
+        }).catch(() => {});
+        break;
+      }
+    }
+  },
+
+  /**
+   * Ersetzt alle dokumentierten Platzhalter in welcome_msg / goodbye_msg.
+   * Muss synchron mit der Anzeige in settingsHandler bleiben (7 Variablen + Alias).
+   *
+   * Verfügbare Platzhalter:
+   *   {name}      → Vorname FETT als <b>Max</b>
+   *   {firstname} → Vorname plain "Max"
+   *   {username}  → @username (oder Vorname Fallback wenn kein Username)
+   *   {user_id}   → Telegram User-ID
+   *   {mention}   → Verlinkter Name <a href="tg://user?id=...">Max</a>
+   *   {fullname}  → Vor- + Nachname
+   *   {chat_id}   → Channel-ID
+   *   {chat}      → Alias für {chat_id} (alte Schreibweise, Rückwärtskompatibilität)
+   */
+  _replacePlaceholders(template, user, chatId) {
+    if (!template) return "";
+
+    // HTML-Escape gegen Injection durch Username/Vorname
+    const safe = (s) => String(s || "").replace(/[<>&]/g, c => ({
+      "<": "&lt;", ">": "&gt;", "&": "&amp;"
+    }[c]));
+
+    const firstnameRaw = user?.first_name || "";
+    const lastnameRaw  = user?.last_name  || "";
+    const usernameRaw  = user?.username   || "";
+    const userIdRaw    = user?.id != null ? String(user.id) : "";
+
+    const firstname = safe(firstnameRaw);
+    const lastname  = safe(lastnameRaw);
+    const fullname  = (firstname + (lastname ? " " + lastname : "")).trim()
+                    || (usernameRaw ? "@" + safe(usernameRaw) : "Mitglied");
+    const username  = usernameRaw ? "@" + safe(usernameRaw) : (firstname || "Mitglied");
+    const displayName = firstname || (usernameRaw ? "@" + safe(usernameRaw) : "Mitglied");
+
+    const replacements = {
+      "{name}":      `<b>${displayName}</b>`,
+      "{firstname}": firstname || "Mitglied",
+      "{username}":  username,
+      "{user_id}":   userIdRaw,
+      "{mention}":   userIdRaw
+        ? `<a href="tg://user?id=${userIdRaw}">${displayName}</a>`
+        : displayName,
+      "{fullname}":  fullname,
+      "{chat_id}":   String(chatId || ""),
+      "{chat}":      String(chatId || ""), // Rückwärtskompat
+    };
+
+    let out = template;
+    for (const [ph, val] of Object.entries(replacements)) {
+      // split/join statt replace → ersetzt ALLE Vorkommen (replace ersetzt nur erstes)
+      out = out.split(ph).join(val);
+    }
+    return out;
+  },
+
+  async sendWelcome(token, chatId, user, channel) {
+    if (!channel?.welcome_msg) return;
+    const tg = tgApi(token);
+    const msg = this._replacePlaceholders(channel.welcome_msg, user, chatId);
+    try {
+      await tg.call("sendMessage", {
+        chat_id: chatId,
+        text: msg,
+        parse_mode: "HTML",
+        disable_web_page_preview: true
+      });
+    } catch (e) {
+      // Fallback: HTML könnte beschädigt sein → ohne parse_mode, ohne HTML-Tags
+      const plain = msg.replace(/<[^>]+>/g, "");
+      await tg.call("sendMessage", { chat_id: chatId, text: plain }).catch(() => {});
+    }
+  },
+
+  async sendGoodbye(token, chatId, user, channel) {
+    if (!channel?.goodbye_msg) return;
+    const tg = tgApi(token);
+    const msg = this._replacePlaceholders(channel.goodbye_msg, user, chatId);
+    try {
+      await tg.call("sendMessage", {
+        chat_id: chatId,
+        text: msg,
+        parse_mode: "HTML",
+        disable_web_page_preview: true
+      });
+    } catch (e) {
+      const plain = msg.replace(/<[^>]+>/g, "");
+      await tg.call("sendMessage", { chat_id: chatId, text: plain }).catch(() => {});
+    }
+  },
+
+  async runAutoClean(token) {
+    const now = new Date();
+    try {
+      const { data: channels } = await supabase.from("bot_channels")
+        .select("id, auto_clean_interval, last_clean_at")
+        .in("auto_clean_interval", ["daily", "weekly"])
+        .eq("is_active", true);
+
+      if (!channels || channels.length === 0) return;
+
+      for (const ch of channels) {
+        let shouldClean = false;
+        
+        if (!ch.last_clean_at) {
+          shouldClean = true;
+        } else {
+          const lastClean = new Date(ch.last_clean_at);
+          const hoursDiff = (now - lastClean) / (1000 * 60 * 60);
+
+          if (ch.auto_clean_interval === "daily" && hoursDiff >= 24) shouldClean = true;
+          if (ch.auto_clean_interval === "weekly" && hoursDiff >= 168) shouldClean = true;
+        }
+
+        if (shouldClean) {
+          const { removed } = await this.cleanDeletedAccounts(token, ch.id);
+          await supabase.from("bot_channels").update({ last_clean_at: now.toISOString() }).eq("id", ch.id);
+          
+          if (removed > 0) {
+            const tg = tgApi(token);
+            await tg.send(ch.id, `🧹 <b>Auto-Bereinigung:</b>\nEs wurden ${removed} gelöschte Accounts automatisch aus dem Kanal entfernt.`).catch(() => {});
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[AutoClean Error]", e.message);
+    }
+  },
+
+  async fireScheduled(token) {
+    const now = new Date();
+    try {
+      const { data: due } = await supabase.from("scheduled_messages").select("*").eq("is_active", true).lte("next_run_at", now.toISOString());
+      for (const msg of (due || [])) {
+        if (msg.end_at && new Date(msg.end_at) < now) { await supabase.from("scheduled_messages").update({ is_active: false }).eq("id", msg.id); continue; }
+        const tg = tgApi(token);
+        try {
+          if (msg.delete_previous && msg.last_sent_msg_id) { await tg.call("deleteMessage", { chat_id: msg.channel_id, message_id: msg.last_sent_msg_id }).catch(() => {}); }
+
+          let sentMsg = null;
+
+          // Variations-Rotation
+          let sendText = msg.message || "";
+          if (Array.isArray(msg.variations) && msg.variations.length > 0) {
+            const idx = (msg.variation_index || 0) % msg.variations.length;
+            sendText = msg.variations[idx] || sendText;
+          }
+          // Inline-Buttons (optional, wenn Migration ausgeführt wurde)
+          let replyMarkup = undefined;
+          const btnsRaw = msg.inline_buttons ?? null;
+          if (btnsRaw) {
+            try { replyMarkup = typeof btnsRaw === "string" ? JSON.parse(btnsRaw) : btnsRaw; } catch (_) {}
+          }
+
+          // message enthält bereits Telegram-HTML (inkl. <tg-emoji> für Premium-Emojis)
+          // → immer parse_mode: "HTML", keine Entities-Spalten nötig
+          // tg.call() gibt bereits data.result zurück → kein weiteres .result nötig
+          if (msg.photo_file_id || msg.photo_url) {
+            const mediaId   = msg.photo_file_id || msg.photo_url;
+            const mediaOpts = { caption: sendText, parse_mode: "HTML" };
+            if (replyMarkup) mediaOpts.reply_markup = replyMarkup;
+
+            if      (msg.file_type === "video")     sentMsg = await tg.call("sendVideo",     { chat_id: msg.channel_id, video:     mediaId, ...mediaOpts }).catch(() => null);
+            else if (msg.file_type === "animation") sentMsg = await tg.call("sendAnimation", { chat_id: msg.channel_id, animation: mediaId, ...mediaOpts }).catch(() => null);
+            else                                    sentMsg = await tg.call("sendPhoto",     { chat_id: msg.channel_id, photo:     mediaId, ...mediaOpts }).catch(() => null);
+          } else {
+            const txtOpts = { parse_mode: "HTML" };
+            if (replyMarkup) txtOpts.reply_markup = replyMarkup;
+            sentMsg = await tg.call("sendMessage", { chat_id: msg.channel_id, text: sendText, ...txtOpts }).catch(() => null);
+          }
+
+          if (msg.pin_after_send && sentMsg?.message_id) {
+            await tg.pinMessage(msg.channel_id, sentMsg.message_id).catch(e =>
+              console.error(`[fireScheduled] Pin fehlgeschlagen (ID ${msg.id}): ${e.message}`)
+            );
+          }
+
+          const updatePatch = { run_count: (msg.run_count || 0) + 1, last_sent_msg_id: sentMsg?.message_id || null };
+          if (Array.isArray(msg.variations) && msg.variations.length > 0) {
+            updatePatch.variation_index = ((msg.variation_index || 0) + 1) % msg.variations.length;
+          }
+          if (msg.repeat && msg.interval_minutes) {
+            const nextRun = new Date(now.getTime() + (msg.interval_minutes * 60000));
+            if (msg.end_at && nextRun > new Date(msg.end_at)) { updatePatch.is_active = false; } else { updatePatch.next_run_at = nextRun.toISOString(); }
+          } else { updatePatch.is_active = false; }
+          await supabase.from("scheduled_messages").update(updatePatch).eq("id", msg.id);
+        } catch (e) {
+          console.error(`Fehler beim Senden der geplanten Nachricht (ID: ${msg.id}): ${e.message}`);
+        }
+      }
+    } catch (e) {}
+  }
+};
+
+module.exports = { tgAdminHelper, tgApi };

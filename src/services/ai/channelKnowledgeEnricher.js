@@ -1,0 +1,225 @@
+/**
+ * channelKnowledgeEnricher.js  v1.4.3
+ *
+ * AI-gestützter Wissensverwalter für Channel-spezifische Smalltalk-KBs.
+ * OpenAI orchestriert vollständig: kategorisiert, strukturiert, erstellt
+ * neue Kategorien wenn nötig, bereinigt Duplikate.
+ *
+ * Isoliert vom Berater – keinerlei Auswirkung auf knowledge_base Tabelle.
+ */
+
+const axios    = require("axios");
+const supabase = require("../../config/supabase");
+const logger   = require("../../utils/logger");
+
+const channelKnowledgeEnricher = {
+
+  // ── Eintrag zur Channel-KB hinzufügen (OpenAI orchestriert) ─────────────
+  async addEntry(channelId, rawContent, source = "manual") {
+    const entries = await this._orchestrate(channelId, rawContent, source);
+    const saved   = [];
+
+    for (const e of entries) {
+      try {
+        const embedding = await this._embed(e.content);
+
+        const { data } = await supabase.from("channel_knowledge").insert([{
+          channel_id: channelId,
+          category:   e.category  || "allgemein",
+          title:      e.title     || null,
+          content:    e.content,
+          embedding,
+          source,
+          metadata:   { enriched: true, originalLength: rawContent.length }
+        }]).select("id, category, title").single();
+
+        if (data) saved.push(data);
+        await new Promise(r => setTimeout(r, 150));
+      } catch (e) {
+        logger.warn(`[ChannelKB] Insert fehlgeschlagen: ${e.message}`);
+      }
+    }
+
+    // Zähler aktualisieren
+    const { count } = await supabase.from("channel_knowledge")
+      .select("id", { count: "exact", head: true }).eq("channel_id", channelId);
+    await supabase.from("bot_channels")
+      .update({ kb_entry_count: count || 0, updated_at: new Date() }).eq("id", channelId);
+
+    logger.info(`[ChannelKB] Channel ${channelId}: ${saved.length} Einträge hinzugefügt`);
+    return saved;
+  },
+
+  // ── Alle Einträge eines Channels laden ───────────────────────────────────
+  async getEntries(channelId) {
+    const { data } = await supabase.from("channel_knowledge")
+      .select("id, category, title, content, source, created_at")
+      .eq("channel_id", channelId)
+      .order("category").order("created_at", { ascending: false });
+    return data || [];
+  },
+
+  // ── Eintrag löschen ───────────────────────────────────────────────────────
+  async deleteEntry(channelId, entryId) {
+    await supabase.from("channel_knowledge")
+      .delete().eq("id", entryId).eq("channel_id", channelId);
+    const { count } = await supabase.from("channel_knowledge")
+      .select("id", { count: "exact", head: true }).eq("channel_id", channelId);
+    await supabase.from("bot_channels")
+      .update({ kb_entry_count: count || 0 }).eq("id", channelId);
+  },
+
+  // ── Semantic Search für Smalltalk-Agent ──────────────────────────────────
+  async search(channelId, text, threshold = 0.50, limit = 4) {
+    // Strategy 1: Full semantic vector search
+    try {
+      const embedding = await this._embed(text);
+      if (embedding) {
+        const { data, error } = await supabase.rpc("match_channel_knowledge", {
+          p_channel_id: channelId,
+          query_embedding: embedding,
+          match_threshold: threshold,
+          match_count: limit
+        });
+        if (!error && data?.length) {
+          return data.map(d => d.content);
+        }
+        // Lower threshold and retry if nothing found
+        if (!error) {
+          const { data: data2 } = await supabase.rpc("match_channel_knowledge", {
+            p_channel_id: channelId,
+            query_embedding: embedding,
+            match_threshold: 0.20,
+            match_count: limit
+          });
+          if (data2?.length) return data2.map(d => d.content);
+        }
+      }
+    } catch (e) {
+      require("../../utils/logger").warn("[ChannelKB] Semantic search failed:", e.message);
+    }
+
+    // Strategy 2: Simple keyword text search fallback (always works, no embedding needed)
+    try {
+      const words = text.split(/\s+/).filter(w => w.length > 2).slice(0, 5);
+      if (words.length) {
+        // Load all entries and keyword-filter client-side
+        const { data: all } = await supabase.from("channel_knowledge")
+          .select("id, content")
+          .eq("channel_id", String(channelId))
+          .limit(50);
+        if (all?.length) {
+          const lowerText = text.toLowerCase();
+          const scored = all
+            .map(e => {
+              const lower = (e.content || "").toLowerCase();
+              const score = words.reduce((s, w) => s + (lower.includes(w.toLowerCase()) ? 1 : 0), 0);
+              return { ...e, score };
+            })
+            .filter(e => e.score > 0)
+            .sort((a, b) => b.score - a.score)
+            .slice(0, limit);
+          if (scored.length) return scored.map(e => e.content);
+        }
+      }
+    } catch (e) {
+      require("../../utils/logger").warn("[ChannelKB] Text fallback failed:", e.message);
+    }
+
+    // Strategy 3: Return all entries if KB is small (≤8) — always inject everything
+    try {
+      const { data: all } = await supabase.from("channel_knowledge")
+        .select("content").eq("channel_id", String(channelId)).limit(8);
+      if (all?.length) return all.map(e => e.content);
+    } catch (_) {}
+
+    return [];
+  },
+
+  // ── OpenAI Orchestrierung ─────────────────────────────────────────────────
+  async _orchestrate(channelId, rawContent, source) {
+    const apiKey = process.env.OPENAI_API_KEY;
+    if (!apiKey) {
+      // Fallback ohne OpenAI: direkt speichern
+      return [{ content: rawContent, category: "allgemein", title: null }];
+    }
+
+    // Bestehende Kategorien laden
+    const { data: existing } = await supabase.from("channel_knowledge")
+      .select("category").eq("channel_id", channelId);
+    const existingCats = [...new Set((existing || []).map(e => e.category))];
+    const catList = existingCats.length ? existingCats.join(", ") : "keine (erste Einträge)";
+
+    const prompt = `Du bist ein Wissensmanager für einen Telegram-Bot-Channel.
+Analysiere den folgenden Inhalt und erstelle strukturierte Wissenseinträge.
+
+Bestehende Kategorien in dieser Channel-KB: ${catList}
+
+INHALT (Quelle: ${source}):
+${rawContent.substring(0, 2000)}
+
+AUFGABE:
+- Erstelle 1-3 prägnante Wissenseinträge als JSON-Array
+- Nutze bestehende Kategorien WENN passend, erstelle neue wenn nötig
+- Titel: max 60 Zeichen, aussagekräftig
+- Content: faktentreu, vollständig, suchoptimiert
+- Kategorie: kurz, lowercase (z.B. "begrüßung", "produkte", "faq", "persönlichkeit")
+- NIEMALS Fakten verändern oder erfinden
+
+Format (nur JSON, kein Markdown):
+[{"category":"...","title":"...","content":"..."}]`;
+
+    try {
+      const resp = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
+        {
+          model: "gpt-4o-mini",
+          max_tokens: 800,
+          temperature: 0.1,
+          messages: [
+            { role: "system", content: "Erstelle präzise, faktentreue Wissensbank-Einträge für einen AI-Assistenten. Erfinde NIEMALS Fakten." },
+            { role: "user",   content: prompt }
+          ]
+        },
+        { headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" }, timeout: 25000 }
+      );
+
+      const raw   = resp.data.choices[0].message.content.trim();
+      const clean = raw.replace(/```json|```/g, "").trim();
+      const parsed = JSON.parse(clean);
+      if (Array.isArray(parsed) && parsed.length) return parsed;
+    } catch (e) {
+      logger.warn(`[ChannelKB] OpenAI fehlgeschlagen: ${e.message} – Fallback`);
+    }
+
+    return [{ content: rawContent, category: "allgemein", title: null }];
+  },
+
+  // ── Embedding ──────────────────────────────────────────────────────────────
+  async _embed(text) {
+    try {
+      const embService = require("../embeddingService");
+      // Methode heißt createEmbedding() — generateEmbedding() existiert nicht!
+      const fn = embService.createEmbedding
+        ? embService.createEmbedding.bind(embService)
+        : embService.generateEmbedding?.bind(embService);
+      if (!fn) {
+        require("../../utils/logger").warn("[ChannelKB] embeddingService hat weder createEmbedding noch generateEmbedding");
+        return null;
+      }
+      const result = await fn(text);
+      const emb = result?.embedding || result;
+      if (!Array.isArray(emb) || !emb.length) {
+        require("../../utils/logger").warn("[ChannelKB] Embedding leer/ungültig — OPENAI_API_KEY gesetzt?");
+        return null;
+      }
+      return emb;
+    } catch (e) {
+      const msg = e?.response?.data?.error?.message || e?.message || String(e);
+      require("../../utils/logger").warn(`[ChannelKB] Embedding Fehler: ${msg}`);
+      return null;
+    }
+  }
+};
+
+module.exports = channelKnowledgeEnricher;
