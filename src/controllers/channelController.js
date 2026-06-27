@@ -10,7 +10,10 @@ const channelController = {
   async getChannels(req, res, next) {
     try {
       const { data } = await supabase.from("bot_channels").select("*").order("added_at", { ascending: false });
-      res.json(data || []);
+      if (!data) return res.json([]);
+      const arenaIds = new Set(data.map(c => c.diss_battle_arena_chat_id).filter(Boolean).map(String));
+      const filtered = data.filter(c => !arenaIds.has(String(c.id)));
+      res.json(filtered);
     } catch (e) { next(e); }
   },
 

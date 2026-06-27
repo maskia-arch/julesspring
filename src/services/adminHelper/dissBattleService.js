@@ -411,7 +411,7 @@ async function handleArenaJoin(tg, supabase, chatMember) {
 
 async function startBattle(tg, supabase, battleId) {
   const { data: b } = await supabase.from("channel_diss_battles").select("*").eq("id", battleId).maybeSingle();
-  if (!b || b.status !== "waiting_join") return;
+  if (!b || b.status !== "pending") return;
 
   const now = new Date();
   const endsAt = new Date(now.getTime() + (b.duration_minutes || 10) * 60 * 1000);
@@ -421,6 +421,31 @@ async function startBattle(tg, supabase, battleId) {
     started_at: now.toISOString(),
     ends_at: endsAt.toISOString()
   }).eq("id", battleId);
+
+  // Beide Spieler in der Arena unrestricten (voll erlauben)
+  const unrestrictPerms = {
+    can_send_messages:        true,
+    can_send_audios:          true,
+    can_send_documents:       true,
+    can_send_photos:          true,
+    can_send_videos:          true,
+    can_send_video_notes:     true,
+    can_send_voice_notes:     true,
+    can_send_polls:           true,
+    can_send_other_messages:  true,
+    can_add_web_page_previews: true
+  };
+  for (const uid of [b.challenger_id, b.target_id].filter(Boolean)) {
+    try {
+      await tg.call("restrictChatMember", {
+        chat_id:     b.arena_chat_id,
+        user_id:     uid,
+        permissions: unrestrictPerms
+      });
+    } catch (e) {
+      logger.warn(`[DissBattle] unrestrict ${uid}: ${e.message}`);
+    }
+  }
 
   // Waiting-Timer cancellen
   const waitingTimer = _battleTimers.get(`waiting:${battleId}`);

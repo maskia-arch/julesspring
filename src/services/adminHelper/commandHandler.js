@@ -317,10 +317,20 @@ const commandHandler = {
 
         // Zusammenführen (Duplikate entfernen)
         const seenIds = new Set();
-        const allMyChannels = [...(ownedChannels || []), ...coAdminChannels].filter(c => {
+        let allMyChannels = [...(ownedChannels || []), ...coAdminChannels].filter(c => {
           if (seenIds.has(String(c.id))) return false;
           seenIds.add(String(c.id)); return true;
         });
+
+        // Arena-Kanäle ausfiltern
+        try {
+          const { data: allArenas } = await supabase_db
+            .from("bot_channels")
+            .select("diss_battle_arena_chat_id")
+            .not("diss_battle_arena_chat_id", "is", null);
+          const arenaIds = new Set(allArenas?.map(a => String(a.diss_battle_arena_chat_id)) || []);
+          allMyChannels = allMyChannels.filter(c => !arenaIds.has(String(c.id)));
+        } catch (_) {}
 
         if (!allMyChannels?.length) {
           const userLang = detectLang(from);

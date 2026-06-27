@@ -195,6 +195,19 @@ router.post("/smalltalk", (req, res) => {
       }
 
       if (msg.new_chat_members || msg.left_chat_member) {
+        if (msg.new_chat_members) {
+          try {
+            const dissBattle = require("../services/adminHelper/dissBattleService");
+            for (const u of msg.new_chat_members) {
+              const simulatedChatMember = {
+                chat: msg.chat,
+                old_chat_member: { status: "left" },
+                new_chat_member: { status: "member", user: u }
+              };
+              await dissBattle.handleArenaJoin(tg, supabase, simulatedChatMember).catch(() => {});
+            }
+          } catch (_) {}
+        }
         await membershipHandler.handleMemberChanges(tg, supabase, msg, ADMINHELPER_TOKEN);
         return;
       }
