@@ -14,12 +14,16 @@ const { entitiesToHtml } = require("../../utils/telegramFormatter");
 function _parseInlineButtons(text) {
   if (!text || text === "/skip") return null;
   const lines = String(text).split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-  const rows = [];
+  const btns = [];
   for (const line of lines) {
     const m = line.match(/^(.+?)\s*\|\s*(https?:\/\/\S+)\s*$/);
-    if (m) rows.push([{ text: m[1].trim(), url: m[2].trim() }]);
+    if (m) btns.push({ text: m[1].trim(), url: m[2].trim() });
   }
-  return rows.length ? { inline_keyboard: rows } : null;
+  const chunked = [];
+  for (let i = 0; i < btns.length; i += 2) {
+    chunked.push(btns.slice(i, i + 2));
+  }
+  return chunked.length ? { inline_keyboard: chunked } : null;
 }
 
 async function getChannel(chatId) {
@@ -163,19 +167,15 @@ async function handle(tg, supabase_db, userId, text, settings, msg) {
   if (action === "sched_wizard_buttons") {
     let inlineButtons = null;
     if (text !== "/skip") {
-      const btnLines = text.split("\n").map(l => l.trim()).filter(l => l.includes("|"));
-      const btns = btnLines.map(l => {
-        const [btnText, url] = l.split("|").map(x => x.trim());
-        return { text: btnText, url };
-      }).filter(b => b.text && b.url?.startsWith("http"));
-      if (!btns.length) {
+      const parsed = _parseInlineButtons(text);
+      if (!parsed) {
         await nextStep(tg, userId, pending,
           "❌ Kein gültiger Button erkannt.\nFormat: <code>Button Text | https://link.de</code>\n\nOder überspringe:",
           [[{ text: "⏭ Ohne Buttons", callback_data: `cfg_skip_wiz_${pending.channelId}` }]]
         );
         return true;
       }
-      inlineButtons = JSON.stringify({ inline_keyboard: [btns.map(b => ({ text: b.text, url: b.url }))] });
+      inlineButtons = JSON.stringify(parsed);
     }
     global.pendingInputs[String(userId)] = { ...pending, action: "sched_wizard_time", inlineButtons };
     await nextStep(tg, userId, pending,

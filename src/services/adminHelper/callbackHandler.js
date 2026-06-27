@@ -46,10 +46,7 @@ async function getChannel(chatId) {
 }
 
 async function isGroupAdmin(tg, chatId, userId) {
-  try {
-    const admins = await tg.getAdmins(chatId);
-    return admins.some(a => a.user?.id === userId);
-  } catch { return false; }
+  return tg.isUserAdmin(chatId, userId);
 }
 
 exports.handle = async function handle(tg, supabase_db, q, token, settings) {

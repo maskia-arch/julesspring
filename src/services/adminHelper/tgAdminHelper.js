@@ -399,11 +399,21 @@ const tgAdminHelper = {
             const idx = (msg.variation_index || 0) % msg.variations.length;
             sendText = msg.variations[idx] || sendText;
           }
-          // Inline-Buttons (optional, wenn Migration ausgeführt wurde)
           let replyMarkup = undefined;
           const btnsRaw = msg.inline_buttons ?? null;
           if (btnsRaw) {
-            try { replyMarkup = typeof btnsRaw === "string" ? JSON.parse(btnsRaw) : btnsRaw; } catch (_) {}
+            try {
+              let parsed = typeof btnsRaw === "string" ? JSON.parse(btnsRaw) : btnsRaw;
+              if (parsed && Array.isArray(parsed.inline_keyboard)) {
+                const flatButtons = parsed.inline_keyboard.flat().filter(Boolean);
+                const chunked = [];
+                for (let i = 0; i < flatButtons.length; i += 2) {
+                  chunked.push(flatButtons.slice(i, i + 2));
+                }
+                parsed.inline_keyboard = chunked;
+                replyMarkup = parsed;
+              }
+            } catch (_) {}
           }
 
           // message enthält bereits Telegram-HTML (inkl. <tg-emoji> für Premium-Emojis)

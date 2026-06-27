@@ -21,18 +21,16 @@ async function getChannel(chatId) {
 }
 
 async function isGroupAdmin(tg, chatId, userId) {
-  try {
-    const admins = await tg.getAdmins(chatId);
-    return admins.some(a => a.user?.id === userId);
-  } catch { return false; }
+  return tg.isUserAdmin(chatId, userId);
 }
 
 /**
  * Löst das Ziel eines Moderations-Befehls (/ban /unban /mute /unmute) auf.
  * Reihenfolge der Auflösung:
  *   1. Reply-to-message  → direkt aus msg.reply_to_message.from
- *   2. Numerische user_id im Text (z.B. "/ban 12345678")
- *   3. @username im Text → channel_members DB-Lookup
+ *   2. Text-Mentions in Entities (für klickbare Namens-Tags ohne Username)
+ *   3. Numerische user_id im Text (z.B. "/ban 12345678")
+ *   4. @username im Text → channel_members DB-Lookup mit Fallback auf historischen Identity-Verlauf
  *
  * @returns {Promise<{id:number, username:string|null, first_name:string|null}|null>}
  */
@@ -42,11 +40,20 @@ async function _resolveTargetUser(supabase_db, chatId, msg, text) {
     const f = msg.reply_to_message.from;
     return { id: f.id, username: f.username || null, first_name: f.first_name || null };
   }
-  // 2. Numerische ID im Text — z.B. "/ban 123456789" oder "/ban 123456789 Grund..."
+
+  // 2. Text-Mentions in Entities
+  if (msg?.entities) {
+    const mentionEntity = msg.entities.find(e => e.type === "text_mention" && e.user?.id);
+    if (mentionEntity) {
+      const u = mentionEntity.user;
+      return { id: u.id, username: u.username || null, first_name: u.first_name || null };
+    }
+  }
+
+  // 3. Numerische ID im Text — z.B. "/ban 123456789" oder "/ban 123456789 Grund..."
   const idMatch = text.match(/^\/(?:ban|unban|mute|unmute)(?:@\w+)?\s+(\d{4,})(?:\s|$)/i);
   if (idMatch) {
     const uid = parseInt(idMatch[1]);
-    // Optional: Username aus DB ergänzen (für schönere Anzeige)
     try {
       const { data } = await supabase_db.from("channel_members")
         .select("username, first_name")
@@ -55,10 +62,17 @@ async function _resolveTargetUser(supabase_db, chatId, msg, text) {
         .limit(1).maybeSingle();
       return { id: uid, username: data?.username || null, first_name: data?.first_name || null };
     } catch (_) {
+      try {
+        const resolved = await userIdentityService.findByUsername(String(chatId), String(uid));
+        if (resolved) {
+          return { id: uid, username: resolved.username || null, first_name: resolved.first_name || null };
+        }
+      } catch (_) {}
       return { id: uid, username: null, first_name: null };
     }
   }
-  // 3. @username im Text → channel_members Lookup
+
+  // 4. @username im Text → channel_members Lookup
   const userMatch = text.match(/@([a-zA-Z0-9_]{3,32})/);
   if (userMatch) {
     const uname = userMatch[1];
@@ -70,6 +84,12 @@ async function _resolveTargetUser(supabase_db, chatId, msg, text) {
         .limit(1).maybeSingle();
       if (data?.user_id) {
         return { id: data.user_id, username: data.username, first_name: data.first_name };
+      }
+    } catch (_) {}
+    try {
+      const resolved = await userIdentityService.findByUsername(String(chatId), uname);
+      if (resolved?.user_id) {
+        return { id: resolved.user_id, username: resolved.username, first_name: resolved.first_name };
       }
     } catch (_) {}
   }
@@ -1049,6 +1069,18 @@ const commandHandler = {
         } catch (e) {
           logger.warn(`[Ban] channel_user_status: ${e.message}`);
         }
+        // b-2) In channel_banned_users eintragen für Dashboard und Blacklist-Abgleich
+        try {
+          await supabase_db.from("channel_banned_users").upsert([{
+            channel_id: String(chatId),
+            user_id:    banTarget.id,
+            username:   banTarget.username || null,
+            reason:     banReason.substring(0, 200),
+            added_by:   String(from.id)
+          }], { onConflict: "channel_id,user_id" });
+        } catch (e) {
+          logger.warn(`[Ban] channel_banned_users: ${e.message}`);
+        }
         // c) Identity-Log: Ban als Source markieren (Audit)
         if (banTarget.username || banTarget.first_name) {
           void userIdentityService.logIdentity({
@@ -1061,7 +1093,8 @@ const commandHandler = {
         }
       } catch (e2) {
         logger.warn("[Ban]", e2.message);
-        const errMsg = await tg.send(chatId, `❌ Bannen fehlgeschlagen: ${e2.message?.substring(0, 80) || "unbekannter Fehler"}`);
+        const apiErr = e2.response?.data?.description || e2.message || "unbekannter Fehler";
+        const errMsg = await tg.send(chatId, `❌ Bannen fehlgeschlagen: ${apiErr.substring(0, 80)}`);
         if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 15000);
       }
       return;
@@ -1092,8 +1125,14 @@ const commandHandler = {
           await supabase_db.from("channel_user_status")
             .delete().eq("channel_id", String(chatId)).eq("user_id", unbanTarget.id);
         } catch (_) {}
+        // Also remove from channel_banned_users
+        try {
+          await supabase_db.from("channel_banned_users")
+            .delete().eq("channel_id", String(chatId)).eq("user_id", unbanTarget.id);
+        } catch (_) {}
       } catch (e2) {
-        const errMsg = await tg.send(chatId, `❌ Entbannen fehlgeschlagen: ${e2.message?.substring(0, 80) || "unbekannter Fehler"}`);
+        const apiErr = e2.response?.data?.description || e2.message || "unbekannter Fehler";
+        const errMsg = await tg.send(chatId, `❌ Entbannen fehlgeschlagen: ${apiErr.substring(0, 80)}`);
         if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 10000);
       }
       return;
@@ -1137,7 +1176,8 @@ const commandHandler = {
         await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
       } catch (e2) {
         logger.warn("[Mute]", e2.message);
-        const errMsg = await tg.send(chatId, `❌ Stummschalten fehlgeschlagen: ${e2.message?.substring(0, 80) || "unbekannter Fehler"}`);
+        const apiErr = e2.response?.data?.description || e2.message || "unbekannter Fehler";
+        const errMsg = await tg.send(chatId, `❌ Stummschalten fehlgeschlagen: ${apiErr.substring(0, 80)}`);
         if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 15000);
       }
       return;
@@ -1166,7 +1206,8 @@ const commandHandler = {
         if (okMsg?.message_id) void safelistService.trackBotMessage(chatId, okMsg.message_id, "temp", 15000);
         await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
       } catch (e2) {
-        const errMsg = await tg.send(chatId, `❌ Freischalten fehlgeschlagen: ${e2.message?.substring(0, 80) || "unbekannter Fehler"}`);
+        const apiErr = e2.response?.data?.description || e2.message || "unbekannter Fehler";
+        const errMsg = await tg.send(chatId, `❌ Freischalten fehlgeschlagen: ${apiErr.substring(0, 80)}`);
         if (errMsg?.message_id) void safelistService.trackBotMessage(chatId, errMsg.message_id, "temp", 10000);
       }
       return;

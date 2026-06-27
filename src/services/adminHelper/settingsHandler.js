@@ -873,9 +873,18 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       let replyMarkup = undefined;
       if (sTest.inline_buttons) {
         try {
-          replyMarkup = typeof sTest.inline_buttons === "string"
+          let parsed = typeof sTest.inline_buttons === "string"
             ? JSON.parse(sTest.inline_buttons)
             : sTest.inline_buttons;
+          if (parsed && Array.isArray(parsed.inline_keyboard)) {
+            const flatButtons = parsed.inline_keyboard.flat().filter(Boolean);
+            const chunked = [];
+            for (let i = 0; i < flatButtons.length; i += 2) {
+              chunked.push(flatButtons.slice(i, i + 2));
+            }
+            parsed.inline_keyboard = chunked;
+            replyMarkup = parsed;
+          }
         } catch (_) {}
       }
 
