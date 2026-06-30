@@ -173,15 +173,162 @@ const T = {
   },
 };
 
+const logger = require('../utils/logger');
+
+const MEMORY_CACHE = {};
+
+async function translateText(sourceText, lang, apiKey) {
+  try {
+    const response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content: `You are a professional translator for a Telegram moderation bot.
+Translate the given text into the target language (locale: ${lang}).
+Rules:
+- Keep the tone matching the source text.
+- Do NOT translate or change any placeholders like {0}, {1}, {2}, {3}.
+- Preserve any formatting like <b>, <i>, HTML tags, newlines, and emojis exactly.
+- Respond ONLY with the translation, no extra commentary.`
+          },
+          {
+            role: "user",
+            content: sourceText
+          }
+        ],
+        temperature: 0.3
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI API returned status ${response.status}: ${errorText}`);
+    }
+
+    const json = await response.json();
+    const translation = json.choices?.[0]?.message?.content?.trim();
+    return translation || null;
+  } catch (err) {
+    logger.error(`[i18n] OpenAI translation error: ${err.message}`);
+    return null;
+  }
+}
+
+/**
+ * Lädt alle Übersetzungen aus der DB und übersetzt fehlende Texte initial über OpenAI.
+ */
+async function preloadTranslations() {
+  try {
+    const { supabase } = require('../config/supabase');
+    const apiKey = process.env.OPENAI_API_KEY;
+
+    logger.info('[i18n] Lade Übersetzungen aus der Datenbank...');
+    const { data, error } = await supabase.from('translation_cache').select('key, lang, translated_text');
+    
+    if (error) {
+      logger.warn(`[i18n] Fehler beim Laden der translation_cache Tabelle: ${error.message}`);
+    } else if (data) {
+      data.forEach(row => {
+        if (!MEMORY_CACHE[row.key]) MEMORY_CACHE[row.key] = {};
+        MEMORY_CACHE[row.key][row.lang] = row.translated_text;
+      });
+      logger.info(`[i18n] ${data.length} Übersetzungen erfolgreich aus DB geladen.`);
+    }
+
+    const keys = Object.keys(T);
+    const languages = Object.keys(SUPPORTED_LANGUAGES);
+
+    for (const key of keys) {
+      const entry = T[key];
+      
+      // Quelle bestimmen (Deutsch oder Englisch)
+      let sourceText = "";
+      if (entry.de) {
+        sourceText = typeof entry.de === 'function' ? entry.de('{0}', '{1}', '{2}', '{3}') : entry.de;
+      } else if (entry.en) {
+        sourceText = typeof entry.en === 'function' ? entry.en('{0}', '{1}', '{2}', '{3}') : entry.en;
+      } else {
+        const firstLang = Object.keys(entry)[0];
+        if (firstLang) {
+          sourceText = typeof entry[firstLang] === 'function' ? entry[firstLang]('{0}', '{1}', '{2}', '{3}') : entry[firstLang];
+        }
+      }
+
+      if (!sourceText) continue;
+
+      for (const lang of languages) {
+        if (!MEMORY_CACHE[key]) MEMORY_CACHE[key] = {};
+
+        // 1. Wenn bereits im Speicher geladen (aus DB), überspringen
+        if (MEMORY_CACHE[key][lang]) {
+          continue;
+        }
+
+        // 2. Wenn im lokalen Wörterbuch T manuell übersetzt, diesen Text verwenden und in die DB schreiben
+        let manualText = "";
+        if (entry[lang]) {
+          manualText = typeof entry[lang] === 'function' ? entry[lang]('{0}', '{1}', '{2}', '{3}') : entry[lang];
+        }
+
+        if (manualText) {
+          MEMORY_CACHE[key][lang] = manualText;
+          try {
+            await supabase.from('translation_cache').upsert([{ key, lang, translated_text: manualText }]);
+          } catch (_) {}
+          continue;
+        }
+
+        // 3. Wenn komplett fehlt und kein API-Key konfiguriert ist, überspringen (Fallback greift zur Laufzeit)
+        if (!apiKey) {
+          continue;
+        }
+
+        // 4. Über OpenAI übersetzen und in DB speichern
+        try {
+          const translation = await translateText(sourceText, lang, apiKey);
+          if (translation) {
+            MEMORY_CACHE[key][lang] = translation;
+            await supabase.from('translation_cache').upsert([{ key, lang, translated_text: translation }]);
+            logger.info(`[i18n] Text übersetzt für Key="${key}" (${lang})`);
+          }
+        } catch (err) {
+          logger.warn(`[i18n] Fehler bei Übersetzung für Key="${key}" (${lang}): ${err.message}`);
+        }
+      }
+    }
+    logger.info('[i18n] Übersetzungsschritt und Schema-Check abgeschlossen.');
+  } catch (err) {
+    logger.error(`[i18n] preloadTranslations fehlgeschlagen: ${err.message}`);
+  }
+}
+
 /**
  * Übersetzt einen Schlüssel.
- * Fallback-Reihenfolge: gewünschte Sprache → Englisch → Deutsch → Schlüssel
+ * Fallback-Reihenfolge: Speicher-Cache (mit Platzhaltern) -> Lokales Wörterbuch T -> Key
  */
 function t(key, lang, ...args) {
+  const code = (lang || "de").split("-")[0].toLowerCase();
+  
+  // 1. Aus dem Speicher-Cache laden (falls vorhanden)
+  const cachedText = MEMORY_CACHE[key]?.[code] || MEMORY_CACHE[key]?.["en"] || MEMORY_CACHE[key]?.["de"];
+  if (cachedText) {
+    // Ersetze {0}, {1}, etc. durch die Argumente
+    return cachedText.replace(/{(\d+)}/g, (match, index) => {
+      return typeof args[index] !== 'undefined' ? args[index] : match;
+    });
+  }
+
+  // 2. Fallback auf das hartcodierte Wörterbuch in T
   const entry = T[key];
   if (!entry) return key;
-  const code = (lang || "de").split("-")[0].toLowerCase();
-  const fn   = entry[code] || entry["en"] || entry["de"];
+  const fn = entry[code] || entry["en"] || entry["de"];
   if (typeof fn === "function") return fn(...args);
   return fn ?? key;
 }
@@ -200,11 +347,6 @@ function detectLang(telegramUser) {
 function getLangInstruction(lang) {
   const code = (lang || "de").split("-")[0].toLowerCase();
   return T.ai_lang_instruction[code] ?? T.ai_lang_instruction["de"];
-}
-
-/** Stub — wird von server.js aufgerufen, ist aber nicht nötig (alle Keys sind hardcoded). */
-async function preloadTranslations() {
-  return Promise.resolve();
 }
 
 module.exports = { t, detectLang, getLangInstruction, preloadTranslations, SUPPORTED_LANGUAGES };

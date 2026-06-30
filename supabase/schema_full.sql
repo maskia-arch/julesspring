@@ -14,6 +14,15 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 INSERT INTO settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 
+-- ─── Translation Cache ───────────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS translation_cache (
+  key TEXT NOT NULL,
+  lang TEXT NOT NULL,
+  translated_text TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (key, lang)
+);
+
 -- ─── Push-Notifications ──────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS admin_subscriptions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
