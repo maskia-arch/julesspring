@@ -1,0 +1,13 @@
+-- ==============================================================================
+-- AIAdminHelper - Datenbank Schema-Initialisierung
+-- ==============================================================================
+--
+-- HINWEIS ZUR MIGRATION:
+-- Wenn du von Supabase Cloud umziehst, folge den Anweisungen in MIGRATION.md.
+-- In diesem Fall brauchst du dieses Script nicht vorab ausführen, da das
+-- Einspielen des Dumps (Supabase-Backup) alle Tabellen automatisch erstellt.
+--
+-- Falls du eine frische Installation aufbauen möchtest, kannst du deine
+-- Tabellenstruktur in diese Datei einfügen, damit sie beim ersten Start
+-- der PostgreSQL-Datenbank automatisch initialisiert wird.
+-- ==============================================================================
