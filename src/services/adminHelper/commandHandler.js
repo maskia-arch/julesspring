@@ -293,7 +293,7 @@ const commandHandler = {
         return;
       }
 
-      if (/^\/(?:start|menu|settings|dashboard)(?:@\w+)?/i.test(text)) {
+      if (/^\/(?:start|menu|settings)(?:@\w+)?/i.test(text)) {
         // Eigene Channels (Owner)
         const { data: ownedChannels } = await supabase_db
           .from("bot_channels")

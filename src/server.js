@@ -238,7 +238,6 @@ async function setAutoCommands() {
     const privateCommands = [
       { command: 'menu',      description: 'Hauptmenü öffnen' },
       { command: 'settings',  description: 'Channel-Einstellungen' },
-      { command: 'dashboard', description: 'Channel-Übersicht' },
       { command: 'help',      description: 'Alle Admin-Befehle anzeigen' },
       { command: 'check',     description: 'Feedback eines Users prüfen (/check @user)' },
       { command: 'scamliste', description: 'Scamliste anzeigen oder Scammer melden' },

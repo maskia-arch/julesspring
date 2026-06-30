@@ -17,14 +17,14 @@ const SUPPORTED_LANGUAGES = {
 const T = {
   // ── Bot-Einleitung ────────────────────────────────────────────────────────
   welcome_intro: {
-    de: (u) => `👋 Hallo${u}!\n\nFüge mich als Admin zu deinem Channel/Gruppe hinzu und schreibe dann /start hier.\n\nBefehle: /menu · /settings · /dashboard · /help`,
-    en: (u) => `👋 Hi${u}!\n\nAdd me as admin to your channel/group, then write /start here.\n\nCommands: /menu · /settings · /dashboard · /help`,
-    es: (u) => `👋 ¡Hola${u}!\n\nAgrégame como admin a tu canal/grupo y luego escribe /start aquí.\n\nComandos: /menu · /settings · /dashboard`,
-    zh: (u) => `👋 你好${u}！\n\n将我添加为频道/群组管理员，然后发送 /start。\n\n命令：/menu · /settings · /dashboard`,
+    de: (u) => `👋 Hallo${u}!\n\nFüge mich als Admin zu deinem Channel/Gruppe hinzu und schreibe dann /start hier.\n\nBefehle: /menu · /settings · /help`,
+    en: (u) => `👋 Hi${u}!\n\nAdd me as admin to your channel/group, then write /start here.\n\nCommands: /menu · /settings · /help`,
+    es: (u) => `👋 ¡Hola${u}!\n\nAgrégame como admin a tu canal/grupo y luego escribe /start aquí.\n\nComandos: /menu · /settings`,
+    zh: (u) => `👋 你好${u}！\n\n将我添加为频道/群组管理员，然后发送 /start。\n\n命令：/menu · /settings`,
     ar: (u) => `👋 مرحباً${u}!\n\nأضفني كمشرف في قناتك/مجموعتك ثم اكتب /start هنا.\n\nالأوامر: /menu · /settings`,
-    fr: (u) => `👋 Bonjour${u}!\n\nAjoutez-moi comme admin à votre canal/groupe, puis écrivez /start ici.\n\nCommandes : /menu · /settings · /dashboard`,
-    ru: (u) => `👋 Привет${u}!\n\nДобавьте меня как администратора в канал/группу, затем напишите /start.\n\nКоманды: /menu · /settings · /dashboard · /help`,
-    tr: (u) => `👋 Merhaba${u}!\n\nBeni kanalınıza/grubunuza yönetici olarak ekleyin ve /start yazın.\n\nKomutlar: /menu · /settings · /dashboard · /help`,
+    fr: (u) => `👋 Bonjour${u}!\n\nAjoutez-moi comme admin à votre canal/groupe, puis écrivez /start ici.\n\nCommandes : /menu · /settings`,
+    ru: (u) => `👋 Привет${u}!\n\nДобавьте меня как администратора в канал/группу, затем напишите /start.\n\nКоманды: /menu · /settings · /help`,
+    tr: (u) => `👋 Merhaba${u}!\n\nBeni kanalınıza/grubunuza yönetici olarak ekleyin ve /start yazın.\n\nKomutlar: /menu · /settings · /help`,
   },
 
   // ── Hauptmenü ─────────────────────────────────────────────────────────────

@@ -28,35 +28,28 @@ async function handleBotAdded(tg, supabase, mcm, token) {
     try {
       const { data: existing } = await supabase.from("bot_channels").select("id").eq("id", chatIdStr).maybeSingle();
 
-      let dbResult;
-      if (existing) {
-        dbResult = await supabase.from("bot_channels").update({
-          title: chat.title || chatIdStr,
-          username: chat.username || null,
-          type: chat.type,
-          is_active: true, // Wird wieder aktiviert, falls er neu hinzugefügt wurde
-          updated_at: new Date()
-        }).eq("id", chatIdStr).select("id");
-      } else {
-        dbResult = await supabase.from("bot_channels").insert([{
-          id: chat.id,
-          title: chat.title || chatIdStr,
-          username: chat.username || null,
-          type: chat.type,
-          is_active: true, // Standardmäßig aktiv beim Hinzufügen
-          updated_at: new Date()
-        }]).select("id");
-      }
+      const channelData = {
+        title: chat.title || chatIdStr,
+        username: chat.username || null,
+        type: chat.type,
+        is_active: true,
+        ai_enabled: false,
+        added_by_user_id: addedBy?.id ? String(addedBy.id) : null,
+        added_by_username: addedBy?.username || null,
+        settings_token: settingsToken,
+        updated_at: new Date()
+      };
 
-      if (!dbResult?.error) {
-        await supabase.from("bot_channels").update({
-          ai_enabled: false,
-          added_by_user_id: addedBy?.id || null,
-          added_by_username: addedBy?.username || null,
-          settings_token: settingsToken
-        }).eq("id", chatIdStr);
+      if (existing) {
+        await supabase.from("bot_channels").update(channelData).eq("id", chatIdStr);
+      } else {
+        await supabase.from("bot_channels").insert([{
+          id: chatIdStr,
+          ...channelData
+        }]);
       }
     } catch (dbErr) {
+      logger.error(`[handleBotAdded] DB Error: ${dbErr.message}`);
     }
 
     // Erfolgsmeldung im Channel (allgemein, mit Hinweis auf @autoacts für AI)
