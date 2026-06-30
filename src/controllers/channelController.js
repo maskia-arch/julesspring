@@ -11,7 +11,7 @@ const channelController = {
     try {
       let data = [];
       try {
-        const resp = await supabase.from("bot_channels").select("*").order("added_at", { ascending: false });
+        const resp = await supabase.from("bot_channels").select("*").order("created_at", { ascending: false });
         if (resp.error) throw resp.error;
         data = resp.data || [];
       } catch (dbErr) {
@@ -331,7 +331,7 @@ const channelController = {
       }
 
       const { data: channels } = await supabase_local.from("bot_channels").select("*")
-        .order("added_at", { ascending: false });
+        .order("created_at", { ascending: false });
 
       res.json({ scanned: (existingChannels || []).length, registered, channels: channels || [] });
     } catch (e) { next(e); }

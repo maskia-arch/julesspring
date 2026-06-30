@@ -65,7 +65,7 @@ const dashboardController = {
   // ═══════════════════════════════════════════════════════════════════════
   async getOverview(req, res, next) {
     try {
-      const channels = await safeSelect('bot_channels', q => q.order('added_at', { ascending: false }));
+      const channels = await safeSelect('bot_channels', q => q.order('created_at', { ascending: false }));
 
       const totalChannels  = channels.length;
       const activeChannels  = channels.filter(c => c.ai_enabled).length;

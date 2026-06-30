@@ -420,6 +420,10 @@ CREATE TABLE IF NOT EXISTS message_reactions (
   message_id BIGINT,
   user_id BIGINT,
   reaction TEXT,
+  reaction_emoji TEXT,
+  bot_msg_text TEXT,
+  is_bot_message BOOLEAN DEFAULT false,
+  added_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -500,5 +504,16 @@ ALTER TABLE bot_channels ALTER COLUMN token_limit SET DEFAULT 0;
 ALTER TABLE bot_channels ALTER COLUMN safelist_enabled SET DEFAULT false;
 ALTER TABLE bot_channels ALTER COLUMN feedback_enabled SET DEFAULT false;
 ALTER TABLE bot_channels ALTER COLUMN admin_report_enabled SET DEFAULT false;
+
+-- message_reactions: fehlende Spalten ergänzen (idempotent)
+ALTER TABLE message_reactions ADD COLUMN IF NOT EXISTS reaction_emoji TEXT;
+ALTER TABLE message_reactions ADD COLUMN IF NOT EXISTS bot_msg_text TEXT;
+ALTER TABLE message_reactions ADD COLUMN IF NOT EXISTS is_bot_message BOOLEAN DEFAULT false;
+ALTER TABLE message_reactions ADD COLUMN IF NOT EXISTS added_at TIMESTAMPTZ DEFAULT NOW();
+
+-- bot_channels: added_at Kompatibilitätsspalte (Code-Altlast) – wird von created_at befüllt
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS added_at TIMESTAMPTZ;
+UPDATE bot_channels SET added_at = created_at WHERE added_at IS NULL;
+
 
 
