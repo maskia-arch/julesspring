@@ -1072,7 +1072,7 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/ban(?:@\w+)?(?:\s|$)/i.test(text) && ch?.is_approved) {
+    if (/^\/ban(?:@\w+)?(?:\s|$)/i.test(text)) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       const banTarget = await _resolveTargetUser(supabase_db, chatId, msg, text);
       if (!banTarget?.id) {
@@ -1146,7 +1146,7 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/unban(?:@\w+)?(?:\s|$)/i.test(text) && ch?.is_approved) {
+    if (/^\/unban(?:@\w+)?(?:\s|$)/i.test(text)) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       const unbanTarget = await _resolveTargetUser(supabase_db, chatId, msg, text);
       if (!unbanTarget?.id) {
@@ -1184,7 +1184,7 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/mute(?:@\w+)?(?:\s|$)/i.test(text) && ch?.is_approved) {
+    if (/^\/mute(?:@\w+)?(?:\s|$)/i.test(text)) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       const muteTarget = await _resolveTargetUser(supabase_db, chatId, msg, text);
       if (!muteTarget?.id) {
@@ -1229,7 +1229,7 @@ const commandHandler = {
       return;
     }
 
-    if (/^\/unmute(?:@\w+)?(?:\s|$)/i.test(text) && ch?.is_approved) {
+    if (/^\/unmute(?:@\w+)?(?:\s|$)/i.test(text)) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       const umTarget = await _resolveTargetUser(supabase_db, chatId, msg, text);
       if (!umTarget?.id) {

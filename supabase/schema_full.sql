@@ -150,6 +150,17 @@ CREATE TABLE IF NOT EXISTS channel_blacklist (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS channel_banned_users (
+  channel_id TEXT NOT NULL,
+  user_id BIGINT NOT NULL,
+  username TEXT,
+  reason TEXT,
+  added_by TEXT,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  PRIMARY KEY (channel_id, user_id)
+);
+
+
 -- ─── Multi-Gruppen / Verknüpfungen ───────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS channel_groups (
   id SERIAL PRIMARY KEY,
