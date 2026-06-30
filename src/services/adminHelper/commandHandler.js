@@ -1,6 +1,6 @@
 const supabase = require("../../config/supabase");
 const logger = require("../../utils/logger");
-const { tgApi } = require("./tgAdminHelper");
+const { tgApi, tgAdminHelper } = require("./tgAdminHelper");
 const safelistService = require("./safelistService");
 const settingsHandler = require("./settingsHandler");
 const inputWizardHandler = require("./inputWizardHandler");
@@ -39,6 +39,15 @@ async function _resolveTargetUser(supabase_db, chatId, msg, text, targetArg = ""
   if (msg?.reply_to_message?.from?.id) {
     const f = msg.reply_to_message.from;
     return { id: f.id, username: f.username || null, first_name: f.first_name || null };
+  }
+
+  // 2. Text-Mentions in Entities (wichtig für User ohne Username)
+  if (msg?.entities) {
+    const mentionEntity = msg.entities.find(e => e.type === "text_mention" && e.user?.id);
+    if (mentionEntity) {
+      const u = mentionEntity.user;
+      return { id: u.id, username: u.username || null, first_name: u.first_name || null };
+    }
   }
 
   // Falls kein targetArg übergeben wurde, versuchen wir es aus dem Text zu parsen
@@ -150,6 +159,11 @@ const commandHandler = {
 
     if (chat.type !== "private" && ch && ch.is_active === false) {
        return;
+    }
+
+    // Automatische Mitglieder-Erfassung bei jeder Nachricht in Gruppen/Channels
+    if (chat.type !== "private" && from?.id) {
+      void tgAdminHelper.trackMember(chatId, from);
     }
 
     if (chat.type === "private") {
