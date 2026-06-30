@@ -1,5 +1,5 @@
 -- ════════════════════════════════════════════════════════════════════════════
---   AdminHelper Datenbank-Schema (v2.0.24) - Komplette Neuinstallation
+--   AdminHelper Datenbank-Schema (v2.0.25) - Komplette Neuinstallation
 -- ════════════════════════════════════════════════════════════════════════════
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
@@ -9,6 +9,9 @@ CREATE EXTENSION IF NOT EXISTS vector;
 CREATE TABLE IF NOT EXISTS settings (
   id INT PRIMARY KEY DEFAULT 1,
   webhook_url TEXT,
+  smalltalk_bot_token TEXT,
+  sellauth_api_key TEXT,
+  sellauth_shop_id TEXT,
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   CONSTRAINT one_row CHECK (id = 1)
 );
@@ -62,6 +65,26 @@ CREATE TABLE IF NOT EXISTS bot_channels (
   quiet_mode TEXT,
   quiet_allow_scheduled BOOLEAN DEFAULT false,
   quiet_active BOOLEAN DEFAULT false,
+  
+  -- Dashboard & KI / Budget
+  channel_group_id INTEGER,
+  usd_spent NUMERIC(10, 6) DEFAULT 0,
+  last_summary_at TIMESTAMPTZ,
+  last_summary_tokens INTEGER DEFAULT 0,
+  token_budget_exhausted BOOLEAN DEFAULT false,
+  safelist_enabled BOOLEAN DEFAULT true,
+  feedback_enabled BOOLEAN DEFAULT true,
+  quiet_stars_amount INTEGER DEFAULT 0,
+  diss_battle_enabled BOOLEAN DEFAULT false,
+  diss_battle_duration_min INTEGER DEFAULT 30,
+  admin_report_enabled BOOLEAN DEFAULT true,
+  admin_report_ai_enabled BOOLEAN DEFAULT false,
+  admin_report_actions TEXT,
+  diss_battle_min_rep INTEGER DEFAULT 0,
+  diss_battle_bet INTEGER DEFAULT 0,
+  games_enabled BOOLEAN DEFAULT false,
+  games_cooldown_min INTEGER DEFAULT 60,
+  
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -204,8 +227,9 @@ CREATE TABLE IF NOT EXISTS scheduled_messages (
   pin_after_send BOOLEAN DEFAULT false,
   delete_previous BOOLEAN DEFAULT false,
   last_sent_msg_id BIGINT,
-  repeat BOOLEAN DEFAULT false,
+  repeat TEXT,
   interval_minutes INTEGER,
+  cron_expr TEXT,
   next_run_at TIMESTAMPTZ,
   end_at TIMESTAMPTZ,
   run_count INTEGER DEFAULT 0,
@@ -385,6 +409,19 @@ CREATE TABLE IF NOT EXISTS message_reactions (
   user_id BIGINT,
   reaction TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ─── UserInfo Pro / Limits ───────────────────────────────────────────────────
+CREATE TABLE IF NOT EXISTS userinfo_pro_users (
+  user_id BIGINT PRIMARY KEY,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS user_daily_usage (
+  user_id BIGINT,
+  usage_date DATE,
+  userinfo_count INTEGER DEFAULT 0,
+  PRIMARY KEY (user_id, usage_date)
 );
 
 -- ─── RPC-Funktionen ──────────────────────────────────────────────────────────
