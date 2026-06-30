@@ -25,7 +25,8 @@ services:
     container_name: ai_adminhelper_postgrest
     restart: always
     environment:
-      PGRST_DB_URI: ${DATABASE_URL:-postgres://postgres:${DB_PASSWORD:-dein_sicheres_db_passwort}@db:5432/postgres}
+      # Verwende den eindeutigen Containernamen ai_adminhelper_db für DNS-Auflösung im externen Netzwerk
+      PGRST_DB_URI: ${DATABASE_URL:-postgres://postgres:${DB_PASSWORD:-dein_sicheres_db_passwort}@ai_adminhelper_db:5432/postgres}
       PGRST_DB_SCHEMA: public
       PGRST_DB_ANON_ROLE: postgres
       PGRST_JWT_SECRET: ${JWT_SECRET:-mindestens_32_zeichen_langes_geheimnis_hier_einfuegen_das_sehr_lang_ist}
@@ -44,8 +45,9 @@ services:
     environment:
       PORT: 3000
       DB_SELF_HOSTED: "true"
-      SUPABASE_URL: http://postgrest:3000
-      DATABASE_URL: ${DATABASE_URL:-postgres://postgres:${DB_PASSWORD:-dein_sicheres_db_passwort}@db:5432/postgres}
+      # Verwende den eindeutigen Containernamen ai_adminhelper_postgrest für DNS-Auflösung im externen Netzwerk
+      SUPABASE_URL: http://ai_adminhelper_postgrest:3000
+      DATABASE_URL: ${DATABASE_URL:-postgres://postgres:${DB_PASSWORD:-dein_sicheres_db_passwort}@ai_adminhelper_db:5432/postgres}
       JWT_SECRET: ${JWT_SECRET:-mindestens_32_zeichen_langes_geheimnis_hier_einfuegen_das_sehr_lang_ist}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       ADMIN_USERNAME: ${ADMIN_USERNAME}

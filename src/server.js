@@ -53,11 +53,11 @@ const server = app.listen(port, () => {
   // DNS-Diagnose für PostgREST-Anbindung
   try {
     const dns = require('dns');
-    dns.lookup('postgrest', (err, address, family) => {
+    dns.lookup('ai_adminhelper_postgrest', (err, address, family) => {
       if (err) {
-        logger.warn(`⚠️ [DNS Diagnostic] Kann Hostname "postgrest" nicht auflösen: ${err.message}`);
+        logger.warn(`⚠️ [DNS Diagnostic] Kann Hostname "ai_adminhelper_postgrest" nicht auflösen: ${err.message}`);
       } else {
-        logger.info(`📡 [DNS Diagnostic] "postgrest" erfolgreich aufgelöst zu: ${address} (IPv${family})`);
+        logger.info(`📡 [DNS Diagnostic] "ai_adminhelper_postgrest" erfolgreich aufgelöst zu: ${address} (IPv${family})`);
       }
     });
   } catch (dnsErr) {
