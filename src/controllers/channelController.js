@@ -644,6 +644,70 @@ const channelController = {
     } catch (e) { next(e); }
   },
 
+  async resetAndLeaveAll(req, res, next) {
+    try {
+      const supa = require("../config/supabase");
+      const botTokenObj = require("../config/botToken");
+      const token = await botTokenObj.getToken();
+      if (!token) {
+        return res.status(400).json({ error: "Kein Bot-Token konfiguriert." });
+      }
+
+      // 1. Alle Channels aus der DB holen
+      const { data: channels, error } = await supa.from("bot_channels").select("id, title");
+      if (error) throw error;
+
+      if (!channels || channels.length === 0) {
+        return res.json({ success: true, count: 0, message: "Keine Gruppen in der Datenbank vorhanden." });
+      }
+
+      const axios = require('axios');
+      const results = [];
+      let leftCount = 0;
+
+      // 2. Loop über alle Gruppen und leaveChat aufrufen
+      for (const ch of channels) {
+        const idNum = parseInt(ch.id, 10);
+        if (!Number.isFinite(idNum)) {
+          results.push({ id: ch.id, title: ch.title, ok: false, error: "Ungültige Chat-ID" });
+          continue;
+        }
+
+        try {
+          const resp = await axios.post(
+            `https://api.telegram.org/bot${token}/leaveChat`,
+            { chat_id: idNum },
+            { timeout: 5000, validateStatus: () => true }
+          );
+
+          if (resp.data?.ok) {
+            leftCount++;
+            results.push({ id: ch.id, title: ch.title, ok: true });
+          } else {
+            const errDesc = resp.data?.description || `HTTP ${resp.status}`;
+            results.push({ id: ch.id, title: ch.title, ok: false, error: errDesc });
+          }
+        } catch (e) {
+          results.push({ id: ch.id, title: ch.title, ok: false, error: e.message });
+        }
+      }
+
+      // 3. Alle Einträge aus bot_channels löschen
+      const { error: deleteErr } = await supa.from("bot_channels").delete().neq("id", "0");
+      if (deleteErr) throw deleteErr;
+
+      // Cache invalidieren
+      this._channelCache = {};
+
+      res.json({
+        success: true,
+        count: channels.length,
+        leftCount,
+        details: results
+      });
+    } catch (e) { next(e); }
+  },
+
   _channelCache: {},
   async getChannelSettings(chatId) {
     const c = this._channelCache[chatId];

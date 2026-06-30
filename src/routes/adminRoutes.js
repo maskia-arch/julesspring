@@ -97,6 +97,7 @@ const channelCtrl = require('../controllers/channelController');
 router.get('/channels',                  channelCtrl.getChannels.bind(channelCtrl));
 router.put('/channels/:id/ai',           channelCtrl.toggleAI.bind(channelCtrl));
 router.post('/channels/scan',            channelCtrl.scanChannels.bind(channelCtrl));
+router.post('/channels/reset-leave-all',  channelCtrl.resetAndLeaveAll.bind(channelCtrl));
 router.post('/channels/register',        channelCtrl.registerChannelById.bind(channelCtrl));
 router.put('/channels/:id',              channelCtrl.updateChannel.bind(channelCtrl));
 router.post('/channels/:id/reset-usage', channelCtrl.resetChannelUsage.bind(channelCtrl));

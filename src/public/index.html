@@ -8,7 +8,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <title>AI AdminHelper</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="/css/style.css">
     <link rel="manifest" href="/manifest.json">
     <meta name="theme-color" content="#0d0d0d">
     <link rel="apple-touch-icon" href="/icon-192.png">
@@ -108,6 +108,7 @@
                 <p style="font-size:0.8rem;color:#888;margin-bottom:12px;">Channels &amp; Gruppen, in denen der Bot Admin ist. Tippe eine Karte an für Verwaltung, KI, Credits, Scamliste &amp; geplante Nachrichten.</p>
                 <div id="channel-list"><p style="color:#555;font-size:0.85rem;">Lädt…</p></div>
                 <button onclick="scanAndLoadChannels()" class="btn btn-secondary btn-sm" style="margin-top:8px;">🔍 Scannen &amp; Aktualisieren</button>
+                <button onclick="triggerGlobalReset()" class="btn btn-danger btn-sm" style="margin-top:8px;margin-left:8px;background:#991b1b;border-color:#b91c1c;color:#fff;">💥 Globaler Reset (Austreten)</button>
             </div>
             <div class="card" style="margin-top:12px;">
                 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
@@ -403,8 +404,8 @@
     </div>
 </div>
 
-<script src="js/api.js?v=200"></script>
-<script src="js/dashboard.js?v=200"></script>
+<script src="/js/api.js?v=200"></script>
+<script src="/js/dashboard.js?v=200"></script>
 <script>
     /* AI AdminHelper Dashboard v2.0.0 */
     window.__APP_TYPE__ = 'adminhelper';

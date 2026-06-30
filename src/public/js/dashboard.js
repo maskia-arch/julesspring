@@ -590,6 +590,21 @@ async function scanAndLoadChannels() {
     await loadChannels();
 }
 
+async function triggerGlobalReset() {
+    if (!confirm("WARNUNG: Möchtest du wirklich, dass der Bot aus ALLEN Gruppen austritt und alle Gruppen aus dem Dashboard gelöscht werden? Dies kann nicht rückgängig gemacht werden!")) {
+        return;
+    }
+    var el = document.getElementById('channel-list');
+    if (el) el.innerHTML = '<p style="color:#555;font-size:0.85rem;padding:8px;">⏳ Verlasse Gruppen und setze zurück...</p>';
+    try {
+        var result = await api.request('/channels/reset-leave-all', 'POST');
+        alert("Reset erfolgreich! Der Bot ist aus " + (result.leftCount || 0) + " von " + (result.count || 0) + " Gruppen ausgetreten.");
+    } catch(e) {
+        alert("Fehler beim Reset: " + (e.message || String(e)));
+    }
+    await loadChannels();
+}
+
 async function loadChannels() {
     var el = document.getElementById('channel-list');
     if (!el) return;
