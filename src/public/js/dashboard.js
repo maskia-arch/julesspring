@@ -23,20 +23,20 @@ async function initDashboard() {
     _dashboardInitialized = true;
     _showLoadingGate(true);
 
-    // Versuche einmal schnell, die Statistiken zu laden, aber blockiere das Dashboard nicht hart bei Fehlern
-    try {
-        await updateStats();
-    } catch (e) {
-        console.warn('Initial stats load failed:', e);
-    }
-    _showLoadingGate(false);
+    // Alle Lade-Jobs parallel im Hintergrund starten
+    var jobs = [updateStats, loadOverview, loadSettings, loadChannels];
+    
+    // Warte maximal 400ms auf die Daten, um den Ladebildschirm schnell auszublenden.
+    // Länger dauernde Anfragen laden unbemerkt im Hintergrund weiter.
+    await Promise.race([
+        Promise.allSettled(jobs.map(function(fn) {
+            return Promise.resolve().then(function(){ return (typeof fn === 'function') ? fn() : null; })
+                .catch(function(e){ console.warn('[Preload]', e && e.message); });
+        })),
+        new Promise(function(resolve) { setTimeout(resolve, 400); })
+    ]);
 
-    // Sekundär-Daten parallel, fire-and-forget
-    var jobs = [loadOverview, loadSettings, loadChannels];
-    Promise.allSettled(jobs.map(function(fn) {
-        return Promise.resolve().then(function(){ return (typeof fn === 'function') ? fn() : null; })
-            .catch(function(e){ console.warn('[Preload]', e && e.message); });
-    }));
+    _showLoadingGate(false);
 
     setTimeout(initPushNotifications, 1500);
 

@@ -103,9 +103,16 @@ const adminController = {
   // ─── Settings ────────────────────────────────────────────────────────────
   async getSettings(req, res, next) {
     try {
-      const { data, error } = await supabase.from('settings').select('*').eq('id', 1).maybeSingle();
-      if (error) throw error;
-      const safe = Object.assign({}, data || {});
+      let data = null;
+      try {
+        const resp = await supabase.from('settings').select('*').eq('id', 1).maybeSingle();
+        if (resp.error) throw resp.error;
+        data = resp.data;
+      } catch (dbErr) {
+        logger.error(`[Settings DB Error] Settings konnten nicht geladen werden: ${dbErr.message}`);
+      }
+
+      const safe = Object.assign({}, data || { id: 1 });
       // Nicht alle sensitiven Daten im Browser exposen
       delete safe.sellauth_api_key;
       delete safe.smalltalk_bot_token; // Token kommt aus der Server-ENV, nie an den Client

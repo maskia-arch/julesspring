@@ -28,7 +28,7 @@ var api = {
             if (_pending[endpoint]) return _pending[endpoint];
         }
 
-        var maxRetries = (method === 'GET') ? 3 : 2;
+        var maxRetries = 1;
         var attempt = 0, lastErr;
 
         while (attempt < maxRetries) {

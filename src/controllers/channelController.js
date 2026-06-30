@@ -9,8 +9,15 @@ const channelController = {
 
   async getChannels(req, res, next) {
     try {
-      const { data } = await supabase.from("bot_channels").select("*").order("added_at", { ascending: false });
-      if (!data) return res.json([]);
+      let data = [];
+      try {
+        const resp = await supabase.from("bot_channels").select("*").order("added_at", { ascending: false });
+        if (resp.error) throw resp.error;
+        data = resp.data || [];
+      } catch (dbErr) {
+        logger.error(`[Channels DB Error] Channels konnten nicht geladen werden: ${dbErr.message}`);
+      }
+
       const arenaIds = new Set(data.map(c => c.diss_battle_arena_chat_id).filter(Boolean).map(String));
       const filtered = data.filter(c => !arenaIds.has(String(c.id)));
       res.json(filtered);
