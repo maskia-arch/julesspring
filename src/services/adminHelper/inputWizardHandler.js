@@ -3,7 +3,7 @@ const supabase = require("../../config/supabase");
 const logger = require("../../utils/logger");
 const safelistService = require("./safelistService");
 const userInfoService = require("./userInfoService");
-const { entitiesToHtml } = require("../../utils/telegramFormatter");
+const { entitiesToHtml, parseGermanDateTime, toGermanDateTime } = require("../../utils/telegramFormatter");
 
 /**
  * Parst Inline-Button-Definitionen aus User-Text.
@@ -55,23 +55,13 @@ async function nextStep(tg, userId, pending, text, kb = []) {
 }
 
 /**
- * Konvertiert DE-Datum/Zeit korrekt in UTC (berücksichtigt MEZ/MESZ).
+ * Wrapper: parsed eine DE-Datumseingabe als Berliner Zeit → UTC ISO-String.
+ * Delegiert an die robuste Implementierung in telegramFormatter.js.
+ * @param {string} day, month, year, hour, minute – einzelne Felder aus Regex-Match
  */
 function _parseGermanDateTime(day, month, year, hour, minute) {
-  try {
-    // Ermittle aktuellen Berlin-Offset per Intl
-    const probe = new Date(Date.UTC(parseInt(year), parseInt(month)-1, parseInt(day), parseInt(hour), parseInt(minute)));
-    const de  = probe.toLocaleString('de-DE', { timeZone: 'Europe/Berlin', hour12: false });
-    const utc = probe.toLocaleString('de-DE', { timeZone: 'UTC',           hour12: false });
-    const dh  = parseInt((de.match(/(\d+):(\d+)/)  || [])[1] || 0);
-    const uh  = parseInt((utc.match(/(\d+):(\d+)/) || [])[1] || 0);
-    let diff = dh - uh;
-    if (diff > 12) diff -= 24; if (diff < -12) diff += 24;
-    // DE-Eingabe zu UTC: subtract offset
-    const naive = new Date(Date.UTC(parseInt(year), parseInt(month)-1, parseInt(day), parseInt(hour), parseInt(minute)));
-    return new Date(naive.getTime() - diff * 3600000).toISOString();
-  } catch (_) {}
-  return new Date(parseInt(year), parseInt(month)-1, parseInt(day), parseInt(hour), parseInt(minute)).toISOString();
+  const padded = `${String(day).padStart(2,'0')}.${String(month).padStart(2,'0')}.${year} ${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
+  return parseGermanDateTime(padded) || new Date().toISOString();
 }
 
 async function handle(tg, supabase_db, userId, text, settings, msg) {

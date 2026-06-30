@@ -1589,6 +1589,27 @@ async function loadGeplant() {
     } catch (e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(e.message||String(e))+'</p>'; }
 }
 
+/**
+ * Konvertiert einen datetime-local-Wert (ohne Zeitzone, als Berliner Zeit gemeint)
+ * korrekt in einen UTC ISO-String. Berücksichtigt MEZ (+1) und MESZ (+2).
+ */
+function _berlinToUtcIso(localStr) {
+    if (!localStr) return new Date(Date.now() + 60000).toISOString();
+    // datetime-local Wert: "YYYY-MM-DDTHH:MM"
+    const [datePart, timePart] = localStr.split('T');
+    if (!datePart || !timePart) return new Date(Date.now() + 60000).toISOString();
+    const [year, month, day] = datePart.split('-').map(Number);
+    const [hour, minute]     = timePart.split(':').map(Number);
+    // Schritt 1: Erstelle einen naiven UTC-Zeitstempel
+    const utcGuess = Date.UTC(year, month - 1, day, hour, minute, 0);
+    // Schritt 2: Wie lautet die Berliner Zeit bei diesem UTC-Wert?
+    const berlinStr = new Date(utcGuess).toLocaleString('en-US', { timeZone: 'Europe/Berlin' });
+    const utcStr    = new Date(utcGuess).toLocaleString('en-US', { timeZone: 'UTC' });
+    const offsetMs  = new Date(berlinStr).getTime() - new Date(utcStr).getTime();
+    // Schritt 3: Eingabe war Berliner Zeit → echte UTC = naive - offset
+    return new Date(utcGuess - offsetMs).toISOString();
+}
+
 async function createScheduledMsg() {
     var ch = document.getElementById('sched-channel');
     var msg = document.getElementById('sched-message');
@@ -1599,7 +1620,7 @@ async function createScheduledMsg() {
     var payload = {
         channel_id: ch.value,
         message: msg.value.trim(),
-        next_run_at: (when && when.value) ? new Date(when.value).toISOString() : new Date(Date.now()+60000).toISOString(),
+        next_run_at: _berlinToUtcIso(when && when.value ? when.value : null),
         repeat: (rep && rep.value) ? rep.value : null
     };
     try {
@@ -1645,7 +1666,7 @@ async function _submitScheduleModal(channelId) {
         await api.request('/scheduled', 'POST', {
             channel_id: channelId,
             message: msg.value.trim(),
-            next_run_at: (when && when.value) ? new Date(when.value).toISOString() : new Date(Date.now()+60000).toISOString(),
+            next_run_at: _berlinToUtcIso(when && when.value ? when.value : null),
             repeat: (rep && rep.value) ? rep.value : null
         });
         showToast('✅ Geplant!');
