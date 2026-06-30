@@ -32,20 +32,29 @@ scp supabase_dump.sql root@dein-server-ip:/root/supabase_dump.sql
 
 ## Schritt 3: Dump in die neue PostgreSQL-Datenbank einspielen
 
-Verbinde dich per SSH mit deinem Server. Wir spielen den Dump direkt in den laufenden PostgreSQL-Docker-Container ein.
+Je nachdem, welche Option du gewählt hast (lokaler Container im Compose oder eine eigenständige, von Coolify verwaltete PostgreSQL-Datenbank), spielst du den Dump wie folgt ein:
 
-1. Finde den Containernamen oder die ID deiner PostgreSQL-Datenbank heraus:
+### Option A: Import in den lokalen Compose-Container (`db` Service)
+1. Finde den Containernamen deiner Datenbank heraus:
    ```bash
    docker ps | grep db
    ```
-   (In unserem Standard-Compose heißt der Container `ai_adminhelper_db`).
+   (Standardmäßig heißt der Container `ai_adminhelper_db`).
 
-2. Führe den Import aus:
+2. Führe den Import über die CLI aus:
    ```bash
    docker exec -i ai_adminhelper_db psql -U postgres -d postgres < /root/supabase_dump.sql
    ```
 
-*Fertig! Deine Tabellen, Daten und Berechtigungen wurden vollständig in die lokale Datenbank migriert.*
+### Option B: Import in eine von Coolify verwaltete PostgreSQL-Datenbank (Empfohlen)
+Da Coolify die Datenbank als eigenständigen Service verwaltet, kannst du sie bequem von außen befüllen:
+1. Öffne die PostgreSQL-Ressource in deinem **Coolify Dashboard**.
+2. Scrolle zu den Verbindungsinformationen und klicke auf **"Port nach außen freigeben"** (Expose port to internet).
+3. Verbinde dich von deinem lokalen Rechner mit einem beliebigen Datenbank-Client (z. B. **DBeaver**, **pgAdmin** oder **TablePlus**) unter Verwendung des angegebenen öffentlichen Ports.
+4. Führe die Datei `supabase_dump.sql` direkt über den SQL-Editor deines Clients aus.
+5. Deaktiviere danach aus Sicherheitsgründen die Port-Freigabe in Coolify wieder.
+
+*Fertig! Deine Tabellen, Daten und Berechtigungen wurden vollständig migriert.*
 
 ---
 

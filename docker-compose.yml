@@ -13,7 +13,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./supabase/schema_full.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
-      - adminhelper_net
+      - coolify
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -33,7 +33,7 @@ services:
     depends_on:
       - db
     networks:
-      - adminhelper_net
+      - coolify
 
   app:
     build:
@@ -64,11 +64,12 @@ services:
     ports:
       - "${PORT:-4444}:3000"
     networks:
-      - adminhelper_net
+      - coolify
 
 networks:
-  adminhelper_net:
-    driver: bridge
+  coolify:
+    name: coolify
+    external: true
 
 volumes:
   pgdata:
