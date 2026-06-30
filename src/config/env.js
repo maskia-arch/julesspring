@@ -27,6 +27,10 @@ if (isSelfHosted) {
   const jwt = require('jsonwebtoken');
   const secret = process.env.JWT_SECRET || 'ai-adminhelper-secret-change-me-32-chars-long';
   
+  if (secret.length < 32) {
+    console.warn('⚠️  WICHTIG: JWT_SECRET hat weniger als 32 Zeichen! PostgREST v12 verlangt einen Key von mindestens 32 Zeichen, andernfalls stürzt die Datenbank-API ab und wirft "fetch failed"!');
+  }
+  
   try {
     supabaseKey = jwt.sign({ role: 'postgres' }, secret, { algorithm: 'HS256' });
   } catch (err) {

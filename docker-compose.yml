@@ -14,9 +14,8 @@ services:
       - pgdata:/var/lib/postgresql/data
       # Schema-Initialisierung beim allerersten Start der DB
       - ./supabase/schema_full.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      # Optional: Port freigeben für Backups oder externe Verwaltung
-      - "5432:5432"
+    # Wir entfernen die Portweiterleitung nach außen, um Port-Konflikte (z.B. mit anderen DBs auf dem Host) zu vermeiden.
+    # Die Kommunikation erfolgt rein intern im Docker-Netzwerk.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -28,19 +27,17 @@ services:
     container_name: ai_adminhelper_postgrest
     restart: always
     environment:
-      # Verbindung zur PostgreSQL-Datenbank
-      # PGRST_DB_URI wird primär aus DATABASE_URL (von Coolify injiziert) gelesen.
-      # Fallback ist der lokale 'db' Service.
+      # Verbindung zur PostgreSQL-Datenbank (primär DATABASE_URL von Coolify, sonst Fallback)
       PGRST_DB_URI: ${DATABASE_URL:-postgres://postgres:${DB_PASSWORD:-dein_sicheres_db_passwort}@db:5432/postgres}
       PGRST_DB_SCHEMA: public
       PGRST_DB_ANON_ROLE: postgres
-      PGRST_JWT_SECRET: ${JWT_SECRET:-mindestens_32_zeichen_langes_geheimnis_hier_einfuegen}
+      # WICHTIG: Muss mindestens 32 Zeichen lang sein, sonst bricht PostgREST ab!
+      PGRST_JWT_SECRET: ${JWT_SECRET:-mindestens_32_zeichen_langes_geheimnis_hier_einfuegen_das_sehr_lang_ist}
       PGRST_PORT: 3000
     depends_on:
       db:
         condition: service_healthy
-    ports:
-      - "3001:3000"
+    # Kein Port-Mapping nach außen nötig, da die App intern zugreift.
 
   app:
     build:
@@ -49,12 +46,12 @@ services:
     container_name: ai_adminhelper_app
     restart: always
     environment:
-      PORT: 3000
+      PORT: ${PORT:-3000}
       DB_SELF_HOSTED: "true"
       # Verweist intern auf den PostgREST-Container
       SUPABASE_URL: http://postgrest:3000
       DATABASE_URL: ${DATABASE_URL:-postgres://postgres:${DB_PASSWORD:-dein_sicheres_db_passwort}@db:5432/postgres}
-      JWT_SECRET: ${JWT_SECRET:-mindestens_32_zeichen_langes_geheimnis_hier_einfuegen}
+      JWT_SECRET: ${JWT_SECRET:-mindestens_32_zeichen_langes_geheimnis_hier_einfuegen_das_sehr_lang_ist}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       ADMIN_USERNAME: ${ADMIN_USERNAME}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD}
@@ -70,7 +67,8 @@ services:
     depends_on:
       - postgrest
     ports:
-      - "3000:3000"
+      # Verwendet den dynamischen Port aus der Umgebung (z.B. 4444 bei Coolify)
+      - "${PORT:-3000}:${PORT:-3000}"
 
 volumes:
   pgdata:
