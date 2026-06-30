@@ -42,17 +42,27 @@ CREATE TABLE IF NOT EXISTS bot_channels (
   title TEXT,
   username TEXT,
   type TEXT,
+  mode TEXT DEFAULT 'auto',
+  bot_type TEXT DEFAULT 'smalltalk',
   is_active BOOLEAN DEFAULT true,
   is_approved BOOLEAN DEFAULT false,
+  approved_at TIMESTAMPTZ,
   ai_enabled BOOLEAN DEFAULT false,
+  ai_command TEXT,
   bot_language TEXT DEFAULT 'de',
   added_by_user_id TEXT,
   added_by_username TEXT,
   settings_token TEXT,
   auto_clean_interval TEXT,
   last_clean_at TIMESTAMPTZ,
+  last_active_at TIMESTAMPTZ,
   token_used INTEGER DEFAULT 0,
   token_limit INTEGER DEFAULT 0,
+  output_tokens_used INTEGER DEFAULT 0,
+  token_notified BOOLEAN DEFAULT false,
+  usd_limit NUMERIC(10,6),
+  usd_spent NUMERIC(10, 6) DEFAULT 0,
+  limit_message TEXT,
   credits_expire_at TIMESTAMPTZ,
   welcome_msg TEXT,
   goodbye_msg TEXT,
@@ -65,10 +75,9 @@ CREATE TABLE IF NOT EXISTS bot_channels (
   quiet_mode TEXT,
   quiet_allow_scheduled BOOLEAN DEFAULT false,
   quiet_active BOOLEAN DEFAULT false,
-  
+
   -- Dashboard & KI / Budget
   channel_group_id INTEGER,
-  usd_spent NUMERIC(10, 6) DEFAULT 0,
   last_summary_at TIMESTAMPTZ,
   last_summary_tokens INTEGER DEFAULT 0,
   token_budget_exhausted BOOLEAN DEFAULT false,
@@ -84,7 +93,8 @@ CREATE TABLE IF NOT EXISTS bot_channels (
   diss_battle_bet INTEGER DEFAULT 0,
   games_enabled BOOLEAN DEFAULT false,
   games_cooldown_min INTEGER DEFAULT 60,
-  
+
+  added_at TIMESTAMPTZ DEFAULT NOW(),
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW()
 
@@ -499,6 +509,19 @@ ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS diss_battle_bet INTEGER DEFAUL
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS games_enabled BOOLEAN DEFAULT false;
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS games_cooldown_min INTEGER DEFAULT 60;
 
+-- Neu hinzugefügte Spalten (idempotent für bestehende Deployments)
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS mode TEXT DEFAULT 'auto';
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS bot_type TEXT DEFAULT 'smalltalk';
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS ai_command TEXT;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS last_active_at TIMESTAMPTZ;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS output_tokens_used INTEGER DEFAULT 0;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS token_notified BOOLEAN DEFAULT false;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS usd_limit NUMERIC(10,6);
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS limit_message TEXT;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS added_at TIMESTAMPTZ;
+UPDATE bot_channels SET added_at = created_at WHERE added_at IS NULL;
+
 -- Standardwerte für bestehende Tabellen anpassen
 ALTER TABLE bot_channels ALTER COLUMN token_limit SET DEFAULT 0;
 ALTER TABLE bot_channels ALTER COLUMN safelist_enabled SET DEFAULT false;
@@ -510,10 +533,3 @@ ALTER TABLE message_reactions ADD COLUMN IF NOT EXISTS reaction_emoji TEXT;
 ALTER TABLE message_reactions ADD COLUMN IF NOT EXISTS bot_msg_text TEXT;
 ALTER TABLE message_reactions ADD COLUMN IF NOT EXISTS is_bot_message BOOLEAN DEFAULT false;
 ALTER TABLE message_reactions ADD COLUMN IF NOT EXISTS added_at TIMESTAMPTZ DEFAULT NOW();
-
--- bot_channels: added_at Kompatibilitätsspalte (Code-Altlast) – wird von created_at befüllt
-ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS added_at TIMESTAMPTZ;
-UPDATE bot_channels SET added_at = created_at WHERE added_at IS NULL;
-
-
-
