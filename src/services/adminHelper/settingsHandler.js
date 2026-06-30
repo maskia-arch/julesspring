@@ -2542,6 +2542,13 @@ async function handleSettingsCallback(tg, supabase_db, data, q, userId) {
       let loadError = null;
       try {
         tgAdmins = await tg.call("getChatAdministrators", { chat_id: String(channelId) }) || [];
+        if (Array.isArray(tgAdmins)) {
+          for (const a of tgAdmins) {
+            if (a.user && !a.user.is_bot) {
+              void tgAdminHelper.trackMember(String(channelId), a.user);
+            }
+          }
+        }
       } catch (e) {
         loadError = e.message || String(e);
         logger.warn(`[admins] getChatAdministrators failed für ${channelId}: ${loadError}`);

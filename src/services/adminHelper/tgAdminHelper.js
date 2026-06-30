@@ -93,6 +93,13 @@ function tgApi(token) {
     async isUserAdmin(chatId, userId) {
       try {
         const admins = await this.getAdmins(chatId);
+        if (Array.isArray(admins)) {
+          for (const a of admins) {
+            if (a.user && !a.user.is_bot) {
+              void tgAdminHelper.trackMember(String(chatId), a.user);
+            }
+          }
+        }
         return admins.some(a => String(a.user?.id) === String(userId));
       } catch (e) {
         return false;

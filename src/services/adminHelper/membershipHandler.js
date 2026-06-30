@@ -48,6 +48,20 @@ async function handleBotAdded(tg, supabase, mcm, token) {
           ...channelData
         }]);
       }
+
+      // Initialer Admin-Import in channel_members
+      try {
+        const admins = await tg.call("getChatAdministrators", { chat_id: chatIdStr });
+        if (Array.isArray(admins)) {
+          for (const adm of admins) {
+            if (adm.user && !adm.user.is_bot) {
+              await tgAdminHelper.trackMember(chatIdStr, adm.user);
+            }
+          }
+        }
+      } catch (adminErr) {
+        logger.warn(`[handleBotAdded] Admins konnten nicht importiert werden: ${adminErr.message}`);
+      }
     } catch (dbErr) {
       logger.error(`[handleBotAdded] DB Error: ${dbErr.message}`);
     }
