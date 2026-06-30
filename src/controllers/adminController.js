@@ -29,8 +29,18 @@ const adminController = {
   // ein verschachteltes `stats`-Objekt, das das Dashboard fuer die KPI-Leiste
   // erwartet. JEDE Teilabfrage ist gekapselt → ein fehlendes Tabellen-Schema
   // legt das Dashboard NICHT lahm.
+  // Cache-Variablen
+  _statsCache: null,
+  _statsCacheTime: 0,
+
   async getStats(req, res, next) {
     try {
+      const now = Date.now();
+      // Cache für 10 Sekunden verwenden
+      if (adminController._statsCache && (now - adminController._statsCacheTime < 10000)) {
+        return res.json(adminController._statsCache);
+      }
+
       const c = async (table, build) => {
         try {
           let q = supabase.from(table).select('*', { count: 'exact', head: true });
@@ -69,7 +79,7 @@ const adminController = {
 
       const version = getVersion();
 
-      res.json({
+      const responseData = {
         // Flache Felder (alte Clients)
         totalChannels, activeChannels, kbEntries, version,
         // Verschachteltes Objekt fuer die KPI-Leiste
@@ -80,7 +90,13 @@ const adminController = {
           knowledgeEntries: kbEntries,
           creditsUsed, creditLimit
         }
-      });
+      };
+
+      // In den Cache schreiben
+      adminController._statsCache = responseData;
+      adminController._statsCacheTime = now;
+
+      res.json(responseData);
     } catch (e) { next(e); }
   },
 

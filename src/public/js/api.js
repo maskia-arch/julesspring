@@ -51,17 +51,22 @@ var api = {
     },
 
     async _doFetch(endpoint, method, body) {
+        var controller = new AbortController();
+        var timeoutId = setTimeout(function() { controller.abort(); }, 8000);
+
         var opts = {
             method: method,
             cache: 'no-store', // Kein Browser-Cache für API-Antworten
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': 'Bearer ' + (localStorage.getItem('admin_token') || '')
-            }
+            },
+            signal: controller.signal
         };
         if (body) opts.body = JSON.stringify(body);
 
         var promise = fetch(API_BASE + endpoint, opts).then(async function(res) {
+            clearTimeout(timeoutId);
             if (method === 'GET') delete _pending[endpoint];
 
             if (res.status === 401) { _showSessionHint(); return null; }
@@ -75,6 +80,7 @@ var api = {
             }
             try { return await res.json(); } catch(_) { return null; }
         }).catch(function(err) {
+            clearTimeout(timeoutId);
             if (method === 'GET') delete _pending[endpoint];
             if (!err._status) console.warn('[API]', endpoint + ':', err.message);
             throw err;

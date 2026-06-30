@@ -23,12 +23,11 @@ async function initDashboard() {
     _dashboardInitialized = true;
     _showLoadingGate(true);
 
-    // Nur Stats sind kritisch – Gate blockiert nie hart (Render-Cold-Start safe)
-    var ok = false, att = 0;
-    while (!ok && att < 4) {
-        att++;
-        try { await updateStats(); ok = true; }
-        catch (e) { if (att < 4) await new Promise(function(r){ setTimeout(r, 1000); }); }
+    // Versuche einmal schnell, die Statistiken zu laden, aber blockiere das Dashboard nicht hart bei Fehlern
+    try {
+        await updateStats();
+    } catch (e) {
+        console.warn('Initial stats load failed:', e);
     }
     _showLoadingGate(false);
 
