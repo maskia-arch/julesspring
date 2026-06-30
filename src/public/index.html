@@ -8,10 +8,10 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
     <title>AI AdminHelper</title>
-    <link rel="stylesheet" href="/css/style.css?v=202">
-    <link rel="manifest" href="/manifest.json?v=202">
+    <link rel="stylesheet" href="/css/style.css?v=203">
+    <link rel="manifest" href="/manifest.json?v=203">
     <meta name="theme-color" content="#0d0d0d">
-    <link rel="apple-touch-icon" href="/icon-192.png?v=202">
+    <link rel="apple-touch-icon" href="/icon-192.png?v=203">
 <style>
     /* ── AdminHelper Dashboard (v2.0.0) ──────────────────────────────────── */
     .kpi-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:10px; }
@@ -67,6 +67,7 @@
             <button class="nav-btn" onclick="showSection('moderation')" id="nav-moderation">🛡 Moderation <span id="mod-badge" class="badge" style="display:none;">0</span></button>
             <button class="nav-btn" onclick="showSection('engagement')" id="nav-engagement">🏆 Engagement</button>
             <button class="nav-btn" onclick="showSection('geplant')"    id="nav-geplant">⏰ Geplant</button>
+            <button class="nav-btn" onclick="refreshDashboardData()" title="Dashboard aktualisieren" id="nav-refresh">🔄</button>
             <button class="nav-btn" onclick="showSection('settings')"   id="nav-settings">⚙️</button>
             <button class="nav-btn nav-logout" onclick="handleLogout()">↩</button>
         </div>
@@ -404,8 +405,8 @@
     </div>
 </div>
 
-<script src="/js/api.js?v=202"></script>
-<script src="/js/dashboard.js?v=202"></script>
+<script src="/js/api.js?v=203"></script>
+<script src="/js/dashboard.js?v=203"></script>
 <script>
     /* AI AdminHelper Dashboard v2.0.0 */
     window.__APP_TYPE__ = 'adminhelper';

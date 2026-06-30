@@ -42,7 +42,7 @@ services:
     container_name: ai_adminhelper_app
     restart: always
     environment:
-      PORT: ${PORT:-3000}
+      PORT: 3000
       DB_SELF_HOSTED: "true"
       SUPABASE_URL: http://postgrest:3000
       DATABASE_URL: ${DATABASE_URL:-postgres://postgres:${DB_PASSWORD:-dein_sicheres_db_passwort}@db:5432/postgres}
@@ -62,7 +62,7 @@ services:
     depends_on:
       - postgrest
     ports:
-      - "${PORT:-3000}:${PORT:-3000}"
+      - "${PORT:-4444}:3000"
     networks:
       - adminhelper_net
 

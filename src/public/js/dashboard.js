@@ -23,25 +23,29 @@ async function initDashboard() {
     _dashboardInitialized = true;
     _showLoadingGate(true);
 
-    // Alle Lade-Jobs parallel im Hintergrund starten
+    // Alle Lade-Jobs parallel starten
     var jobs = [updateStats, loadOverview, loadSettings, loadChannels];
     
-    // Warte maximal 400ms auf die Daten, um den Ladebildschirm schnell auszublenden.
-    // Länger dauernde Anfragen laden unbemerkt im Hintergrund weiter.
-    await Promise.race([
-        Promise.allSettled(jobs.map(function(fn) {
+    // Warte vollständig, bis alle Daten geladen (oder fehlgeschlagen) sind
+    try {
+        await Promise.allSettled(jobs.map(function(fn) {
             return Promise.resolve().then(function(){ return (typeof fn === 'function') ? fn() : null; })
                 .catch(function(e){ console.warn('[Preload]', e && e.message); });
-        })),
-        new Promise(function(resolve) { setTimeout(resolve, 400); })
-    ]);
+        }));
+    } catch(e) {
+        console.error('[Preload Error]', e);
+    }
 
     _showLoadingGate(false);
 
     setTimeout(initPushNotifications, 1500);
+}
 
-    clearInterval(window._statsInterval);
-    window._statsInterval = setInterval(function(){ _safeRun(updateStats); }, 20000);
+async function refreshDashboardData() {
+    // Cache löschen, um frische Daten zu erzwingen
+    _cache = {};
+    _dashboardInitialized = false;
+    await initDashboard();
 }
 
 // ── Stats / KPI-Leiste ──────────────────────────────────────────────────────
