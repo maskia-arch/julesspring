@@ -226,7 +226,7 @@ Rules:
  */
 async function preloadTranslations() {
   try {
-    const { supabase } = require('../config/supabase');
+    const supabase = require('../config/supabase');
     const apiKey = process.env.OPENAI_API_KEY;
 
     logger.info('[i18n] Lade Übersetzungen aus der Datenbank...');
