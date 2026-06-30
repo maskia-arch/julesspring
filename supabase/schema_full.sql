@@ -456,3 +456,30 @@ LANGUAGE sql STABLE AS $$
   ORDER BY ck.embedding <=> query_embedding
   LIMIT match_count;
 $$;
+
+-- ─── Alter-Table Migrationen (Fügt fehlende Spalten nachträglich hinzu) ───────
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS smalltalk_bot_token TEXT;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS sellauth_api_key TEXT;
+ALTER TABLE settings ADD COLUMN IF NOT EXISTS sellauth_shop_id TEXT;
+
+ALTER TABLE scheduled_messages ADD COLUMN IF NOT EXISTS cron_expr TEXT;
+ALTER TABLE scheduled_messages ALTER COLUMN repeat TYPE TEXT;
+
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS channel_group_id INTEGER;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS usd_spent NUMERIC(10, 6) DEFAULT 0;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS last_summary_at TIMESTAMPTZ;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS last_summary_tokens INTEGER DEFAULT 0;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS token_budget_exhausted BOOLEAN DEFAULT false;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS safelist_enabled BOOLEAN DEFAULT true;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS feedback_enabled BOOLEAN DEFAULT true;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS quiet_stars_amount INTEGER DEFAULT 0;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS diss_battle_enabled BOOLEAN DEFAULT false;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS diss_battle_duration_min INTEGER DEFAULT 30;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS admin_report_enabled BOOLEAN DEFAULT true;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS admin_report_ai_enabled BOOLEAN DEFAULT false;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS admin_report_actions TEXT;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS diss_battle_min_rep INTEGER DEFAULT 0;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS diss_battle_bet INTEGER DEFAULT 0;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS games_enabled BOOLEAN DEFAULT false;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS games_cooldown_min INTEGER DEFAULT 60;
+
