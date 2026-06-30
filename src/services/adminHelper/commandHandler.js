@@ -34,26 +34,29 @@ async function isGroupAdmin(tg, chatId, userId) {
  *
  * @returns {Promise<{id:number, username:string|null, first_name:string|null}|null>}
  */
-async function _resolveTargetUser(supabase_db, chatId, msg, text) {
+async function _resolveTargetUser(supabase_db, chatId, msg, text, targetArg = "") {
   // 1. Reply auf Nachricht
   if (msg?.reply_to_message?.from?.id) {
     const f = msg.reply_to_message.from;
     return { id: f.id, username: f.username || null, first_name: f.first_name || null };
   }
 
-  // 2. Text-Mentions in Entities
-  if (msg?.entities) {
-    const mentionEntity = msg.entities.find(e => e.type === "text_mention" && e.user?.id);
-    if (mentionEntity) {
-      const u = mentionEntity.user;
-      return { id: u.id, username: u.username || null, first_name: u.first_name || null };
+  // Falls kein targetArg übergeben wurde, versuchen wir es aus dem Text zu parsen
+  let target = targetArg.trim();
+  if (!target) {
+    const userMatch = text.match(/@([a-zA-Z0-9_]{3,32})/);
+    if (userMatch) target = "@" + userMatch[1];
+    else {
+      const idMatch = text.match(/\s+(\d{4,})(?:\s|$)/);
+      if (idMatch) target = idMatch[1];
     }
   }
 
-  // 3. Numerische ID im Text — z.B. "/ban 123456789" oder "/ban 123456789 Grund..."
-  const idMatch = text.match(/^\/(?:ban|unban|mute|unmute)(?:@\w+)?\s+(\d{4,})(?:\s|$)/i);
-  if (idMatch) {
-    const uid = parseInt(idMatch[1]);
+  if (!target) return null;
+
+  // Wenn target eine numerische ID ist
+  if (/^\d{4,}$/.test(target)) {
+    const uid = parseInt(target);
     try {
       const { data } = await supabase_db.from("channel_members")
         .select("username, first_name")
@@ -72,27 +75,26 @@ async function _resolveTargetUser(supabase_db, chatId, msg, text) {
     }
   }
 
-  // 4. @username im Text → channel_members Lookup
-  const userMatch = text.match(/@([a-zA-Z0-9_]{3,32})/);
-  if (userMatch) {
-    const uname = userMatch[1];
-    try {
-      const { data } = await supabase_db.from("channel_members")
-        .select("user_id, username, first_name")
-        .eq("channel_id", String(chatId))
-        .ilike("username", uname)
-        .limit(1).maybeSingle();
-      if (data?.user_id) {
-        return { id: data.user_id, username: data.username, first_name: data.first_name };
-      }
-    } catch (_) {}
-    try {
-      const resolved = await userIdentityService.findByUsername(String(chatId), uname);
-      if (resolved?.user_id) {
-        return { id: resolved.user_id, username: resolved.username, first_name: resolved.first_name };
-      }
-    } catch (_) {}
-  }
+  // Wenn target mit @ beginnt oder ein einfacher Name ist
+  const uname = target.replace(/^@/, "");
+  try {
+    const { data } = await supabase_db.from("channel_members")
+      .select("user_id, username, first_name")
+      .eq("channel_id", String(chatId))
+      .or(`username.ilike.${uname},first_name.ilike.${uname}`)
+      .limit(1).maybeSingle();
+    if (data?.user_id) {
+      return { id: data.user_id, username: data.username, first_name: data.first_name };
+    }
+  } catch (_) {}
+
+  try {
+    const resolved = await userIdentityService.findByUsername(String(chatId), uname);
+    if (resolved?.user_id) {
+      return { id: resolved.user_id, username: resolved.username, first_name: resolved.first_name };
+    }
+  } catch (_) {}
+
   return null;
 }
 
@@ -1074,18 +1076,33 @@ const commandHandler = {
 
     if (/^\/ban(?:@\w+)?(?:\s|$)/i.test(text)) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
-      const banTarget = await _resolveTargetUser(supabase_db, chatId, msg, text);
+
+      const words = text.split(/\s+/);
+      let targetArg = "";
+      let remainingWords = words.slice(1);
+      const hasReply = !!msg?.reply_to_message?.from?.id;
+
+      if (!hasReply && remainingWords.length > 0) {
+        targetArg = remainingWords.shift();
+      } else if (hasReply && remainingWords.length > 0) {
+        const firstWord = remainingWords[0];
+        const isMention = firstWord.startsWith("@") || (firstWord.length > 3 && isNaN(firstWord));
+        if (isMention) targetArg = remainingWords.shift();
+      }
+
+      const banTarget = await _resolveTargetUser(supabase_db, chatId, msg, text, targetArg);
       if (!banTarget?.id) {
         const helpMsg = await tg.send(chatId,
           "❌ Kein Ziel erkannt. Nutze:\n" +
           "• <code>/ban</code> als Antwort auf die Nachricht\n" +
-          "• <code>/ban @username</code>\n" +
-          "• <code>/ban 12345678</code> (User-ID)");
+          "• <code>/ban @username [Grund]</code>\n" +
+          "• <code>/ban username [Grund]</code>\n" +
+          "• <code>/ban 12345678 [Grund]</code>");
         if (helpMsg?.message_id) void safelistService.trackBotMessage(chatId, helpMsg.message_id, "temp", 15000);
         await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
         return;
       }
-      const banReason = text.replace(/^\/ban(?:@\w+)?(?:\s+@?\S+)?\s*/i, "").trim() || "Kein Grund angegeben";
+      const banReason = remainingWords.join(" ").trim() || "Kein Grund angegeben";
       try {
         await tg.call("banChatMember", { chat_id: chatId, user_id: banTarget.id, until_date: 0, revoke_messages: false });
         const target = banTarget.username ? "@" + banTarget.username : (banTarget.first_name || String(banTarget.id));
@@ -1148,12 +1165,17 @@ const commandHandler = {
 
     if (/^\/unban(?:@\w+)?(?:\s|$)/i.test(text)) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
-      const unbanTarget = await _resolveTargetUser(supabase_db, chatId, msg, text);
+
+      const words = text.split(/\s+/);
+      let targetArg = words[1] || "";
+      const unbanTarget = await _resolveTargetUser(supabase_db, chatId, msg, text, targetArg);
       if (!unbanTarget?.id) {
         const helpMsg = await tg.send(chatId,
           "❌ Kein Ziel erkannt. Nutze:\n" +
+          "• <code>/unban</code> als Antwort auf die Nachricht\n" +
           "• <code>/unban @username</code>\n" +
-          "• <code>/unban 12345678</code> (User-ID)");
+          "• <code>/unban username</code>\n" +
+          "• <code>/unban 12345678</code>");
         if (helpMsg?.message_id) void safelistService.trackBotMessage(chatId, helpMsg.message_id, "temp", 15000);
         await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
         return;
@@ -1186,23 +1208,45 @@ const commandHandler = {
 
     if (/^\/mute(?:@\w+)?(?:\s|$)/i.test(text)) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
-      const muteTarget = await _resolveTargetUser(supabase_db, chatId, msg, text);
+
+      const words = text.split(/\s+/);
+      let targetArg = "";
+      let durationStr = "24h";
+      let remainingWords = words.slice(1);
+      const hasReply = !!msg?.reply_to_message?.from?.id;
+
+      if (!hasReply && remainingWords.length > 0) {
+        targetArg = remainingWords.shift();
+      } else if (hasReply && remainingWords.length > 0) {
+        const firstWord = remainingWords[0];
+        const isDuration = /^(?:\d+[smhd]|permanent)$/i.test(firstWord);
+        const isMention = firstWord.startsWith("@") || (firstWord.length > 3 && !isDuration && isNaN(firstWord));
+        if (isMention) targetArg = remainingWords.shift();
+      }
+
+      if (remainingWords.length > 0) {
+        const nextWord = remainingWords[0];
+        const durMatch = nextWord.match(/^(\d+[smhd]|permanent)$/i);
+        if (durMatch) {
+          durationStr = durMatch[1].toLowerCase();
+          remainingWords.shift();
+        }
+      }
+
+      const muteReason = remainingWords.join(" ").trim();
+      const muteTarget = await _resolveTargetUser(supabase_db, chatId, msg, text, targetArg);
       if (!muteTarget?.id) {
         const helpMsg = await tg.send(chatId,
           "❌ Kein Ziel erkannt. Nutze:\n" +
           "• <code>/mute</code> als Antwort auf die Nachricht\n" +
-          "• <code>/mute @username [Dauer]</code>\n" +
-          "• <code>/mute 12345678 [Dauer]</code>\n\n" +
+          "• <code>/mute @username [Dauer] [Grund]</code>\n" +
+          "• <code>/mute username [Dauer] [Grund]</code>\n" +
+          "• <code>/mute 12345678 [Dauer] [Grund]</code>\n\n" +
           "Dauer-Beispiele: <code>30m</code>, <code>2h</code>, <code>1d</code>, <code>permanent</code>");
         if (helpMsg?.message_id) void safelistService.trackBotMessage(chatId, helpMsg.message_id, "temp", 15000);
         await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
         return;
       }
-      // Dauer + Grund aus Resttext extrahieren (nach Befehl + optionalem Ziel)
-      const rest = text.replace(/^\/mute(?:@\w+)?\s*(?:@?\w+\s*|\d{4,}\s*)?/i, "").trim();
-      const durMatch = rest.match(/^(\d+[smhd]|permanent)\b/i);
-      const durationStr = durMatch ? durMatch[1].toLowerCase() : "24h";
-      const muteReason  = durMatch ? rest.slice(durMatch[0].length).trim() : rest;
 
       const targetName = muteTarget.username
         ? "@" + muteTarget.username
@@ -1231,12 +1275,16 @@ const commandHandler = {
 
     if (/^\/unmute(?:@\w+)?(?:\s|$)/i.test(text)) {
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
-      const umTarget = await _resolveTargetUser(supabase_db, chatId, msg, text);
+
+      const words = text.split(/\s+/);
+      let targetArg = words[1] || "";
+      const umTarget = await _resolveTargetUser(supabase_db, chatId, msg, text, targetArg);
       if (!umTarget?.id) {
         const helpMsg = await tg.send(chatId,
           "❌ Kein Ziel erkannt. Nutze:\n" +
           "• <code>/unmute</code> als Antwort auf die Nachricht\n" +
           "• <code>/unmute @username</code>\n" +
+          "• <code>/unmute username</code>\n" +
           "• <code>/unmute 12345678</code>");
         if (helpMsg?.message_id) void safelistService.trackBotMessage(chatId, helpMsg.message_id, "temp", 15000);
         await tg.call("deleteMessage", { chat_id: chatId, message_id: msg.message_id }).catch(() => {});
