@@ -52,7 +52,7 @@ CREATE TABLE IF NOT EXISTS bot_channels (
   auto_clean_interval TEXT,
   last_clean_at TIMESTAMPTZ,
   token_used INTEGER DEFAULT 0,
-  token_limit INTEGER DEFAULT 50000,
+  token_limit INTEGER DEFAULT 0,
   credits_expire_at TIMESTAMPTZ,
   welcome_msg TEXT,
   goodbye_msg TEXT,
@@ -72,12 +72,12 @@ CREATE TABLE IF NOT EXISTS bot_channels (
   last_summary_at TIMESTAMPTZ,
   last_summary_tokens INTEGER DEFAULT 0,
   token_budget_exhausted BOOLEAN DEFAULT false,
-  safelist_enabled BOOLEAN DEFAULT true,
-  feedback_enabled BOOLEAN DEFAULT true,
+  safelist_enabled BOOLEAN DEFAULT false,
+  feedback_enabled BOOLEAN DEFAULT false,
   quiet_stars_amount INTEGER DEFAULT 0,
   diss_battle_enabled BOOLEAN DEFAULT false,
   diss_battle_duration_min INTEGER DEFAULT 30,
-  admin_report_enabled BOOLEAN DEFAULT true,
+  admin_report_enabled BOOLEAN DEFAULT false,
   admin_report_ai_enabled BOOLEAN DEFAULT false,
   admin_report_actions TEXT,
   diss_battle_min_rep INTEGER DEFAULT 0,
@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS bot_channels (
   
   updated_at TIMESTAMPTZ DEFAULT NOW(),
   created_at TIMESTAMPTZ DEFAULT NOW()
+
 );
 
 -- ─── Channel Mitglieder ──────────────────────────────────────────────────────
@@ -430,7 +431,7 @@ RETURNS void AS $$
 BEGIN
   -- Setze abgelaufene Käufe zurück oder markiere sie
   UPDATE bot_channels
-  SET token_limit = 50000, credits_expire_at = NULL
+  SET token_limit = 0, credits_expire_at = NULL
   WHERE credits_expire_at < NOW();
 END;
 $$ LANGUAGE plpgsql;
@@ -470,16 +471,23 @@ ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS usd_spent NUMERIC(10, 6) DEFAU
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS last_summary_at TIMESTAMPTZ;
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS last_summary_tokens INTEGER DEFAULT 0;
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS token_budget_exhausted BOOLEAN DEFAULT false;
-ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS safelist_enabled BOOLEAN DEFAULT true;
-ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS feedback_enabled BOOLEAN DEFAULT true;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS safelist_enabled BOOLEAN DEFAULT false;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS feedback_enabled BOOLEAN DEFAULT false;
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS quiet_stars_amount INTEGER DEFAULT 0;
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS diss_battle_enabled BOOLEAN DEFAULT false;
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS diss_battle_duration_min INTEGER DEFAULT 30;
-ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS admin_report_enabled BOOLEAN DEFAULT true;
+ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS admin_report_enabled BOOLEAN DEFAULT false;
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS admin_report_ai_enabled BOOLEAN DEFAULT false;
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS admin_report_actions TEXT;
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS diss_battle_min_rep INTEGER DEFAULT 0;
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS diss_battle_bet INTEGER DEFAULT 0;
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS games_enabled BOOLEAN DEFAULT false;
 ALTER TABLE bot_channels ADD COLUMN IF NOT EXISTS games_cooldown_min INTEGER DEFAULT 60;
+
+-- Standardwerte für bestehende Tabellen anpassen
+ALTER TABLE bot_channels ALTER COLUMN token_limit SET DEFAULT 0;
+ALTER TABLE bot_channels ALTER COLUMN safelist_enabled SET DEFAULT false;
+ALTER TABLE bot_channels ALTER COLUMN feedback_enabled SET DEFAULT false;
+ALTER TABLE bot_channels ALTER COLUMN admin_report_enabled SET DEFAULT false;
+
 
