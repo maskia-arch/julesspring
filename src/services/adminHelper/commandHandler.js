@@ -469,6 +469,24 @@ const commandHandler = {
 
     const adminCmds = ["/admin", "/menu"];
     if (adminCmds.some(cmd => text.startsWith(cmd) || new RegExp(`^${cmd}(?:@\\w+)?`, "i").test(text))) {
+      if (chat.type !== "private") {
+        if (await isGroupAdmin(tg, chatId, from.id)) {
+          const botName = await _getBotUsername(tg, supabase_db, settings);
+          await tg.call("sendMessage", {
+            chat_id: chatId,
+            text: "⚙️ <b>Verwaltung</b>\n\nBitte verwalte die Einstellungen für diese Gruppe im Privat-Chat mit mir.",
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [[
+                { text: "💬 Privat-Chat öffnen", url: `https://t.me/${botName}?start=menu` }
+              ]]
+            },
+            reply_to_message_id: msg.message_id
+          });
+        }
+        return;
+      }
+
       if (await isGroupAdmin(tg, chatId, from.id)) {
         await tg.call("sendMessage", {
           chat_id: chatId,
@@ -493,6 +511,24 @@ const commandHandler = {
     }
 
     if (/^\/settings(?:@\w+)?$/i.test(text)) {
+      if (chat.type !== "private") {
+        if (await isGroupAdmin(tg, chatId, from.id)) {
+          const botName = await _getBotUsername(tg, supabase_db, settings);
+          await tg.call("sendMessage", {
+            chat_id: chatId,
+            text: "⚙️ <b>Einstellungen</b>\n\nBitte verwalte die Einstellungen für diese Gruppe im Privat-Chat mit mir.",
+            parse_mode: "HTML",
+            reply_markup: {
+              inline_keyboard: [[
+                { text: "💬 Privat-Chat öffnen", url: `https://t.me/${botName}?start=menu` }
+              ]]
+            },
+            reply_to_message_id: msg.message_id
+          });
+        }
+        return;
+      }
+
       if (!await isGroupAdmin(tg, chatId, from.id)) return;
       await tg.call("sendMessage", {
         chat_id: chatId,

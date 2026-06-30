@@ -56,7 +56,7 @@ async function handleBotAdded(tg, supabase, mcm, token) {
     // Auto-Delete nach 10 Min via safelistService.trackBotMessage
     const successText =
       `✅ <b>AdminHelper erfolgreich hinzugefügt!</b>\n\n` +
-      `Schreibe <code>/admin</code> oder <code>/menu</code> für das Verwaltungs-Menü.\n\n` +
+      `Bitte verwalte mich im Privat-Chat mit mir (schreibe dort /menu oder /settings).\n\n` +
       `🤖 <b>KI-Features (Smalltalk, Wissensdatenbank, Auto-Antworten, Tagesbericht)</b> ` +
       `können bei <a href="https://t.me/autoacts">@autoacts</a> freigeschaltet werden.\n\n` +
       `<i>Diese Nachricht wird in 10 Minuten automatisch gelöscht.</i>`;
@@ -75,7 +75,7 @@ async function handleBotAdded(tg, supabase, mcm, token) {
       try {
         const sentPm = await tg.send(String(addedBy.id),
           `✅ <b>AdminHelper zu "${chat.title}" hinzugefügt!</b>\n\n` +
-          `Tippe in der Gruppe <code>/admin</code> oder <code>/menu</code> für das Verwaltungs-Menü.\n\n` +
+          `Nutze hier im Privat-Chat <code>/menu</code> oder <code>/settings</code>, um die Gruppe zu verwalten.\n\n` +
           `🤖 Für KI-Features (Smalltalk, Wissensdatenbank, Auto-Antworten, Tagesbericht): ` +
           `<a href="https://t.me/autoacts">@autoacts</a> kontaktieren.`
         );
