@@ -20,22 +20,6 @@ services:
       timeout: 5s
       retries: 5
 
-  postgrest:
-    image: postgrest/postgrest:v12.2.0
-    container_name: ai_adminhelper_postgrest
-    restart: always
-    environment:
-      # Verwende den eindeutigen Containernamen ai_adminhelper_db für DNS-Auflösung im externen Netzwerk
-      PGRST_DB_URI: ${DATABASE_URL:-postgres://postgres:${DB_PASSWORD:-dein_sicheres_db_passwort}@ai_adminhelper_db:5432/postgres}
-      PGRST_DB_SCHEMA: public
-      PGRST_DB_ANON_ROLE: postgres
-      PGRST_JWT_SECRET: ${JWT_SECRET:-mindestens_32_zeichen_langes_geheimnis_hier_einfuegen_das_sehr_lang_ist}
-      PGRST_PORT: 3000
-    depends_on:
-      - db
-    networks:
-      - coolify
-
   app:
     build:
       context: .
@@ -45,8 +29,8 @@ services:
     environment:
       PORT: 3000
       DB_SELF_HOSTED: "true"
-      # Verwende den eindeutigen Containernamen ai_adminhelper_postgrest für DNS-Auflösung im externen Netzwerk
-      SUPABASE_URL: http://ai_adminhelper_postgrest:3000
+      # PostgREST läuft nun als lokaler Hintergrundprozess im selben Container
+      SUPABASE_URL: http://localhost:3000
       DATABASE_URL: ${DATABASE_URL:-postgres://postgres:${DB_PASSWORD:-dein_sicheres_db_passwort}@ai_adminhelper_db:5432/postgres}
       JWT_SECRET: ${JWT_SECRET:-mindestens_32_zeichen_langes_geheimnis_hier_einfuegen_das_sehr_lang_ist}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
@@ -62,7 +46,7 @@ services:
       VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY}
       VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY}
     depends_on:
-      - postgrest
+      - db
     ports:
       - "${PORT:-4444}:3000"
     networks:

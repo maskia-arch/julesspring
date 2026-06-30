@@ -13,6 +13,14 @@
  */
 const express = require('express');
 const cors = require('cors');
+
+// PostgREST im Hintergrund starten (falls self-hosted)
+try {
+  const { launchPostgREST } = require('./config/postgrestLauncher');
+  launchPostgREST();
+} catch (launcherErr) {
+  console.error('⚠️ Fehler beim Starten des PostgREST-Launchers:', launcherErr.message);
+}
 const path = require('path');
 const { port } = require('./config/env');
 const logger = require('./utils/logger');
@@ -50,18 +58,18 @@ app.use(errorHandler);
 const server = app.listen(port, () => {
   logger.info(`[AdminHelper] Server läuft auf Port ${port}`);
 
-  // DNS-Diagnose für PostgREST-Anbindung
+  // Diagnose für lokale PostgREST-Anbindung
   try {
-    const dns = require('dns');
-    dns.lookup('ai_adminhelper_postgrest', (err, address, family) => {
-      if (err) {
-        logger.warn(`⚠️ [DNS Diagnostic] Kann Hostname "ai_adminhelper_postgrest" nicht auflösen: ${err.message}`);
-      } else {
-        logger.info(`📡 [DNS Diagnostic] "ai_adminhelper_postgrest" erfolgreich aufgelöst zu: ${address} (IPv${family})`);
-      }
-    });
-  } catch (dnsErr) {
-    logger.warn(`[DNS Diagnostic] Fehler bei Initialisierung: ${dnsErr.message}`);
+    const http = require('http');
+    setTimeout(() => {
+      http.get('http://localhost:3000/', (res) => {
+        logger.info(`📡 [PostgREST Diagnostic] Lokaler PostgREST-Server geantwortet mit Status: ${res.statusCode}`);
+      }).on('error', (err) => {
+        logger.warn(`⚠️ [PostgREST Diagnostic] Lokaler PostgREST-Server nicht erreichbar: ${err.message}`);
+      });
+    }, 4000);
+  } catch (diagErr) {
+    logger.warn(`[PostgREST Diagnostic] Fehler bei Initialisierung: ${diagErr.message}`);
   }
 
   setTimeout(() => {

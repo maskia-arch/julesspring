@@ -20,8 +20,8 @@ let supabaseUrl = process.env.SUPABASE_URL;
 let supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 if (isSelfHosted) {
-  // Wenn self-hosted, nutzen wir die PostgREST-Adresse (im Docker-Netzwerk standardmäßig 'http://postgrest:3000')
-  supabaseUrl = process.env.SUPABASE_URL || 'http://postgrest:3000';
+  // Wenn self-hosted, nutzen wir die PostgREST-Adresse (im selben Container auf localhost)
+  supabaseUrl = process.env.SUPABASE_URL || 'http://localhost:3000';
   
   // Wir signieren einen JWT-Token für PostgREST, um Abfragen mit der Rolle 'postgres' (Superuser) zu autorisieren
   const jwt = require('jsonwebtoken');
