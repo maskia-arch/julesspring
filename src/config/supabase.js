@@ -15,7 +15,10 @@ if (isSelfHosted) {
   options.global = {
     fetch: (url, opts) => {
       const targetUrl = url.replace('/rest/v1/', '/');
-      return fetch(targetUrl, opts);
+      return fetch(targetUrl, opts).catch(err => {
+        console.error(`[Supabase/PostgREST Connection Error] Failed to connect to ${targetUrl}:`, err.message);
+        throw err;
+      });
     }
   };
 }

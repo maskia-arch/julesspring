@@ -35,8 +35,7 @@ services:
       PGRST_JWT_SECRET: ${JWT_SECRET:-mindestens_32_zeichen_langes_geheimnis_hier_einfuegen_das_sehr_lang_ist}
       PGRST_PORT: 3000
     depends_on:
-      db:
-        condition: service_healthy
+      - db
     # Kein Port-Mapping nach außen nötig, da die App intern zugreift.
 
   app:
