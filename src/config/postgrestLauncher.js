@@ -1,4 +1,6 @@
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
 const logger = require('../utils/logger');
 
 function launchPostgREST() {
@@ -9,6 +11,20 @@ function launchPostgREST() {
 
   const dbUri = process.env.DATABASE_URL || 'postgres://postgres:dein_sicheres_db_passwort@localhost:5432/postgres';
   const jwtSecret = process.env.JWT_SECRET || 'ai-adminhelper-secret-change-me-32-chars-long';
+
+  // --- Auto-Migration ---
+  try {
+    const schemaPath = path.join(__dirname, '../../supabase/schema_full.sql');
+    if (fs.existsSync(schemaPath)) {
+      logger.info('[PostgREST Launcher] Führe Auto-Migration / Schema-Check aus...');
+      execSync(`psql "${dbUri}" -f "${schemaPath}"`, { stdio: 'ignore' });
+      logger.info('[PostgREST Launcher] Auto-Migration / Schema-Check erfolgreich abgeschlossen.');
+    } else {
+      logger.warn('[PostgREST Launcher] schema_full.sql nicht gefunden, überspringe Auto-Migration.');
+    }
+  } catch (err) {
+    logger.error(`[PostgREST Launcher] Fehler bei der Auto-Migration: ${err.message}`);
+  }
 
   logger.info('[PostgREST Launcher] Starte PostgREST-Prozess auf Port 3000...');
 

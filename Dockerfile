@@ -4,7 +4,7 @@ FROM node:22-alpine
 WORKDIR /app
 
 # Systemabhängigkeiten installieren und PostgREST downloaden
-RUN apk add --no-cache curl tar xz && \
+RUN apk add --no-cache curl tar xz postgresql-client && \
     curl -L -o postgrest.tar.xz https://github.com/PostgREST/postgrest/releases/download/v12.2.0/postgrest-v12.2.0-linux-static-x64.tar.xz && \
     tar -xJf postgrest.tar.xz && \
     mv postgrest /usr/local/bin/ && \
@@ -17,6 +17,7 @@ RUN npm ci --only=production
 
 # App-Source kopieren
 COPY src/ ./src
+COPY supabase/ ./supabase
 COPY version.txt ./version.txt
 
 # Port freigeben (für das Dashboard / Webhook)
