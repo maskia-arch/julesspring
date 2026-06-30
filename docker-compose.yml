@@ -10,12 +10,10 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${DB_PASSWORD:-dein_sicheres_db_passwort}
     volumes:
-      # Hier werden die Daten dauerhaft auf dem Host/Server gespeichert
       - pgdata:/var/lib/postgresql/data
-      # Schema-Initialisierung beim allerersten Start der DB
       - ./supabase/schema_full.sql:/docker-entrypoint-initdb.d/init.sql
-    # Wir entfernen die Portweiterleitung nach außen, um Port-Konflikte (z.B. mit anderen DBs auf dem Host) zu vermeiden.
-    # Die Kommunikation erfolgt rein intern im Docker-Netzwerk.
+    networks:
+      - adminhelper_net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
@@ -27,16 +25,15 @@ services:
     container_name: ai_adminhelper_postgrest
     restart: always
     environment:
-      # Verbindung zur PostgreSQL-Datenbank (primär DATABASE_URL von Coolify, sonst Fallback)
       PGRST_DB_URI: ${DATABASE_URL:-postgres://postgres:${DB_PASSWORD:-dein_sicheres_db_passwort}@db:5432/postgres}
       PGRST_DB_SCHEMA: public
       PGRST_DB_ANON_ROLE: postgres
-      # WICHTIG: Muss mindestens 32 Zeichen lang sein, sonst bricht PostgREST ab!
       PGRST_JWT_SECRET: ${JWT_SECRET:-mindestens_32_zeichen_langes_geheimnis_hier_einfuegen_das_sehr_lang_ist}
       PGRST_PORT: 3000
     depends_on:
       - db
-    # Kein Port-Mapping nach außen nötig, da die App intern zugreift.
+    networks:
+      - adminhelper_net
 
   app:
     build:
@@ -47,7 +44,6 @@ services:
     environment:
       PORT: ${PORT:-3000}
       DB_SELF_HOSTED: "true"
-      # Verweist intern auf den PostgREST-Container
       SUPABASE_URL: http://postgrest:3000
       DATABASE_URL: ${DATABASE_URL:-postgres://postgres:${DB_PASSWORD:-dein_sicheres_db_passwort}@db:5432/postgres}
       JWT_SECRET: ${JWT_SECRET:-mindestens_32_zeichen_langes_geheimnis_hier_einfuegen_das_sehr_lang_ist}
@@ -66,8 +62,13 @@ services:
     depends_on:
       - postgrest
     ports:
-      # Verwendet den dynamischen Port aus der Umgebung (z.B. 4444 bei Coolify)
       - "${PORT:-3000}:${PORT:-3000}"
+    networks:
+      - adminhelper_net
+
+networks:
+  adminhelper_net:
+    driver: bridge
 
 volumes:
   pgdata:

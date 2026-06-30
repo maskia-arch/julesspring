@@ -49,6 +49,21 @@ app.use(errorHandler);
 
 const server = app.listen(port, () => {
   logger.info(`[AdminHelper] Server läuft auf Port ${port}`);
+
+  // DNS-Diagnose für PostgREST-Anbindung
+  try {
+    const dns = require('dns');
+    dns.lookup('postgrest', (err, address, family) => {
+      if (err) {
+        logger.warn(`⚠️ [DNS Diagnostic] Kann Hostname "postgrest" nicht auflösen: ${err.message}`);
+      } else {
+        logger.info(`📡 [DNS Diagnostic] "postgrest" erfolgreich aufgelöst zu: ${address} (IPv${family})`);
+      }
+    });
+  } catch (dnsErr) {
+    logger.warn(`[DNS Diagnostic] Fehler bei Initialisierung: ${dnsErr.message}`);
+  }
+
   setTimeout(() => {
     autoRegisterWebhook();
     setAutoCommands();
