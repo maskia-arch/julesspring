@@ -15,7 +15,7 @@
 const supabase = require('../config/supabase');
 const logger   = require('../utils/logger');
 
-const BOT_UA_REGEX = /(googlebot|bingbot|bingpreview|msnbot|baiduspider|yandexbot|yandeximages|duckduckbot|slurp|applebot|teoma|qwantify|sogou|ahrefsbot|semrushbot|dotbot|mj12bot|petalbot|bytespider|screaming frog|siteaudit|zoominfobot|dataforseobot|blexbot|criteobot|seznam|curl|wget|python|urllib|requests|aiohttp|scrapy|httpclient|java\/|go-http-client|node-fetch|axios|postman|okhttp|libwww|headlesschrome|headless|phantomjs|selenium|webdriver|puppeteer|playwright|electron|lighthouse|pagespeed|gtmetrix|pingdom|uptimerobot|site24x7|uptimemonitor|facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|telegrambot|whatsapp|discordbot|pinterest|\bbot\b|\bcrawler\b|\bspider\b|\bscraper\b|crawling|archiver|\+http|Chrome\/(1[3-9]\d|[2-9]\d\d)\.)/i;
+const BOT_UA_REGEX = /(googlebot|bingbot|bingpreview|msnbot|baiduspider|yandexbot|yandeximages|duckduckbot|slurp|applebot|teoma|qwantify|sogou|ahrefsbot|semrushbot|dotbot|mj12bot|petalbot|bytespider|screaming frog|siteaudit|zoominfobot|dataforseobot|blexbot|criteobot|seznam|curl|wget|python|urllib|requests|aiohttp|scrapy|httpclient|java\/|go-http-client|node-fetch|axios|postman|okhttp|libwww|headlesschrome|headless|phantomjs|selenium|webdriver|puppeteer|playwright|electron|lighthouse|pagespeed|gtmetrix|pingdom|uptimerobot|site24x7|uptimemonitor|facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|telegrambot|whatsapp|discordbot|pinterest|\bbot\b|\bcrawler\b|\bspider\b|\bscraper\b|crawling|archiver|\+http|Chrome\/(1[4-9]\d|[2-9]\d\d)\.)/i;
 
 function isTariffDetailUrl(url) {
   if (!url) return false;
