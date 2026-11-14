@@ -15,7 +15,17 @@
 const supabase = require('../config/supabase');
 const logger   = require('../utils/logger');
 
-const BOT_UA_REGEX = /(googlebot|bingbot|bingpreview|msnbot|baiduspider|yandexbot|yandeximages|duckduckbot|slurp|applebot|teoma|qwantify|sogou|ahrefsbot|semrushbot|dotbot|mj12bot|petalbot|bytespider|screaming frog|siteaudit|zoominfobot|dataforseobot|blexbot|criteobot|seznam|curl|wget|python|urllib|requests|aiohttp|scrapy|httpclient|java\/|go-http-client|node-fetch|axios|postman|okhttp|libwww|headlesschrome|headless|phantomjs|selenium|webdriver|puppeteer|playwright|electron|lighthouse|pagespeed|gtmetrix|pingdom|uptimerobot|site24x7|uptimemonitor|facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|telegrambot|whatsapp|discordbot|pinterest|\bbot\b|\bcrawler\b|\bspider\b|\bscraper\b|crawling|archiver|\+http)/i;
+const BOT_UA_REGEX = /(googlebot|bingbot|bingpreview|msnbot|baiduspider|yandexbot|yandeximages|duckduckbot|slurp|applebot|teoma|qwantify|sogou|ahrefsbot|semrushbot|dotbot|mj12bot|petalbot|bytespider|screaming frog|siteaudit|zoominfobot|dataforseobot|blexbot|criteobot|seznam|curl|wget|python|urllib|requests|aiohttp|scrapy|httpclient|java\/|go-http-client|node-fetch|axios|postman|okhttp|libwww|headlesschrome|headless|phantomjs|selenium|webdriver|puppeteer|playwright|electron|lighthouse|pagespeed|gtmetrix|pingdom|uptimerobot|site24x7|uptimemonitor|facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|telegrambot|whatsapp|discordbot|pinterest|\bbot\b|\bcrawler\b|\bspider\b|\bscraper\b|crawling|archiver|\+http|Chrome\/(1[3-9]\d|[2-9]\d\d)\.)/i;
+
+function isTariffDetailUrl(url) {
+  if (!url) return false;
+  try {
+    const u = new URL(url);
+    return /^\/([a-z]{2}\/)?tariffs\/[^/?#]+$/i.test(u.pathname);
+  } catch (_) {
+    return /([a-z]{2}\/)?tariffs\/[^/?#]+/i.test(String(url));
+  }
+}
 
 let _wp           = null;
 let _wpReady      = false;
@@ -96,6 +106,12 @@ const notificationService = {
   async notifyNewVisitor({ chatId, pageTitle, pageUrl, isNew }) {
     if (!_init()) return;
     if (!chatId) return;
+
+    // Nur bei echten Besuchern ab Startseite bis zum Checkout:
+    // Kalt-Aufrufe einzelner Tarife (z. B. Crawler aus Sitemap) unterdrücken
+    if (isNew !== false && isTariffDetailUrl(pageUrl)) {
+      return;
+    }
 
     try {
       const { data: v } = await supabase.from('widget_visitors').select('user_agent').eq('chat_id', chatId).maybeSingle();
