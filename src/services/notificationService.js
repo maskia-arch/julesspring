@@ -15,6 +15,8 @@
 const supabase = require('../config/supabase');
 const logger   = require('../utils/logger');
 
+const BOT_UA_REGEX = /(googlebot|bingbot|bingpreview|msnbot|baiduspider|yandexbot|yandeximages|duckduckbot|slurp|applebot|teoma|qwantify|sogou|ahrefsbot|semrushbot|dotbot|mj12bot|petalbot|bytespider|screaming frog|siteaudit|zoominfobot|dataforseobot|blexbot|criteobot|seznam|curl|wget|python|urllib|requests|aiohttp|scrapy|httpclient|java\/|go-http-client|node-fetch|axios|postman|okhttp|libwww|headlesschrome|headless|phantomjs|selenium|webdriver|puppeteer|playwright|electron|lighthouse|pagespeed|gtmetrix|pingdom|uptimerobot|site24x7|uptimemonitor|facebookexternalhit|facebot|twitterbot|linkedinbot|slackbot|telegrambot|whatsapp|discordbot|pinterest|\bbot\b|\bcrawler\b|\bspider\b|\bscraper\b|crawling|archiver|\+http)/i;
+
 let _wp           = null;
 let _wpReady      = false;
 let _wpInitTried  = false;
@@ -95,6 +97,13 @@ const notificationService = {
     if (!_init()) return;
     if (!chatId) return;
 
+    try {
+      const { data: v } = await supabase.from('widget_visitors').select('user_agent').eq('chat_id', chatId).maybeSingle();
+      if (v?.user_agent && (v.user_agent.length < 8 || BOT_UA_REGEX.test(v.user_agent))) {
+        return;
+      }
+    } catch (_) {}
+
     const key = String(chatId);
     const now = Date.now();
     const last = _firstVisitSent.get(key) || 0;
@@ -128,6 +137,13 @@ const notificationService = {
   async notifyVisitorActivity({ chatId, pageTitle, pageUrl }) {
     if (!_init()) return;
     if (!chatId) return;
+
+    try {
+      const { data: v } = await supabase.from('widget_visitors').select('user_agent').eq('chat_id', chatId).maybeSingle();
+      if (v?.user_agent && (v.user_agent.length < 8 || BOT_UA_REGEX.test(v.user_agent))) {
+        return;
+      }
+    } catch (_) {}
 
     const key  = String(chatId);
     const now  = Date.now();

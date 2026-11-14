@@ -594,16 +594,21 @@ async function scanAndLoadChannels() {
 }
 
 async function triggerGlobalReset() {
-    if (!confirm("WARNUNG: Möchtest du wirklich, dass der Bot aus ALLEN Gruppen austritt und alle Gruppen aus dem Dashboard gelöscht werden? Dies kann nicht rückgängig gemacht werden!")) {
+    // Erste Sicherheitsabfrage
+    if (!confirm('⚠️ WARNUNG: Der Bot tritt aus ALLEN Gruppen aus und alle Channel-Daten werden aus dem Dashboard gelöscht.\n\nDiese Aktion kann NICHT rückgängig gemacht werden!')) return;
+    // Zweite Bestätigung: Eingabe
+    var confirmation = prompt('Zur Bestätigung gib exakt ein:\n\nGLOBALER RESET');
+    if (!confirmation || confirmation.trim() !== 'GLOBALER RESET') {
+        showToast('❌ Abgebrochen – Eingabe stimmte nicht überein.');
         return;
     }
     var el = document.getElementById('channel-list');
     if (el) el.innerHTML = '<p style="color:#555;font-size:0.85rem;padding:8px;">⏳ Verlasse Gruppen und setze zurück...</p>';
     try {
         var result = await api.request('/channels/reset-leave-all', 'POST');
-        alert("Reset erfolgreich! Der Bot ist aus " + (result.leftCount || 0) + " von " + (result.count || 0) + " Gruppen ausgetreten.");
+        alert('✅ Reset erfolgreich! Der Bot ist aus ' + (result.leftCount || 0) + ' von ' + (result.count || 0) + ' Gruppen ausgetreten.');
     } catch(e) {
-        alert("Fehler beim Reset: " + (e.message || String(e)));
+        alert('Fehler beim Reset: ' + (e.message || String(e)));
     }
     await loadChannels();
 }
@@ -741,69 +746,79 @@ async function loadChannels() {
             card.appendChild(header);
             card.appendChild(body);
             el.appendChild(card);
-        });
-
-        el.addEventListener('click', function(e) {
-            var aiTog   = e.target.closest('.ch-ai-toggle');
-            var sched   = e.target.closest('.ch-schedule');
-            var safeEl  = e.target.closest('.ch-safelist');
-            var approve = e.target.closest('.ch-approve');
-            var reset   = e.target.closest('.ch-reset');
-            var del     = e.target.closest('.ch-delete');
-            var kb      = e.target.closest('.ch-kb');
-            if (aiTog) {
-                var enable = aiTog.dataset.ai !== '1';
-                if (!confirm(enable ? 'KI-Features aktivieren?' : 'KI-Features deaktivieren?')) return;
-                api.request('/channels/' + aiTog.dataset.id + '/ai', 'PUT', { ai_enabled: enable })
-                   .then(function(){ showToast(enable ? '🤖 KI aktiviert!' : '🔒 KI deaktiviert'); loadChannels(); })
-                   .catch(function(e){ alert('Fehler: ' + (e.message||String(e))); });
-            }
-            if (sched)  openScheduleModal(sched.dataset.id);
-            var scamBtn = e.target.closest('.ch-scamlist');
-            if (scamBtn) loadScamlist(scamBtn.dataset.id);
-            var slTog = e.target.closest('.ch-safelist-toggle');
-            if (slTog) {
-                var enableSl = slTog.dataset.sl !== '1';
-                api.request('/channels/' + slTog.dataset.id + '/ai', 'PUT', { safelist_enabled: enableSl })
-                   .then(function(){ showToast(enableSl ? '🛡 Safelist aktiviert!' : '🛡 Safelist deaktiviert'); loadChannels(); })
-                   .catch(function(e){ showToast('❌ ' + (e?.message || 'Fehler')); });
-            }
-            var fbTog = e.target.closest('.ch-feedback-toggle');
-            if (fbTog) {
-                var enableFb = fbTog.dataset.fb !== '1';
-                api.request('/channels/' + fbTog.dataset.id + '/ai', 'PUT', { feedback_enabled: enableFb })
-                   .then(function(){ showToast(enableFb ? '💬 Feedback-Erkennung aktiviert!' : '💬 Feedback-Erkennung deaktiviert'); loadChannels(); })
-                   .catch(function(e){ showToast('❌ ' + (e?.message || 'Fehler')); });
-            }
-            if (safeEl) openSafelistModal(safeEl.dataset.id);
-            if (approve) approveChannel(approve.dataset.id);
-            if (reset)   resetChannelUsage(reset.dataset.id);
-            if (del)     deleteChannel(del.dataset.id);
-            if (kb)      openChannelKB(kb.dataset.id, '');
-        });
-        el.addEventListener('change', function(e) {
-            var mode    = e.target.closest('.ch-mode');
-            var aimodel = e.target.closest('.ch-aimodel');
-            if (mode)    updateChannel(mode.dataset.id,    { mode:     mode.value    });
-            if (aimodel) {
-                api.request('/channels/' + aimodel.dataset.id + '/ai', 'PUT', { ai_model: aimodel.value })
-                   .then(function(){ showToast('✅ Modell: ' + aimodel.value); })
-                   .catch(function(e){ showToast('❌ ' + (e?.message || e?.error || 'Fehler. Bitte nochmal versuchen.')); });
-            }
-        });
-        el.addEventListener('blur', function(e) {
-            var cmd = e.target.closest('.ch-cmd');
-            var tl  = e.target.closest('.ch-tlimit');
-            var lm  = e.target.closest('.ch-limitmsg');
-            var sp  = e.target.closest('.ch-sysprompt');
-            if (cmd) updateChannel(cmd.dataset.id, { ai_command:    cmd.value });
-            if (tl)  updateChannel(tl.dataset.id,  { token_limit:   tl.value  });
-
-            if (lm)  updateChannel(lm.dataset.id,  { limit_message: lm.value  });
-            if (sp)  updateChannel(sp.dataset.id,  { system_prompt: sp.value  });
-        }, true);
+        // ── Event-Delegation wird NUR EINMAL in _initChannelListListeners() registriert.
+        // (Listener hier hinzuzufügen würde bei jedem loadChannels()-Aufruf stapeln.)
 
     } catch(e) { el.innerHTML = '<p style="color:#ef4444;">'+esc(e.message)+'</p>'; }
+}
+
+/**
+ * Registriert alle delegierten Event-Listener auf #channel-list.
+ * Wird exakt EINMAL beim DOMContentLoaded aufgerufen – nie bei loadChannels().
+ */
+function _initChannelListListeners() {
+    var el = document.getElementById('channel-list');
+    if (!el || el._listenersAttached) return;
+    el._listenersAttached = true;
+
+    el.addEventListener('click', function(e) {
+        var aiTog   = e.target.closest('.ch-ai-toggle');
+        var sched   = e.target.closest('.ch-schedule');
+        var safeEl  = e.target.closest('.ch-safelist');
+        var approve = e.target.closest('.ch-approve');
+        var reset   = e.target.closest('.ch-reset');
+        var del     = e.target.closest('.ch-delete');
+        var kb      = e.target.closest('.ch-kb');
+        if (aiTog) {
+            var enable = aiTog.dataset.ai !== '1';
+            if (!confirm(enable ? 'KI-Features aktivieren?' : 'KI-Features deaktivieren?')) return;
+            api.request('/channels/' + aiTog.dataset.id + '/ai', 'PUT', { ai_enabled: enable })
+               .then(function(){ showToast(enable ? '🤖 KI aktiviert!' : '🔒 KI deaktiviert'); loadChannels(); })
+               .catch(function(e){ alert('Fehler: ' + (e.message||String(e))); });
+        }
+        if (sched)  openScheduleModal(sched.dataset.id);
+        var scamBtn = e.target.closest('.ch-scamlist');
+        if (scamBtn) loadScamlist(scamBtn.dataset.id);
+        var slTog = e.target.closest('.ch-safelist-toggle');
+        if (slTog) {
+            var enableSl = slTog.dataset.sl !== '1';
+            api.request('/channels/' + slTog.dataset.id + '/ai', 'PUT', { safelist_enabled: enableSl })
+               .then(function(){ showToast(enableSl ? '🛡 Safelist aktiviert!' : '🛡 Safelist deaktiviert'); loadChannels(); })
+               .catch(function(e){ showToast('❌ ' + (e?.message || 'Fehler')); });
+        }
+        var fbTog = e.target.closest('.ch-feedback-toggle');
+        if (fbTog) {
+            var enableFb = fbTog.dataset.fb !== '1';
+            api.request('/channels/' + fbTog.dataset.id + '/ai', 'PUT', { feedback_enabled: enableFb })
+               .then(function(){ showToast(enableFb ? '💬 Feedback-Erkennung aktiviert!' : '💬 Feedback-Erkennung deaktiviert'); loadChannels(); })
+               .catch(function(e){ showToast('❌ ' + (e?.message || 'Fehler')); });
+        }
+        if (safeEl) openSafelistModal(safeEl.dataset.id);
+        if (approve) approveChannel(approve.dataset.id);
+        if (reset)   resetChannelUsage(reset.dataset.id);
+        if (del)     deleteChannel(del.dataset.id);
+        if (kb)      openChannelKB(kb.dataset.id, '');
+    });
+    el.addEventListener('change', function(e) {
+        var mode    = e.target.closest('.ch-mode');
+        var aimodel = e.target.closest('.ch-aimodel');
+        if (mode)    updateChannel(mode.dataset.id,    { mode:     mode.value    });
+        if (aimodel) {
+            api.request('/channels/' + aimodel.dataset.id + '/ai', 'PUT', { ai_model: aimodel.value })
+               .then(function(){ showToast('✅ Modell: ' + aimodel.value); })
+               .catch(function(e){ showToast('❌ ' + (e?.message || e?.error || 'Fehler. Bitte nochmal versuchen.')); });
+        }
+    });
+    el.addEventListener('blur', function(e) {
+        var cmd = e.target.closest('.ch-cmd');
+        var tl  = e.target.closest('.ch-tlimit');
+        var lm  = e.target.closest('.ch-limitmsg');
+        var sp  = e.target.closest('.ch-sysprompt');
+        if (cmd) updateChannel(cmd.dataset.id, { ai_command:    cmd.value });
+        if (tl)  updateChannel(tl.dataset.id,  { token_limit:   tl.value  });
+        if (lm)  updateChannel(lm.dataset.id,  { limit_message: lm.value  });
+        if (sp)  updateChannel(sp.dataset.id,  { system_prompt: sp.value  });
+    }, true);
 }
 
 function closeChannelKB() { var m=document.getElementById('channel-kb-modal'); if(m) m.style.display='none'; }
