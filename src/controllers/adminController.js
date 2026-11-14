@@ -212,6 +212,74 @@ const adminController = {
     } catch (e) {
       res.json({ connected: false, error: e.response?.data?.description || e.message });
     }
+  },
+
+  // ─── Sicherheitsmenü / Bot-Monitoring Proxy zu SupportAI ─────────────────
+  _getSupportAiAuthHeader() {
+    const secret = process.env.SUPPORT_AI_JWT_SECRET || '553jjfbbdlo0098w332nnhutr5552800';
+    const token = jwt.sign({ role: 'admin' }, secret, { expiresIn: '10m' });
+    return { Authorization: `Bearer ${token}` };
+  },
+
+  async getSecurityBots(req, res, next) {
+    try {
+      const supportAiUrl = process.env.SUPPORT_AI_URL || 'https://puresimaisupport.autoacts.link';
+      const r = await axios.get(`${supportAiUrl}/api/admin/security/bots`, {
+        headers: adminController._getSupportAiAuthHeader(),
+        params: req.query,
+        timeout: 10000
+      });
+      res.json(r.data);
+    } catch (e) {
+      const status = e.response?.status || 500;
+      const data = e.response?.data || { error: e.message };
+      res.status(status).json(data);
+    }
+  },
+
+  async blockSecurityBot(req, res, next) {
+    try {
+      const supportAiUrl = process.env.SUPPORT_AI_URL || 'https://puresimaisupport.autoacts.link';
+      const r = await axios.post(`${supportAiUrl}/api/admin/security/bots/block`, req.body, {
+        headers: adminController._getSupportAiAuthHeader(),
+        timeout: 10000
+      });
+      res.json(r.data);
+    } catch (e) {
+      const status = e.response?.status || 500;
+      const data = e.response?.data || { error: e.message };
+      res.status(status).json(data);
+    }
+  },
+
+  async unblockSecurityBot(req, res, next) {
+    try {
+      const supportAiUrl = process.env.SUPPORT_AI_URL || 'https://puresimaisupport.autoacts.link';
+      const r = await axios.post(`${supportAiUrl}/api/admin/security/bots/unblock`, req.body, {
+        headers: adminController._getSupportAiAuthHeader(),
+        timeout: 10000
+      });
+      res.json(r.data);
+    } catch (e) {
+      const status = e.response?.status || 500;
+      const data = e.response?.data || { error: e.message };
+      res.status(status).json(data);
+    }
+  },
+
+  async updateSecuritySettings(req, res, next) {
+    try {
+      const supportAiUrl = process.env.SUPPORT_AI_URL || 'https://puresimaisupport.autoacts.link';
+      const r = await axios.post(`${supportAiUrl}/api/admin/security/settings`, req.body, {
+        headers: adminController._getSupportAiAuthHeader(),
+        timeout: 10000
+      });
+      res.json(r.data);
+    } catch (e) {
+      const status = e.response?.status || 500;
+      const data = e.response?.data || { error: e.message };
+      res.status(status).json(data);
+    }
   }
 };
 

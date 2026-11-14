@@ -67,6 +67,7 @@
             <button class="nav-btn" onclick="showSection('moderation')" id="nav-moderation">🛡 Moderation <span id="mod-badge" class="badge" style="display:none;">0</span></button>
             <button class="nav-btn" onclick="showSection('engagement')" id="nav-engagement">🏆 Engagement</button>
             <button class="nav-btn" onclick="showSection('geplant')"    id="nav-geplant">⏰ Geplant</button>
+            <button class="nav-btn" onclick="showSection('security')"   id="nav-security">🛡️ Sicherheit</button>
             <button class="nav-btn" onclick="refreshDashboardData()" title="Dashboard aktualisieren" id="nav-refresh">🔄</button>
             <button class="nav-btn" onclick="showSection('settings')"   id="nav-settings">⚙️</button>
             <button class="nav-btn nav-logout" onclick="handleLogout()">↩</button>
@@ -402,11 +403,113 @@
             </div>
         </section>
 
+        <!-- ══ SICHERHEITSMENÜ / BOT-MONITORING ════════════════════════════ -->
+        <section id="security-section" class="app-section">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+                <div>
+                    <h2 class="section-title" style="margin:0;">🛡️ Sicherheitsmenü &amp; Traffic-Filter</h2>
+                    <p style="font-size:0.82rem;color:#94a3b8;margin-top:2px;">Echtzeit-Bot-Erkennung, Einstufung (Hilfreich vs. Angriff), Herkunft &amp; gezielte Traffic-Sperre</p>
+                </div>
+                <button onclick="window.BotSecurityUI.loadBotSecurity()" class="btn btn-sm btn-outline" style="background:#171717;border:1px solid #333;color:#e2e8f0;padding:6px 12px;border-radius:7px;cursor:pointer;">🔄 Aktualisieren</button>
+            </div>
+
+            <!-- Tab 1: Bot Monitoring & Traffic Filter -->
+            <div id="sec-tab-bots">
+                <!-- KPI Metriken -->
+                <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:12px;margin-bottom:16px;">
+                    <div class="card" style="padding:14px;border-left:4px solid #3b82f6;">
+                        <div style="font-size:0.75rem;color:#94a3b8;text-transform:uppercase;font-weight:700;">🤖 Aktive Bots</div>
+                        <div id="sec-stat-total" style="font-size:1.6rem;font-weight:800;color:#f8fafc;margin-top:4px;">-</div>
+                        <div style="font-size:0.72rem;color:#64748b;margin-top:2px;">Erkannte Bot-Clients</div>
+                    </div>
+                    <div class="card" style="padding:14px;border-left:4px solid #10b981;">
+                        <div style="font-size:0.75rem;color:#94a3b8;text-transform:uppercase;font-weight:700;">✅ Hilfreich (Suchmaschinen)</div>
+                        <div id="sec-stat-helpful" style="font-size:1.6rem;font-weight:800;color:#34d399;margin-top:4px;">-</div>
+                        <div style="font-size:0.72rem;color:#64748b;margin-top:2px;">Google, Bing, Applebot</div>
+                    </div>
+                    <div class="card" style="padding:14px;border-left:4px solid #ef4444;">
+                        <div style="font-size:0.75rem;color:#94a3b8;text-transform:uppercase;font-weight:700;">⚠️ Angriffe / Scraper</div>
+                        <div id="sec-stat-malicious" style="font-size:1.6rem;font-weight:800;color:#f87171;margin-top:4px;">-</div>
+                        <div style="font-size:0.72rem;color:#64748b;margin-top:2px;">Fake-Browser, Scraper-Wellen</div>
+                    </div>
+                    <div class="card" style="padding:14px;border-left:4px solid #f59e0b;">
+                        <div style="font-size:0.75rem;color:#94a3b8;text-transform:uppercase;font-weight:700;">⛔ Blockierter Traffic</div>
+                        <div id="sec-stat-blocked" style="font-size:1.6rem;font-weight:800;color:#fbbf24;margin-top:4px;">-</div>
+                        <div style="font-size:0.72rem;color:#64748b;margin-top:2px;">Traffic aktiv verboten</div>
+                    </div>
+                    <div class="card" style="padding:14px;border-left:4px solid #8b5cf6;">
+                        <div style="font-size:0.75rem;color:#94a3b8;text-transform:uppercase;font-weight:700;">📊 Gesamt Scans</div>
+                        <div id="sec-stat-scans" style="font-size:1.6rem;font-weight:800;color:#c084fc;margin-top:4px;">-</div>
+                        <div style="font-size:0.72rem;color:#64748b;margin-top:2px;">Verarbeitete Bot-Requests</div>
+                    </div>
+                </div>
+
+                <!-- Auto-Block & Schnellsperre Card -->
+                <div class="card" style="padding:14px;margin-bottom:16px;background:rgba(30,58,95,0.2);border:1px solid rgba(59,130,246,0.3);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+                    <div style="display:flex;align-items:center;gap:12px;">
+                        <label style="position:relative;display:inline-block;width:44px;height:24px;">
+                            <input type="checkbox" id="sec-autoblock-toggle" onchange="window.BotSecurityUI.toggleAutoBlock(this)" style="opacity:0;width:0;height:0;">
+                            <span style="position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:#333;transition:.3s;border-radius:24px;" class="toggle-slider"></span>
+                        </label>
+                        <div>
+                            <div style="font-weight:700;color:#f8fafc;font-size:0.88rem;">🛡️ Auto-Block für bösartige Scraper</div>
+                            <div style="font-size:0.75rem;color:#94a3b8;">Sperrt aggressive Fake-Chrome- &amp; Script-Scraper automatisch ab 30 Scans</div>
+                        </div>
+                    </div>
+                    <!-- Manueller Bann -->
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        <input type="text" id="manual-ban-ip" placeholder="IP oder Bot-Muster..." style="padding:7px 10px;background:#12141f;border:1px solid #333;border-radius:6px;color:#fff;font-size:0.8rem;width:180px;">
+                        <button onclick="window.BotSecurityUI.handleManualBlock()" class="btn btn-sm btn-danger" style="padding:7px 12px;background:#ef4444;color:#fff;border:none;border-radius:6px;font-size:0.8rem;cursor:pointer;font-weight:600;">⛔ Gezielt sperren</button>
+                    </div>
+                </div>
+
+                <!-- Filterleiste -->
+                <div class="card" style="padding:12px;margin-bottom:16px;">
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;justify-content:space-between;">
+                        <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                            <button onclick="window.BotSecurityUI.setCategoryFilter('all', this)" class="sec-cat-filter btn btn-sm" style="background:#1e3a5f;color:#93c5fd;border:1px solid #2563eb;padding:6px 12px;border-radius:6px;font-size:0.78rem;cursor:pointer;">Alle Bots</button>
+                            <button onclick="window.BotSecurityUI.setCategoryFilter('malicious', this)" class="sec-cat-filter btn btn-sm" style="background:#1a1a1a;color:#94a3b8;border:1px solid #333;padding:6px 12px;border-radius:6px;font-size:0.78rem;cursor:pointer;">⚠️ Nur Angriffe / Scraper</button>
+                            <button onclick="window.BotSecurityUI.setCategoryFilter('helpful', this)" class="sec-cat-filter btn btn-sm" style="background:#1a1a1a;color:#94a3b8;border:1px solid #333;padding:6px 12px;border-radius:6px;font-size:0.78rem;cursor:pointer;">✅ Nur Hilfreiche Suchmaschinen</button>
+                            <button onclick="window.BotSecurityUI.setCategoryFilter('analysis', this)" class="sec-cat-filter btn btn-sm" style="background:#1a1a1a;color:#94a3b8;border:1px solid #333;padding:6px 12px;border-radius:6px;font-size:0.78rem;cursor:pointer;">ℹ️ Nur SEO &amp; Audit</button>
+                        </div>
+                        <div style="display:flex;gap:8px;align-items:center;">
+                            <select onchange="window.BotSecurityUI.setStatusFilter(this.value)" style="padding:7px 10px;background:#12141f;border:1px solid #333;border-radius:6px;color:#e2e8f0;font-size:0.78rem;">
+                                <option value="all">Status: Alle</option>
+                                <option value="active">🟢 Nur Aktive (Erlaubt)</option>
+                                <option value="blocked">⛔ Nur Gesperrte (Blockiert)</option>
+                            </select>
+                            <input type="text" oninput="window.BotSecurityUI.handleSearch(this.value)" placeholder="🔍 Suche nach IP, Bot, Land..." style="padding:7px 12px;background:#12141f;border:1px solid #333;border-radius:6px;color:#fff;font-size:0.8rem;width:220px;">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Bot-Tabelle -->
+                <div class="card" style="padding:0;overflow-x:auto;">
+                    <table class="data-table" style="width:100%;border-collapse:collapse;font-size:0.82rem;">
+                        <thead>
+                            <tr style="background:#171924;border-bottom:1px solid rgba(255,255,255,0.08);text-align:left;color:#94a3b8;">
+                                <th style="padding:10px 12px;">Bot / Client &amp; IP</th>
+                                <th style="padding:10px 12px;">Einstufung</th>
+                                <th style="padding:10px 12px;">Mutmaßliche Herkunft</th>
+                                <th style="padding:10px 12px;">Scan-Aktivität</th>
+                                <th style="padding:10px 12px;">Zuletzt gesehen</th>
+                                <th style="padding:10px 12px;text-align:right;">Aktion (Traffic)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="bot-table-body">
+                            <tr><td colspan="6" style="text-align:center;padding:24px;color:#94a3b8;">⏳ Lade aktive Bots...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
     </div>
 </div>
 
 <script src="/js/api.js?v=203"></script>
 <script src="/js/dashboard.js?v=203"></script>
+<script src="/js/bot-security.js?v=101"></script>
 <script>
     /* AI AdminHelper Dashboard v2.0.0 */
     window.__APP_TYPE__ = 'adminhelper';
@@ -424,6 +527,7 @@
             if (id === 'moderation') { if (typeof loadModeration === 'function') loadModeration(window._modTab || 'pending'); }
             if (id === 'engagement') { if (typeof loadEngagement === 'function') loadEngagement(window._engTab || 'diss'); }
             if (id === 'geplant')    { if (typeof loadGeplant    === 'function') loadGeplant(); }
+            if (id === 'security')   { if (typeof loadBotSecurity === 'function') loadBotSecurity(); }
             if (id === 'settings')   {
                 if (typeof loadSettings === 'function') loadSettings();
                 if (typeof loadChannels === 'function') loadChannels();

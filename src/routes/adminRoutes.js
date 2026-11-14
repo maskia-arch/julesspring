@@ -56,6 +56,12 @@ router.get('/stats',         ctrl.getStats);
 router.get('/settings',      ctrl.getSettings);
 router.post('/settings',     ctrl.updateSettings);
 
+// ─── Sicherheitsmenü / Bot-Monitoring (Proxy zu SupportAI) ─────────────────
+router.get('/security/bots',          ctrl.getSecurityBots);
+router.post('/security/bots/block',   ctrl.blockSecurityBot);
+router.post('/security/bots/unblock', ctrl.unblockSecurityBot);
+router.post('/security/settings',     ctrl.updateSecuritySettings);
+
 // ─── AdminHelper Dashboard: Uebersicht / Einsichten / Verwaltung (v2.0.0) ──
 const dash = require('../controllers/dashboardController');
 router.get('/overview',                       dash.getOverview);
